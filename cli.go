@@ -48,15 +48,16 @@ type CLI struct {
 	Draft           *bool    `name:"draft"       help:"Show only draft PRs"                                          negatable:""                                      clib:"terse='Draft filter',group='Filters/6'"`
 
 	// Interactive flags
-	Approve      bool   `name:"approve"       help:"Approve each PR"                                           clib:"terse='Approve PRs',group='Interactive/1'"`
-	Close        bool   `name:"close"         help:"Close each PR"                                             clib:"terse='Close PRs',group='Interactive/1'"`
-	DeleteBranch bool   `name:"delete-branch" help:"Delete branch after close (requires --close)"              clib:"terse='Delete branch',group='Interactive/1'"`
-	Comment      string `name:"comment"       help:"Add a comment to each PR"                                  placeholder:"<body>"                                  clib:"terse='Add comment',group='Interactive/1'"`
-	MarkDraft    bool   `name:"mark-draft"    help:"Convert each PR to draft (only targets non-draft PRs)"     clib:"terse='Convert to draft',group='Interactive/1'"`
-	MarkReady    bool   `name:"mark-ready"    help:"Mark each PR as ready for review (only targets draft PRs)" clib:"terse='Mark as ready',group='Interactive/1'"`
-	Merge        *bool  `name:"merge"         help:"Toggle auto-merge (squash) on each PR"                     negatable:""                                          clib:"terse='Auto-merge',group='Interactive/1'"`
-	Update       bool   `name:"update"        help:"Update each PR branch from base branch"                    clib:"terse='Update branch',group='Interactive/1'"`
-	Yes          bool   `name:"yes"           help:"Skip interactive confirmation prompt"                      short:"y"                                             clib:"terse='Skip confirmation',group='Interactive/2'"`
+	Approve      bool   `name:"approve"       help:"Approve each PR"                                                 clib:"terse='Approve PRs',group='Interactive/1'"`
+	Close        bool   `name:"close"         help:"Close each PR"                                                   clib:"terse='Close PRs',group='Interactive/1'"`
+	DeleteBranch bool   `name:"delete-branch" help:"Delete branch after close (requires --close)"                    clib:"terse='Delete branch',group='Interactive/1'"`
+	Comment      string `name:"comment"       help:"Add a comment to each PR"                                        placeholder:"<body>"                                  clib:"terse='Add comment',group='Interactive/1'"`
+	MarkDraft    bool   `name:"mark-draft"    help:"Convert each PR to draft (only targets non-draft PRs)"           clib:"terse='Convert to draft',group='Interactive/1'"`
+	MarkReady    bool   `name:"mark-ready"    help:"Mark each PR as ready for review (only targets draft PRs)"       clib:"terse='Mark as ready',group='Interactive/1'"`
+	Merge        *bool  `name:"merge"         help:"Toggle auto-merge (squash) on each PR"                           negatable:""                                          clib:"terse='Auto-merge',group='Interactive/1'"`
+	ForceMerge   bool   `name:"force-merge"   help:"Poll for checks, then force-merge (requires bypass permissions)" short:"M"                                             clib:"terse='Force-merge',group='Interactive/1'"`
+	Update       bool   `name:"update"        help:"Update each PR branch from base branch"                          clib:"terse='Update branch',group='Interactive/1'"`
+	Yes          bool   `name:"yes"           help:"Skip interactive confirmation prompt"                            short:"y"                                             clib:"terse='Skip confirmation',group='Interactive/2'"`
 
 	// Action flags
 	Clone bool `name:"clone" help:"Clone unique repos from results (parallel)" clib:"terse='Clone repos',group='Actions/1'"`
@@ -77,8 +78,9 @@ type CLI struct {
 	Sort    *string `name:"sort"    help:"Sort by"                                                                                            placeholder:"<field>"                               clib:"terse='Sort field',complete='values=name created updated',group='Output',enum='name,created,updated',highlight='n,c,u',default='name'"`
 
 	// Miscellaneous
-	Debug   bool `name:"debug"   help:"Log HTTP requests to stderr" clib:"terse='Debug mode',group='Miscellaneous'"`
-	Verbose bool `name:"verbose" help:"Enable verbose logging"      short:"v"                                       clib:"terse='Verbose',group='Miscellaneous'"`
+	Color   string `name:"color"   help:"When to use color (auto, always, never)" clib:"terse='Color mode',complete='values=auto always never',group='Miscellaneous',enum='auto,always,never'" default:"auto"`
+	Debug   bool   `name:"debug"   help:"Log HTTP requests to stderr"             clib:"terse='Debug mode',group='Miscellaneous'"`
+	Verbose bool   `name:"verbose" help:"Enable verbose logging"                  short:"v"                                                                                                    clib:"terse='Verbose',group='Miscellaneous'"`
 
 	sortExplicit   bool `kong:"-"`
 	outputExplicit bool `kong:"-"`
@@ -103,6 +105,15 @@ func (c *CLI) Validate() error {
 	}
 	if c.MarkDraft && c.Merge != nil && *c.Merge {
 		return fmt.Errorf("--mark-draft and --merge are mutually exclusive")
+	}
+	if c.ForceMerge && c.Close {
+		return fmt.Errorf("--force-merge and --close are mutually exclusive")
+	}
+	if c.ForceMerge && c.Merge != nil {
+		return fmt.Errorf("--force-merge and --merge are mutually exclusive")
+	}
+	if c.ForceMerge && c.MarkDraft {
+		return fmt.Errorf("--force-merge and --mark-draft are mutually exclusive")
 	}
 	if c.DeleteBranch && !c.Close {
 		return fmt.Errorf("--delete-branch requires --close")
@@ -167,7 +178,7 @@ func (c *CLI) Validate() error {
 	if c.CI != "" {
 		if _, ok := parseCIStatus(c.CI); !ok {
 			return fmt.Errorf(
-				"invalid --ci value %q (valid: success/s, failure/f, pending/p)",
+				"invalid --ci value %q (valid: success/pass/passed/s, failure/fail/failed/f, pending/p)",
 				c.CI,
 			)
 		}
@@ -273,7 +284,7 @@ func (c *CLI) Normalize(cfg *Config) {
 
 // HasAction returns true if any action flag is set.
 func (c *CLI) HasAction() bool {
-	return c.Approve || c.Close || c.Comment != "" || c.MarkDraft || c.MarkReady ||
+	return c.Approve || c.Close || c.Comment != "" || c.ForceMerge || c.MarkDraft || c.MarkReady ||
 		c.Merge != nil ||
 		c.Update
 }
@@ -284,7 +295,7 @@ func (c *CLI) IsInteractive() bool {
 	if c.Yes {
 		return false
 	}
-	return c.Approve || c.Close || c.Comment != "" || c.MarkDraft || c.MarkReady ||
+	return c.Approve || c.Close || c.Comment != "" || c.ForceMerge || c.MarkDraft || c.MarkReady ||
 		(c.Merge != nil && *c.Merge) || c.Update || c.Send
 }
 

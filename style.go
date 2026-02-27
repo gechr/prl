@@ -40,6 +40,9 @@ func (p *prl) prMergeStyle(pr PullRequest) lipgloss.Style {
 	if strings.ToLower(pr.State) != valueOpen {
 		return p.prStateStyle(pr.State)
 	}
+	if pr.IsDraft {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	}
 	switch pr.MergeStatus {
 	case MergeStatusReady:
 		return *p.theme.BoldGreen
@@ -53,4 +56,46 @@ func (p *prl) prMergeStyle(pr PullRequest) lipgloss.Style {
 		return *p.theme.Dim
 	}
 	return *p.theme.Blue
+}
+
+// renderMergeStatus returns a plain text label for the PR's CI/review status.
+// Used in non-TTY output where colors are unavailable.
+func (p *prl) renderMergeStatus(pr PullRequest) string {
+	if strings.ToLower(pr.State) != valueOpen {
+		return valueUnknown
+	}
+	switch pr.MergeStatus {
+	case MergeStatusReady:
+		return valueReady
+	case MergeStatusCIPending:
+		return valueBlocked
+	case MergeStatusCIFailed:
+		return valueBlocked
+	case MergeStatusBlocked:
+		return valueBlocked
+	case MergeStatusUnknown:
+		return valueUnknown
+	}
+	return ""
+}
+
+// renderMergeReason returns a human-readable reason for the PR's current status.
+// Used in non-TTY output where colors are unavailable.
+func (p *prl) renderMergeReason(pr PullRequest) string {
+	if strings.ToLower(pr.State) != valueOpen {
+		return valueUnknown
+	}
+	switch pr.MergeStatus {
+	case MergeStatusReady:
+		return "ready_to_merge"
+	case MergeStatusCIPending:
+		return "ci_pending"
+	case MergeStatusCIFailed:
+		return "ci_fail"
+	case MergeStatusBlocked:
+		return "needs_review"
+	case MergeStatusUnknown:
+		return valueUnknown
+	}
+	return ""
 }

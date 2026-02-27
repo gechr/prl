@@ -13,14 +13,14 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/cli/go-gh/v2 v2.13.0
-	github.com/gechr/clib v0.0.0-20260224234835-a0b33f281744
-	github.com/gechr/clog v0.5.2
+	github.com/gechr/clib v0.0.0-20260305113954-548ac3a94e75
+	github.com/gechr/clog v0.6.1
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.1
-	github.com/knadh/koanf/v2 v2.3.2
+	github.com/knadh/koanf/v2 v2.3.3
 	github.com/maruel/natural v1.3.0
 	github.com/muesli/termenv v0.16.0
 	github.com/stretchr/testify v1.11.1

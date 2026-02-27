@@ -191,7 +191,8 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// Draft implicit filters: skip PRs already in the target state.
 	// mark-draft uses draft:false to find non-draft PRs that can be converted TO draft.
 	// mark-ready uses draft:true to find draft PRs that can be marked as ready for review.
-	if cli.MarkDraft {
+	// force-merge uses draft:false because draft PRs cannot be merged.
+	if cli.MarkDraft || cli.ForceMerge {
 		qualifiers = append(qualifiers, "draft:false")
 	}
 	if cli.MarkReady {
@@ -256,22 +257,23 @@ func shouldShowAuthor(cli *CLI) bool {
 
 // searchResponse matches the GitHub Search Issues API JSON response.
 type searchResponse struct {
-	TotalCount int          `json:"total_count"`
 	Items      []searchItem `json:"items"`
+	TotalCount int          `json:"total_count"`
 }
 
 type searchItem struct {
+	CreatedAt   time.Time      `json:"created_at"`
+	Draft       bool           `json:"draft"`
 	HTMLURL     string         `json:"html_url"`
+	Labels      []searchLabel  `json:"labels"`
 	NodeID      string         `json:"node_id"`
 	Number      int            `json:"number"`
-	Title       string         `json:"title"`
-	State       string         `json:"state"`
-	User        searchUser     `json:"user"`
-	Labels      []searchLabel  `json:"labels"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
 	PullRequest searchPRDetail `json:"pull_request"`
 	RepoURL     string         `json:"repository_url"`
+	State       string         `json:"state"`
+	Title       string         `json:"title"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	User        searchUser     `json:"user"`
 }
 
 type searchUser struct {
@@ -315,6 +317,7 @@ func toPullRequest(item searchItem) PullRequest {
 		Title:      item.Title,
 		URL:        item.HTMLURL,
 		State:      state,
+		IsDraft:    item.Draft,
 		NodeID:     item.NodeID,
 		Repository: repo,
 		Author:     Author{Login: item.User.Login},

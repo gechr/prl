@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
@@ -36,7 +37,10 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 			if err := a.comment(owner, repo, pr.Number, cli.Comment); err != nil {
 				return err
 			}
-			clog.Info().URL("url", pr.URL).Msg("Commented")
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Commented")
 			return nil
 		}); err != nil {
 			return err
@@ -50,7 +54,16 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 		return err
 	}
 
-	// Phase 3: Open in browser (if --open)
+	// Phase 3: Force-merge (sequential - each PR blocks on check polling)
+	if cli.ForceMerge {
+		for _, pr := range prs {
+			if err := a.forceMerge(pr); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Phase 4: Open in browser (if --open)
 	if cli.Open {
 		urls := make([]string, len(prs))
 		for i, pr := range prs {
@@ -72,7 +85,10 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.updateBranch(owner, repo, pr.Number); err != nil {
 			errs = append(errs, fmt.Sprintf("update-branch %s: %v", pr.URL, err))
 		} else {
-			clog.Info().URL("url", pr.URL).Msg("Updated branch")
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Updated branch")
 		}
 	}
 
@@ -80,7 +96,10 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.closePR(owner, repo, pr.Number, cli.Comment, cli.DeleteBranch); err != nil {
 			errs = append(errs, fmt.Sprintf("close %s: %v", pr.URL, err))
 		} else {
-			clog.Info().URL("url", pr.URL).Msg("Closed")
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Closed")
 		}
 	}
 
@@ -88,7 +107,10 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.approve(owner, repo, pr.Number); err != nil {
 			errs = append(errs, fmt.Sprintf("approve %s: %v", pr.URL, err))
 		} else {
-			clog.Info().URL("url", pr.URL).Msg("Approved")
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Approved")
 		}
 	}
 
@@ -96,7 +118,10 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.markDraft(pr.NodeID); err != nil {
 			errs = append(errs, fmt.Sprintf("mark-draft %s: %v", pr.URL, err))
 		} else {
-			clog.Info().URL("url", pr.URL).Msg("Marked as draft")
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Marked as draft")
 		}
 	}
 
@@ -104,7 +129,10 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.markReady(pr.NodeID); err != nil {
 			errs = append(errs, fmt.Sprintf("mark-ready %s: %v", pr.URL, err))
 		} else {
-			clog.Info().URL("url", pr.URL).Msg("Marked as ready")
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Marked as ready")
 		}
 	}
 
@@ -113,14 +141,17 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("merge %s: %v", pr.URL, err))
 		} else {
-			clog.Info().URL("url", pr.URL).Msg(msg)
+			clog.Info().Link("pr", pr.URL, pr.Ref()).Str("title", truncateTitle(pr.Title)).Msg(msg)
 		}
 	}
 	if cli.Merge != nil && !*cli.Merge {
 		if err := a.disableAutoMerge(pr.NodeID); err != nil {
 			errs = append(errs, fmt.Sprintf("disable-auto-merge %s: %v", pr.URL, err))
 		} else {
-			clog.Info().URL("url", pr.URL).Msg("Disabled automerge")
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Disabled automerge")
 		}
 	}
 
@@ -234,7 +265,7 @@ func (a *ActionRunner) mergeOrAutoMerge(owner, repo string, pr PullRequest) (str
 	if !strings.Contains(err.Error(), "clean status") {
 		return "", err
 	}
-	// PR is already mergeable — merge it directly.
+	// PR is already mergeable - merge it directly.
 	if mergeErr := a.mergePR(owner, repo, pr.Number); mergeErr != nil {
 		return "", mergeErr
 	}
@@ -296,4 +327,168 @@ func (a *ActionRunner) disableAutoMerge(nodeID string) error {
 				clientMutationId
 			}
 		}`, nodeID)
+}
+
+// Force-merge: poll for checks, then merge with bypass.
+
+// forceMerge polls checks until they pass, then merges the PR using the standard
+// mergePullRequest mutation. This works like gh pr merge --admin: the mutation
+// itself requires the caller to have bypass/admin permissions on the repo;
+// no special API field is needed.
+func (a *ActionRunner) forceMerge(pr PullRequest) error {
+	clog.Info().
+		Link("pr", pr.URL, pr.Ref()).
+		Str("title", truncateTitle(pr.Title)).
+		Msg("Waiting for checks")
+
+	if err := a.waitForChecks(pr); err != nil {
+		return err
+	}
+
+	clog.Info().
+		Link("pr", pr.URL, pr.Ref()).
+		Str("title", truncateTitle(pr.Title)).
+		Msg("Force-merging with bypass permissions")
+	return a.forceMergePR(pr.NodeID)
+}
+
+// checkState represents the aggregate CI check state for a PR.
+type checkState int
+
+const (
+	checksSuccess checkState = iota
+	checksPending
+	checksFailed
+	checksNone
+)
+
+// forceMergeInterval is the polling interval for check status.
+const forceMergeInterval = 10 * time.Second
+
+// waitForChecks polls the PR's statusCheckRollup until checks pass, fail, or the PR is no longer open.
+func (a *ActionRunner) waitForChecks(pr PullRequest) error {
+	ref := pr.Ref()
+	for {
+		state, prState, err := a.queryCheckState(pr.NodeID)
+		if err != nil {
+			return fmt.Errorf("querying check status for %s: %w", pr.URL, err)
+		}
+
+		// Check if PR state changed
+		if prState == "MERGED" {
+			clog.Info().
+				Link("pr", pr.URL, ref).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("PR already merged")
+			return fmt.Errorf("PR already merged: %s", pr.URL)
+		}
+		if prState == "CLOSED" {
+			return fmt.Errorf("PR was closed: %s", pr.URL)
+		}
+
+		switch state {
+		case checksSuccess:
+			clog.Info().
+				Link("pr", pr.URL, ref).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("All checks passed")
+			return nil
+		case checksFailed:
+			return fmt.Errorf("checks failed for %s", pr.URL)
+		case checksPending:
+			time.Sleep(forceMergeInterval)
+		case checksNone:
+			// No checks configured - proceed immediately
+			return nil
+		}
+	}
+}
+
+// queryCheckState fetches the aggregate CI status and PR state in a single GraphQL query.
+func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error) {
+	if a.gql == nil {
+		return checksNone, "", fmt.Errorf("GraphQL client is not configured")
+	}
+
+	var result struct {
+		Node struct {
+			State   string `json:"state"`
+			Commits struct {
+				Nodes []struct {
+					Commit struct {
+						StatusCheckRollup *struct {
+							State string `json:"state"`
+						} `json:"statusCheckRollup"`
+					} `json:"commit"`
+				} `json:"nodes"`
+			} `json:"commits"`
+		} `json:"node"`
+	}
+
+	err := a.gql.Do(
+		`query CheckState($id: ID!) {
+			node(id: $id) {
+				... on PullRequest {
+					state
+					commits(last: 1) {
+						nodes {
+							commit {
+								statusCheckRollup { state }
+							}
+						}
+					}
+				}
+			}
+		}`,
+		map[string]any{"id": nodeID},
+		&result,
+	)
+	if err != nil {
+		return checksNone, "", err
+	}
+
+	prState := result.Node.State
+
+	if len(result.Node.Commits.Nodes) == 0 {
+		return checksNone, prState, nil
+	}
+	rollup := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup
+	if rollup == nil {
+		return checksNone, prState, nil
+	}
+
+	switch rollup.State {
+	case "SUCCESS":
+		return checksSuccess, prState, nil
+	case "FAILURE", "ERROR":
+		return checksFailed, prState, nil
+	case "PENDING", "EXPECTED":
+		return checksPending, prState, nil
+	default:
+		return checksNone, prState, nil
+	}
+}
+
+// forceMergePR merges a PR via the mergePullRequest GraphQL mutation with SQUASH method.
+// This is the same mutation gh uses - admin/bypass permissions are enforced server-side
+// based on the caller's token permissions, not via a special field.
+func (a *ActionRunner) forceMergePR(nodeID string) error {
+	if a.gql == nil {
+		return fmt.Errorf("GraphQL client is not configured")
+	}
+	var result map[string]any
+	return a.gql.Do(
+		`mutation ForceMerge($input: MergePullRequestInput!) {
+			mergePullRequest(input: $input) {
+				clientMutationId
+			}
+		}`,
+		map[string]any{
+			"input": map[string]any{
+				"pullRequestId": nodeID,
+				"mergeMethod":   "SQUASH",
+			},
+		},
+		&result,
+	)
 }

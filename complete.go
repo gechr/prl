@@ -210,7 +210,7 @@ func completeSlackRecipients(cfg *Config) []string {
 
 	// Channel completions from recipients config.
 	for channel := range cfg.Output.Slack.Recipients {
-		// Strip the leading "#" — normalizeSlackChannel adds it automatically.
+		// Strip the leading "#" - normalizeSlackChannel adds it automatically.
 		// Keep "@" for user mentions since that prefix is meaningful.
 		display := strings.TrimPrefix(channel, "#")
 		results = append(results, display+"\tChannel")

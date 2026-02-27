@@ -83,6 +83,27 @@ func TestParsePRState(t *testing.T) {
 	}
 }
 
+func TestRef(t *testing.T) {
+	pr := PullRequest{
+		Number: 42,
+		Repository: Repository{
+			Name:          "dockerfiles",
+			NameWithOwner: "figment-networks/dockerfiles",
+		},
+	}
+
+	// Default: includes org
+	refSingleOrg = ""
+	require.Equal(t, "figment-networks/dockerfiles#42", pr.Ref())
+
+	// Single org: omits org
+	refSingleOrg = "figment-networks"
+	require.Equal(t, "dockerfiles#42", pr.Ref())
+
+	// Reset for other tests
+	refSingleOrg = ""
+}
+
 func TestParseCIStatus(t *testing.T) {
 	tests := []struct {
 		input string
@@ -91,8 +112,12 @@ func TestParseCIStatus(t *testing.T) {
 	}{
 		{"success", CISuccess, true},
 		{"s", CISuccess, true},
+		{"pass", CISuccess, true},
+		{"passed", CISuccess, true},
 		{"failure", CIFailure, true},
 		{"f", CIFailure, true},
+		{"fail", CIFailure, true},
+		{"failed", CIFailure, true},
 		{"pending", CIPending, true},
 		{"p", CIPending, true},
 		{"invalid", 0, false},

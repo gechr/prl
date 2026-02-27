@@ -7,12 +7,14 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/cli/go-gh/v2/pkg/api"
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clib/complete"
 	"github.com/gechr/clib/prompt"
 	"github.com/gechr/clib/terminal"
 	"github.com/gechr/clog"
+	"github.com/muesli/termenv"
 )
 
 func main() {
@@ -67,11 +69,12 @@ func run() error {
 		return nil
 	}
 
-	// Configure logging
+	// Configure logging and color
 	clog.SetVerbose(cli.Verbose)
-	prefixes := clog.DefaultPrefixes()
-	prefixes[clog.InfoLevel] = "✅"
-	clog.SetPrefixes(prefixes)
+	symbols := clog.DefaultSymbols()
+	symbols[clog.LevelInfo] = "✅"
+	clog.SetSymbols(symbols)
+	tty := applyColorMode(cli.Color)
 
 	// Validate
 	if vErr := cli.Validate(); vErr != nil {
@@ -80,6 +83,9 @@ func run() error {
 
 	// Normalize with config defaults
 	cli.Normalize(cfg)
+
+	// When a single org is active, Ref() omits the org prefix for brevity.
+	refSingleOrg = singleOrg(cli.Organization.Values)
 
 	// Apply output mode overrides based on action flags
 	cli.ApplyOutputOverrides()
@@ -132,6 +138,14 @@ func run() error {
 		return nil
 	}
 
+	// Force-merge: filter to repos where user has admin/bypass permissions.
+	if cli.ForceMerge {
+		prs = filterByAdminAccess(rest, prs)
+		if len(prs) == 0 {
+			return nil
+		}
+	}
+
 	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
 	var gql *api.GraphQLClient
 	getGQL := func() (*api.GraphQLClient, error) {
@@ -166,7 +180,7 @@ func run() error {
 		return cloneRepos(rest, prs, cfg.VCS)
 	}
 
-	// Enrich open PRs with CI/review status for table coloring.
+	// Enrich open PRs with CI/review status for table coloring and status column.
 	if cli.OutputFormat() == OutputTable {
 		if g, gqlErr := getGQL(); gqlErr == nil {
 			enrichMergeStatus(g, prs)
@@ -187,7 +201,6 @@ func run() error {
 	}
 
 	// Render output
-	tty := terminal.Is(os.Stdout)
 	var output string
 	var rows []TableRow
 
@@ -323,6 +336,9 @@ func buildActionHeader(cli *CLI) string {
 	if cli.Comment != "" {
 		parts = append(parts, "Comment")
 	}
+	if cli.ForceMerge {
+		parts = append(parts, "Force-merge")
+	}
 	if cli.MarkDraft {
 		parts = append(parts, "Mark draft")
 	}
@@ -342,4 +358,21 @@ func buildActionHeader(cli *CLI) string {
 		return "Select PRs:"
 	}
 	return strings.Join(parts, " / ") + ":"
+}
+
+// applyColorMode configures global color settings based on --color and returns
+// whether stdout should be treated as a terminal for ANSI sequences.
+func applyColorMode(color string) bool {
+	switch color {
+	case "always":
+		clog.SetColorMode(clog.ColorAlways)
+		lipgloss.SetColorProfile(termenv.TrueColor)
+		return true
+	case "never":
+		clog.SetColorMode(clog.ColorNever)
+		lipgloss.SetColorProfile(termenv.Ascii)
+		return false
+	default: // "auto"
+		return terminal.Is(os.Stdout)
+	}
 }

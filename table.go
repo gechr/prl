@@ -19,7 +19,11 @@ type (
 func (p *prl) NewTableRenderer(
 	cli *CLI, tty bool, resolver *AuthorResolver,
 ) *table.Renderer[PullRequest] {
-	ctx := table.NewRenderContext(p.theme, cliansi.New(cliansi.WithTerminal(tty)))
+	ansiOpts := []cliansi.Option{cliansi.WithTerminal(tty)}
+	if !tty {
+		ansiOpts = append(ansiOpts, cliansi.WithHyperlinkFallback(cliansi.HyperlinkFallbackURL))
+	}
+	ctx := table.NewRenderContext(p.theme, cliansi.New(ansiOpts...))
 	orgFilter := singleOrg(cli.Organization.Values)
 	columns := resolveColumns(cli)
 	defs := p.allColumnDefs(orgFilter, resolver)
@@ -36,6 +40,12 @@ func (p *prl) NewTableRenderer(
 		}
 		if def, ok := defs[colName]; ok {
 			cols = append(cols, def)
+			// Inject status column after ref when not a terminal (plain text
+			// substitute for the color-coded merge status).
+			if colName == "ref" && !tty {
+				cols = append(cols, defs["status"])
+				cols = append(cols, defs["reason"])
+			}
 		} else {
 			clog.Warn().Str("column", colName).Msg("unknown column, ignoring")
 		}
@@ -46,7 +56,8 @@ func (p *prl) NewTableRenderer(
 		ctx,
 		// prl default: newest at top → clib reverse=true.
 		// --reverse flag means oldest at top → clib reverse=false.
-		table.WithReverse(!cli.Reverse),
+		// Non-TTY: ignore --reverse, always newest at top (#1, #2, #3… from top).
+		table.WithReverse(!cli.Reverse || !tty),
 		table.WithShowIndex(showIndex),
 	)
 }
@@ -84,6 +95,20 @@ func (p *prl) allColumnDefs(orgFilter string, resolver *AuthorResolver) map[stri
 				return ctx.Hyperlink(pr.URL, style.Render(ref))
 			},
 		},
+		"status": {
+			Name:   "status",
+			Header: "STATUS",
+			Render: func(pr PullRequest, _ *table.RenderContext) string {
+				return p.renderMergeStatus(pr)
+			},
+		},
+		"reason": {
+			Name:   "reason",
+			Header: "REASON",
+			Render: func(pr PullRequest, _ *table.RenderContext) string {
+				return p.renderMergeReason(pr)
+			},
+		},
 		"repo": {
 			Name:   "repo",
 			Header: "REPO",
@@ -106,9 +131,7 @@ func (p *prl) allColumnDefs(orgFilter string, resolver *AuthorResolver) map[stri
 			Header: "TITLE",
 			Render: func(pr PullRequest, ctx *table.RenderContext) string {
 				title := pr.Title
-				if runes := []rune(title); len(runes) > maxTitleLen {
-					title = string(runes[:maxTitleLen])
-				}
+				title = truncateTitle(title)
 				if ctx.Ansi.Terminal() {
 					if rendered := p.theme.RenderMarkdown(title); rendered != "" {
 						return rendered
@@ -177,6 +200,14 @@ func defaultColumns() []string {
 // defaultColumnsWithAuthor returns columns with the author column added.
 func defaultColumnsWithAuthor() []string {
 	return []string{"index", "title", "ref", "created", "updated", "author"}
+}
+
+// truncateTitle truncates a title to maxTitleLen runes, appending an ellipsis if needed.
+func truncateTitle(title string) string {
+	if runes := []rune(title); len(runes) > maxTitleLen {
+		return string(runes[:maxTitleLen-1]) + "…"
+	}
+	return title
 }
 
 // normalizeColumns lowercases and trims column names.

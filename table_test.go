@@ -67,7 +67,11 @@ func newTestRenderer(columns []Column, opts ...table.Option) *table.Renderer[Pul
 func newTestRendererWithTTY(
 	columns []Column, tty bool, opts ...table.Option,
 ) *table.Renderer[PullRequest] {
-	ctx := table.NewRenderContext(testPRL.theme, cliansi.New(cliansi.WithTerminal(tty)))
+	ansiOpts := []cliansi.Option{cliansi.WithTerminal(tty)}
+	if !tty {
+		ansiOpts = append(ansiOpts, cliansi.WithHyperlinkFallback(cliansi.HyperlinkFallbackURL))
+	}
+	ctx := table.NewRenderContext(testPRL.theme, cliansi.New(ansiOpts...))
 	// prl default: newest at top → clib WithReverse(true).
 	allOpts := []table.Option{table.WithReverse(true)}
 	allOpts = append(allOpts, opts...)
@@ -295,8 +299,8 @@ func TestRender_NoHyperlinkWhenNoTTY(t *testing.T) {
 	r := newTestRendererWithTTY([]Column{defs["ref"]}, false)
 	_, rows := r.Render(prs)
 
-	// tty=false: no hyperlink wrapping, just styled text
-	expected := testPRL.theme.Dim.Render("alpha#1")
+	// tty=false: falls back to plain URL
+	expected := "https://github.com/org/alpha/pull/1"
 	require.Equal(t, expected, rows[0].Cells[0])
 }
 
@@ -442,9 +446,10 @@ func TestRender_TitleTruncation(t *testing.T) {
 	r := newTestRenderer([]Column{defs["title"]})
 	_, rows := r.Render(prs)
 
-	// The cell value itself should be truncated to maxTitleLen
+	// The cell value itself should be truncated to maxTitleLen runes (with ellipsis).
 	visible := ansi.Strip(rows[0].Cells[0])
-	require.Len(t, visible, maxTitleLen)
+	require.Len(t, []rune(visible), maxTitleLen)
+	require.True(t, strings.HasSuffix(visible, "…"))
 }
 
 func TestRender_ColumnAlignment(t *testing.T) {

@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Bot author constants.
 const (
@@ -19,11 +22,20 @@ const (
 	MergeStatusCIFailed              // CI failed or errored
 )
 
+type Author struct {
+	Login string `json:"login"`
+}
+
+type Label struct {
+	Name string `json:"name"`
+}
+
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
 	AutoMerge   bool        `json:"-"`
 	Author      Author      `json:"author"`
 	CreatedAt   time.Time   `json:"createdAt"`
+	IsDraft     bool        `json:"-"`
 	Labels      []Label     `json:"labels"`
 	MergeStatus MergeStatus `json:"-"`
 	NodeID      string      `json:"-"`
@@ -35,17 +47,23 @@ type PullRequest struct {
 	URL         string      `json:"url"`
 }
 
+// refSingleOrg is set when all results belong to a single org,
+// causing Ref to omit the org prefix for brevity.
+var refSingleOrg string
+
+// Ref returns a short GitHub-style reference.
+// When a single org is active, returns "repo#123"; otherwise "org/repo#123".
+func (pr PullRequest) Ref() string {
+	name := pr.Repository.NameWithOwner
+	if refSingleOrg != "" {
+		name = pr.Repository.Name
+	}
+	return fmt.Sprintf("%s#%d", name, pr.Number)
+}
+
 type Repository struct {
 	Name          string `json:"name"`
 	NameWithOwner string `json:"nameWithOwner"`
-}
-
-type Author struct {
-	Login string `json:"login"`
-}
-
-type Label struct {
-	Name string `json:"name"`
 }
 
 // OutputFormat determines how results are rendered.
@@ -185,9 +203,9 @@ const (
 
 func parseCIStatus(s string) (CIStatus, bool) {
 	switch s {
-	case "success", "s":
+	case "success", "s", "pass", "passed":
 		return CISuccess, true
-	case "failure", "f":
+	case "failure", "f", "fail", "failed":
 		return CIFailure, true
 	case "pending", "p":
 		return CIPending, true
