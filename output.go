@@ -265,7 +265,7 @@ func enrichAutoMerge(gql *api.GraphQLClient, prs []PullRequest) error {
 }
 
 // Maximum number of PRs to enrich with merge status via GraphQL.
-const maxEnrichCount = 20
+const maxEnrichCount = 50
 
 // enrichMergeStatus queries CI and review status via GraphQL and sets MergeStatus on each open PR.
 func enrichMergeStatus(gql *api.GraphQLClient, prs []PullRequest) {

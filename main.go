@@ -180,8 +180,17 @@ func run() error {
 		return cloneRepos(rest, prs, cfg.VCS)
 	}
 
+	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
+	if cli.Quick {
+		for i := range prs {
+			if prs[i].State == valueOpen {
+				prs[i].MergeStatus = MergeStatusBlocked
+			}
+		}
+	}
+
 	// Enrich open PRs with CI/review status for table coloring and status column.
-	if cli.OutputFormat() == OutputTable {
+	if !cli.Quick && cli.OutputFormat() == OutputTable {
 		if g, gqlErr := getGQL(); gqlErr == nil {
 			enrichMergeStatus(g, prs)
 		} else {
@@ -190,7 +199,7 @@ func run() error {
 	}
 
 	// Enrich auto-merge status for Slack reactions (only when actually sending).
-	if cli.Send {
+	if !cli.Quick && cli.Send {
 		if g, gqlErr := getGQL(); gqlErr == nil {
 			if amErr := enrichAutoMerge(g, prs); amErr != nil {
 				clog.Debug().Err(amErr).Msg("Failed to enrich auto-merge status")
