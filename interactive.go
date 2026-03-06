@@ -61,7 +61,7 @@ func interactiveSelect(rows []TableRow, header string) ([]TableRow, error) {
 		}
 	}
 
-	return prompt.MultiSelect(header, items, prlHuhTheme{}, maxSelectHeight)
+	return prompt.MultiSelect(header, items, prlHuhTheme{}, maxSelectHeight, true)
 }
 
 // interactiveEdit presents an edit TUI for the selected PRs with ctrl+n/ctrl+p navigation.
