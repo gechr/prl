@@ -41,6 +41,7 @@ type CLI struct {
 	State           string   `name:"state"       help:"Filter by state"                                              short:"s"                                         clib:"terse='State',complete='values=open closed merged all',group='Filters/4',enum='open,closed,merged,all',highlight='o,c,m,a',default='open'"`
 	Topic           string   `name:"topic"       help:"Filter by repo topic"                                         short:"T"                                         clib:"terse='Topic',complete='predictor=topic',group='Filters/4'"`
 	Created         string   `name:"created"     help:"Filter by creation date"                                      short:"c"                                         placeholder:"<duration>"                                                                                                                         clib:"terse='Creation date',group='Filters/5'"`
+	Since           string   `name:"since"       help:"Alias for --created"                                          placeholder:"<duration>"                          hidden:""                                                                                                                                        clib:"group='Filters/5'"`
 	Drift           string   `name:"drift"       help:"Filter by duration between created/updated"                   short:"d"                                         placeholder:"<duration>"                                                                                                                         clib:"terse='Created/updated gap',group='Filters/5'"`
 	Updated         string   `name:"updated"     help:"Filter by last updated date"                                  short:"u"                                         placeholder:"<duration>"                                                                                                                         clib:"terse='Updated date',group='Filters/5'"`
 	Merged          string   `name:"merged"      help:"Filter by merged date"                                        short:"m"                                         aliases:"merged-at"                                                                                                                              placeholder:"<duration>"                                                                                                                                                      clib:"terse='Merged date',group='Filters/5'"`
@@ -62,10 +63,11 @@ type CLI struct {
 
 	// Action flags
 	Clone bool `name:"clone" help:"Clone unique repos from results (parallel)" clib:"terse='Clone repos',group='Actions/1'"`
-	Copy  bool `name:"copy"  help:"Copy output to clipboard"                   short:"C"                                        clib:"terse='Copy clipboard',group='Actions/1'"`
-	Dry   bool `name:"dry"   help:"Show search query without executing"        short:"n"                                        aliases:"dry-run,dryrun"                        clib:"terse='Dry run',group='Actions/1'"`
-	Open  bool `name:"open"  help:"Open each PR in browser"                    clib:"terse='Open in browser',group='Actions/1'"`
-	Web   bool `name:"web"   help:"Open GitHub search in browser"              short:"w"                                        clib:"terse='Web search',group='Actions/1'"`
+	Copy  bool `name:"copy"  help:"Copy output to clipboard"                   short:"C"                                    clib:"terse='Copy clipboard',group='Actions/1'"`
+	Count bool `name:"count" help:"Print total result count"                   short:"N"                                    clib:"terse='Print count',group='Actions/1'"`
+	Dry   bool `name:"dry"   help:"Show search query without executing"        short:"n"                                    aliases:"dry-run,dryrun"                         clib:"terse='Dry run',group='Actions/1'"`
+	Open  bool `name:"open"  help:"Open each PR in browser"                    short:"P"                                    clib:"terse='Open in browser',group='Actions/1'"`
+	Web   bool `name:"web"   help:"Open GitHub search in browser"              short:"w"                                    clib:"terse='Web search',group='Actions/1'"`
 
 	Send   bool   `name:"send"    help:"Send slack output to configured recipient(s)"      clib:"terse='Send to Slack',group='Actions/2'"`
 	SendAt string `name:"send-at" help:"Schedule slack send (+5m, +2h, HH:MM, Unix ts)"    placeholder:"<time>"                           clib:"terse='Schedule Slack send',group='Actions/2'"`
@@ -247,6 +249,11 @@ func (c *CLI) Normalize(cfg *Config) {
 	// Normalize org
 	c.Organization.Values = normalizeCSV(c.Organization.Values)
 
+	// --since is a hidden alias for --created
+	if c.Since != "" && c.Created == "" {
+		c.Created = c.Since
+	}
+
 	// Apply config defaults where CLI didn't set them
 	if len(c.Organization.Values) == 0 && len(cfg.Default.Organizations) > 0 {
 		c.Organization.Values = cfg.Default.Organizations
@@ -378,8 +385,28 @@ func (c *CLI) LimitValue() int {
 }
 
 // QueryString joins positional arguments into a search query.
+// A leading "-" or "!" on any term is converted to the GitHub "NOT" keyword
+// because GitHub search uses "-" only for qualifier negation (e.g. -org:foo),
+// not for free-text negation. Multi-word terms are quoted so the phrase is
+// treated as a unit (e.g. -"foo bar" → NOT "foo bar").
 func (c *CLI) QueryString() string {
-	return strings.Join(c.Query, " ")
+	parts := make([]string, len(c.Query))
+	for i, q := range c.Query {
+		if rest := strings.TrimLeft(q, "-!"); rest != "" && rest != q {
+			parts[i] = "NOT " + quoteIfNeeded(rest)
+		} else {
+			parts[i] = quoteIfNeeded(q)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// quoteIfNeeded wraps s in double quotes if it contains spaces.
+func quoteIfNeeded(s string) string {
+	if strings.Contains(s, " ") {
+		return `"` + s + `"`
+	}
+	return s
 }
 
 // ApplyOutputOverrides adjusts output mode based on action flags.

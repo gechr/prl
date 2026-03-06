@@ -58,7 +58,11 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 	if cli.ForceMerge {
 		for _, pr := range prs {
 			if err := a.forceMerge(pr); err != nil {
-				return err
+				clog.Warn().
+					Err(err).
+					Link("pr", pr.URL, pr.Ref()).
+					Str("title", truncateTitle(pr.Title)).
+					Msg("Force-merge failed")
 			}
 		}
 	}

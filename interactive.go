@@ -55,8 +55,9 @@ func interactiveSelect(rows []TableRow, header string) ([]TableRow, error) {
 	items := make([]prompt.SelectItem[TableRow], len(rows))
 	for i, row := range rows {
 		items[i] = prompt.SelectItem[TableRow]{
-			Display: row.Display,
-			Value:   row,
+			Display:  row.Display,
+			Value:    row,
+			Selected: len(rows) == 1,
 		}
 	}
 

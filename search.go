@@ -370,6 +370,25 @@ func executeSearch(rest *api.RESTClient, params *SearchParams) ([]PullRequest, e
 	return allPRs, nil
 }
 
+// executeCount queries the GitHub Search Issues API and returns the total result count.
+// It fetches a single item to minimise data transfer.
+func executeCount(rest *api.RESTClient, params *SearchParams) (int, error) {
+	path := fmt.Sprintf(
+		"search/issues?advanced_search=true&q=%s&per_page=1&page=1",
+		url.QueryEscape(params.Query),
+	)
+	if params.Sort != "" {
+		path += "&sort=" + params.Sort + "&order=" + params.Order
+	}
+
+	var resp searchResponse
+	if err := rest.Get(path, &resp); err != nil {
+		return 0, fmt.Errorf("search failed: %w", err)
+	}
+
+	return resp.TotalCount, nil
+}
+
 // executeWebSearch opens the GitHub search in the browser.
 func executeWebSearch(params *SearchParams) error {
 	u := "https://github.com/search?q=" + url.QueryEscape(params.Query) + "&type=pullrequests"

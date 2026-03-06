@@ -48,7 +48,8 @@ const (
 
 // UI layout.
 const (
-	editBodyLines    = 15
+	editBodyMinLines = 3 // minimum body textarea height
+	editChrome       = 8 // fixed rows: header + blank + "Title" label + title + blank + "Body" label + blank + help
 	editTitleYOffset = 3 // header + blank + "Title" label
 	editBodyYOffset  = 5 // header + blank + "Title" label + title-end + blank + "Body" label (excluding title lines)
 	editWidth        = 120

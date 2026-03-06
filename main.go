@@ -121,6 +121,16 @@ func run() error {
 		}
 	}
 
+	// Count mode: use API total_count (single lightweight request)
+	if cli.Count {
+		count, cErr := executeCount(rest, params)
+		if cErr != nil {
+			return cErr
+		}
+		fmt.Println(count)
+		return nil
+	}
+
 	// Execute search
 	prs, err := executeSearch(rest, params)
 	if err != nil {
@@ -134,14 +144,6 @@ func run() error {
 	}
 	if len(prs) == 0 {
 		return nil
-	}
-
-	// Force-merge: filter to repos where user has admin/bypass permissions.
-	if cli.ForceMerge {
-		prs = filterByAdminAccess(rest, prs)
-		if len(prs) == 0 {
-			return nil
-		}
 	}
 
 	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).

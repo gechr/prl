@@ -71,13 +71,24 @@ type bodyFetchFunc func(index int) (string, error)
 
 // editModel is the Bubble Tea model for the multi-PR edit TUI.
 type editModel struct {
-	entries   []editEntry
-	current   int
-	styles    editStyles
-	fetchBody bodyFetchFunc
+	entries    []editEntry
+	current    int
+	styles     editStyles
+	fetchBody  bodyFetchFunc
+	termHeight int
 
 	submitted bool
 	aborted   bool
+}
+
+func (m editModel) bodyHeight() int {
+	if m.termHeight == 0 {
+		return editBodyMinLines
+	}
+	if h := m.termHeight - editChrome; h > editBodyMinLines {
+		return h
+	}
+	return editBodyMinLines
 }
 
 // editResult holds the outcome for a single PR edit.
@@ -92,7 +103,7 @@ func newTextInput(styles editStyles, value string) textinput.Model {
 	tiStyles := textinput.DefaultDarkStyles()
 	tiStyles.Focused.Text = styles.focusedText
 	tiStyles.Blurred.Text = styles.blurredText
-	tiStyles.Cursor.Shape = tea.CursorBar
+	tiStyles.Cursor.Shape = tea.CursorBlock
 	tiStyles.Cursor.Blink = true
 	tiStyles.Cursor.Color = lg.Color("48")
 
@@ -109,8 +120,9 @@ func newTextArea(styles editStyles, value string) textarea.Model {
 	taStyles := textarea.DefaultDarkStyles()
 	taStyles.Focused.Text = styles.focusedText
 	taStyles.Focused.CursorLine = lg.NewStyle().Foreground(lg.Color("252"))
+	taStyles.Blurred.CursorLine = styles.blurredText
 	taStyles.Blurred.Text = styles.blurredText
-	taStyles.Cursor.Shape = tea.CursorBar
+	taStyles.Cursor.Shape = tea.CursorBlock
 	taStyles.Cursor.Blink = true
 	taStyles.Cursor.Color = lg.Color("48")
 
@@ -119,7 +131,7 @@ func newTextArea(styles editStyles, value string) textarea.Model {
 	ta.SetWidth(editWidth)
 	ta.SetValue(value)
 	ta.ShowLineNumbers = false
-	ta.SetHeight(editBodyLines)
+	ta.SetHeight(editBodyMinLines)
 	ta.SetStyles(taStyles)
 	ta.SetVirtualCursor(false)
 	return ta
@@ -192,9 +204,12 @@ func (m editModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		e := &m.entries[m.current]
-		e.title.SetWidth(msg.Width)
-		e.body.SetWidth(msg.Width)
+		m.termHeight = msg.Height
+		for i := range m.entries {
+			m.entries[i].title.SetWidth(msg.Width)
+			m.entries[i].body.SetWidth(msg.Width)
+			m.entries[i].body.SetHeight(m.bodyHeight())
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -285,10 +300,10 @@ func (m editModel) View() tea.View {
 	e := &m.entries[m.current]
 	var b strings.Builder
 
-	// Header: repo#123* (1/3) - yellow asterisk if edited.
+	// Header: repo#123 (edited) (1/3) - yellow label if edited.
 	b.WriteString(m.styles.header.Render(e.ref))
 	if e.title.Value() != e.origTitle || (e.bodyFetched && e.body.Value() != e.origBody) {
-		b.WriteString(m.styles.dirty.Render("*"))
+		b.WriteString(m.styles.dirty.Render(" (edited)"))
 	}
 	if len(m.entries) > 1 {
 		b.WriteString(" ")

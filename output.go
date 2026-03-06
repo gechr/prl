@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
@@ -48,73 +47,6 @@ func filterBots(prs []PullRequest) []PullRequest {
 	}
 	if filtered := len(prs) - len(result); filtered > 0 {
 		clog.Debug().Int("filtered", filtered).Msg("Bot filter applied")
-	}
-	return result
-}
-
-// filterByAdminAccess keeps only PRs from repos where the user has admin permissions.
-// Permission checks are parallelized and cached per unique repo.
-func filterByAdminAccess(rest *api.RESTClient, prs []PullRequest) []PullRequest {
-	// Collect unique repos
-	type repoPerms struct {
-		admin bool
-		err   error
-	}
-	repos := make(map[string]*repoPerms)
-	var order []string
-	for _, pr := range prs {
-		nwo := pr.Repository.NameWithOwner
-		if _, ok := repos[nwo]; !ok {
-			repos[nwo] = &repoPerms{}
-			order = append(order, nwo)
-		}
-	}
-
-	// Query permissions in parallel
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, maxConcurrency)
-	for _, nwo := range order {
-		wg.Add(1)
-		go func(nwo string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			var repo struct {
-				Permissions struct {
-					Admin bool `json:"admin"`
-				} `json:"permissions"`
-			}
-			if err := rest.Get("repos/"+nwo, &repo); err != nil {
-				repos[nwo].err = err
-				return
-			}
-			repos[nwo].admin = repo.Permissions.Admin
-		}(nwo)
-	}
-	wg.Wait()
-
-	result := make([]PullRequest, 0, len(prs))
-	for _, pr := range prs {
-		rp := repos[pr.Repository.NameWithOwner]
-		if rp.err != nil {
-			clog.Debug().
-				Err(rp.err).
-				Str("repo", pr.Repository.NameWithOwner).
-				Msg("Skipping repo (permission check failed)")
-			continue
-		}
-		if !rp.admin {
-			clog.Debug().
-				Str("repo", pr.Repository.NameWithOwner).
-				Link("pr", pr.URL, pr.Ref()).
-				Msg("Filtered (no admin access)")
-			continue
-		}
-		result = append(result, pr)
-	}
-	if filtered := len(prs) - len(result); filtered > 0 {
-		clog.Debug().Int("filtered", filtered).Msg("Admin access filter applied")
 	}
 	return result
 }
