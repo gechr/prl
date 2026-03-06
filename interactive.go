@@ -1,18 +1,19 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/gechr/clib/prompt"
 	"github.com/gechr/clog"
 )
 
-// prlTheme returns a huh theme matching the original prl gum choose styling.
-func prlTheme() *huh.Theme {
-	t := huh.ThemeBase()
+// prlHuhTheme implements huh.Theme with prl's custom styling.
+type prlHuhTheme struct{}
+
+func (prlHuhTheme) Theme(isDark bool) *huh.Styles {
+	t := huh.ThemeBase(isDark)
 
 	// Remove the thick left border that ThemeBase adds.
 	t.Focused.Base = lipgloss.NewStyle()
@@ -59,96 +60,47 @@ func interactiveSelect(rows []TableRow, header string) ([]TableRow, error) {
 		}
 	}
 
-	return prompt.MultiSelect(header, items, prlTheme(), maxSelectHeight)
+	return prompt.MultiSelect(header, items, prlHuhTheme{}, maxSelectHeight)
 }
 
-// editTheme returns a huh theme for the edit form.
-// Field titles are pink; the editable text is green when focused.
-func editTheme() *huh.Theme {
-	t := huh.ThemeBase()
-
-	t.Focused.Base = lipgloss.NewStyle()
-	t.Blurred.Base = lipgloss.NewStyle()
-
-	// Field titles: pink (212).
-	t.Focused.Title = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("212")).
-		Bold(true)
-	t.Blurred.Title = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("242"))
-
-	// Editable text.
-	t.Focused.TextInput.Cursor = lipgloss.NewStyle().Reverse(true)
-	t.Focused.TextInput.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("48"))
-	t.Blurred.TextInput.Cursor = lipgloss.NewStyle().Reverse(true)
-	t.Blurred.TextInput.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-
-	return t
-}
-
-// editHeaderStyle is the style for the PR ref header in the edit form.
-var editHeaderStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("208")).
-	Bold(true)
-
-// interactiveEdit presents a sequential edit form for each PR's title and body.
-// For each PR it fetches the body on demand, shows a huh form, and PATCHes if changed.
+// interactiveEdit presents an edit TUI for the selected PRs with ctrl+n/ctrl+p navigation.
+// Bodies are fetched lazily. Changes are only submitted on ctrl+s.
 func interactiveEdit(actions *ActionRunner, prs []PullRequest) error {
-	theme := editTheme()
+	editPRs := make([]editPR, len(prs))
+	for i, pr := range prs {
+		editPRs[i] = editPR{Ref: pr.Ref(), Title: pr.Title}
+	}
 
-	for _, pr := range prs {
+	fetchBody := func(index int) (string, error) {
+		pr := prs[index]
 		owner, repo := prOwnerRepo(pr)
+		return actions.fetchPRBody(owner, repo, pr.Number)
+	}
 
-		body, err := actions.fetchPRBody(owner, repo, pr.Number)
-		if err != nil {
-			return fmt.Errorf("fetching body for %s: %w", pr.URL, err)
-		}
+	results, submitted, err := runEditTUI(editPRs, fetchBody)
+	if err != nil {
+		return err
+	}
+	if !submitted {
+		return nil
+	}
 
-		title := pr.Title
-		origTitle := title
-		origBody := body
-
-		fmt.Println(editHeaderStyle.Render(pr.Ref()))
-
-		form := huh.NewForm(
-			huh.NewGroup(
-				huh.NewInput().
-					Title("Title").
-					Prompt("").
-					Value(&title).
-					Validate(func(s string) error {
-						if s == "" {
-							return fmt.Errorf("title cannot be empty")
-						}
-						return nil
-					}),
-				huh.NewText().
-					Title("Body").
-					Value(&body).
-					Lines(editBodyLines),
-			),
-		).WithTheme(theme)
-
-		if err := form.Run(); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				return nil
-			}
-			return fmt.Errorf("edit form for %s: %w", pr.URL, err)
-		}
-
-		if title == origTitle && body == origBody {
+	for i, result := range results {
+		pr := prs[i]
+		if !result.Changed {
 			clog.Debug().
 				Link("pr", pr.URL, pr.Ref()).
 				Msg("No changes")
 			continue
 		}
 
-		if err := actions.updatePR(owner, repo, pr.Number, title, body); err != nil {
+		owner, repo := prOwnerRepo(pr)
+		if err := actions.updatePR(owner, repo, pr.Number, result.Title, result.Body); err != nil {
 			return fmt.Errorf("updating %s: %w", pr.URL, err)
 		}
 		clog.Info().
 			Link("pr", pr.URL, pr.Ref()).
-			Str("title", truncateTitle(title)).
+			Str("title", truncateTitle(result.Title)).
 			Msg("Updated")
 	}
 	return nil

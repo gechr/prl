@@ -6,18 +6,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 	cliansi "github.com/gechr/clib/ansi"
 	"github.com/gechr/clib/table"
-	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/require"
 )
 
 var testPRL = New()
 
+// sgr8spaces replicates the grid's unexported spaces() for test assertions.
+func sgr8spaces(n int) string {
+	return "\x1b[8m" + strings.Repeat(" ", n) + "\x1b[28m"
+}
+
 func TestMain(m *testing.M) {
-	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.Writer.Profile = colorprofile.ANSI256
 	m.Run()
 }
 
@@ -212,8 +217,8 @@ func TestRender_IndexContainsDimStyle(t *testing.T) {
 	_, rows := r.Render(prs)
 
 	// Default order: newest first. Row 0 = newest = index 1.
-	// Display line starts with dim-styled index, followed by 2-space gap.
-	parts := strings.SplitN(rows[0].Display, "  ", 2)
+	// Display line starts with dim-styled index, followed by SGR8-wrapped gap.
+	parts := strings.SplitN(rows[0].Display, sgr8spaces(2), 2)
 	require.Equal(t, testPRL.theme.Dim.Render("1"), parts[0])
 }
 
@@ -228,12 +233,10 @@ func TestRender_HeaderContainsBoldStyle(t *testing.T) {
 
 	// Verify bold styling by checking the raw header contains bold-rendered values
 	// Col widths: max(vw("REPO")=4, vw("alpha")=5)=5, max(vw("NUMBER")=6, vw("#1")=2)=6
-	// Header: bold("REPO") + 1 pad + 2 gap + bold("NUMBER")
-	expectedHeader := testPRL.theme.Bold.Render(
-		"REPO",
-	) + "   " + testPRL.theme.Bold.Render(
-		"NUMBER",
-	)
+	// Header: bold("REPO") + pad(1) + gap(2) + bold("NUMBER")
+	expectedHeader := testPRL.theme.Bold.Render("REPO") +
+		sgr8spaces(1) + sgr8spaces(2) +
+		testPRL.theme.Bold.Render("NUMBER")
 	require.Equal(t, expectedHeader, lines[0])
 }
 
@@ -359,12 +362,10 @@ func TestRender_HeaderPresent(t *testing.T) {
 	require.Len(t, lines, 2, "expected header + 1 data line")
 
 	// Col widths: max(vw("REPO")=4, vw("alpha")=5)=5, max(vw("NUMBER")=6, vw("#1")=2)=6
-	// Header: bold("REPO") + 1 pad + 2 gap + bold("NUMBER")
-	expectedHeader := testPRL.theme.Bold.Render(
-		"REPO",
-	) + "   " + testPRL.theme.Bold.Render(
-		"NUMBER",
-	)
+	// Header: bold("REPO") + pad(1) + gap(2) + bold("NUMBER")
+	expectedHeader := testPRL.theme.Bold.Render("REPO") +
+		sgr8spaces(1) + sgr8spaces(2) +
+		testPRL.theme.Bold.Render("NUMBER")
 	require.Equal(t, expectedHeader, lines[0])
 }
 

@@ -7,14 +7,12 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/cli/go-gh/v2/pkg/api"
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clib/complete"
 	"github.com/gechr/clib/prompt"
 	"github.com/gechr/clib/terminal"
 	"github.com/gechr/clog"
-	"github.com/muesli/termenv"
 )
 
 func main() {
@@ -383,11 +381,9 @@ func applyColorMode(color string) bool {
 	switch color {
 	case "always":
 		clog.SetColorMode(clog.ColorAlways)
-		lipgloss.SetColorProfile(termenv.TrueColor)
 		return true
 	case "never":
 		clog.SetColorMode(clog.ColorNever)
-		lipgloss.SetColorProfile(termenv.Ascii)
 		return false
 	default: // "auto"
 		return terminal.Is(os.Stdout)

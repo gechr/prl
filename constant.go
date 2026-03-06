@@ -48,6 +48,9 @@ const (
 
 // UI layout.
 const (
-	editBodyLines   = 15
-	maxSelectHeight = 50
+	editBodyLines    = 15
+	editTitleYOffset = 3 // header + blank + "Title" label
+	editBodyYOffset  = 5 // header + blank + "Title" label + title-end + blank + "Body" label (excluding title lines)
+	editWidth        = 120
+	maxSelectHeight  = 50
 )
