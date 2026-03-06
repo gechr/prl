@@ -16,7 +16,7 @@ type prl struct {
 func New() *prl {
 	return &prl{
 		theme: theme.New(
-			theme.WithEnumStyle(theme.EnumStyleHighlightPrefix),
+			theme.WithEnumStyle(theme.EnumStyleHighlightBoth),
 		),
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/kong"
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -131,6 +132,159 @@ func run() error {
 		return nil
 	}
 
+	// Watch mode: loop search+render with screen clear
+	if cli.Watch {
+		return runWatch(prl, rest, &cli, cfg, tty, params)
+	}
+
+	return runOnce(prl, rest, &cli, cfg, tty, params)
+}
+
+// runWatch loops runOnce every watchInterval, clearing the screen between refreshes.
+// The screen is only cleared once new output is ready, avoiding blank flashes.
+func runWatch(
+	p *prl,
+	rest *api.RESTClient,
+	cli *CLI,
+	cfg *Config,
+	tty bool,
+	params *SearchParams,
+) error {
+	first := true
+	for {
+		output, err := buildOutput(p, rest, cli, cfg, tty, params)
+		if err != nil {
+			clog.Error().Err(err).Msg("Refresh failed")
+		} else if output != "" {
+			if !first {
+				// Clear screen and move cursor to top-left
+				fmt.Print("\033[2J\033[H")
+			}
+			first = false
+			fmt.Println(output)
+		}
+
+		time.Sleep(watchInterval)
+	}
+}
+
+// buildOutput runs the search+filter+enrich+render pipeline and returns the
+// rendered output string. It does not print anything or perform side effects.
+func buildOutput(
+	p *prl,
+	rest *api.RESTClient,
+	cli *CLI,
+	cfg *Config,
+	tty bool,
+	params *SearchParams,
+) (string, error) {
+	// Execute search
+	prs, err := executeSearch(rest, params)
+	if err != nil {
+		return "", err
+	}
+
+	// Apply filters
+	prs, err = applyFilters(cli, prs)
+	if err != nil {
+		return "", err
+	}
+	if len(prs) == 0 {
+		return "", nil
+	}
+
+	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
+	var gql *api.GraphQLClient
+	getGQL := func() (*api.GraphQLClient, error) {
+		if gql == nil {
+			var gqlErr error
+			gql, gqlErr = newGraphQLClient(withDebug(cli.Debug))
+			if gqlErr != nil {
+				return nil, fmt.Errorf("creating GraphQL client: %w", gqlErr)
+			}
+		}
+		return gql, nil
+	}
+
+	// Filter by automerge status: --merge shows PRs without automerge,
+	// --no-merge shows PRs with automerge.
+	if cli.Merge != nil {
+		g, gqlErr := getGQL()
+		if gqlErr != nil {
+			return "", gqlErr
+		}
+		prs, err = filterByAutoMerge(g, prs, !*cli.Merge)
+		if err != nil {
+			return "", err
+		}
+		if len(prs) == 0 {
+			return "", nil
+		}
+	}
+
+	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
+	if cli.Quick {
+		for i := range prs {
+			if prs[i].State == valueOpen {
+				prs[i].MergeStatus = MergeStatusBlocked
+			}
+		}
+	}
+
+	// Enrich open PRs with CI/review status for table coloring and status column.
+	if !cli.Quick && cli.OutputFormat() == OutputTable {
+		if g, gqlErr := getGQL(); gqlErr == nil {
+			enrichMergeStatus(g, prs)
+		} else {
+			clog.Debug().Err(gqlErr).Msg("skipping merge status enrichment")
+		}
+	}
+
+	// Enrich auto-merge status for Slack reactions (only when actually sending).
+	if !cli.Quick && cli.Send {
+		if g, gqlErr := getGQL(); gqlErr == nil {
+			if amErr := enrichAutoMerge(g, prs); amErr != nil {
+				clog.Debug().Err(amErr).Msg("Failed to enrich auto-merge status")
+			}
+		} else {
+			clog.Debug().Err(gqlErr).Msg("Skipping auto-merge enrichment")
+		}
+	}
+
+	// Render output
+	switch cli.OutputFormat() {
+	case OutputTable:
+		resolver := NewAuthorResolver(cfg)
+		renderer := p.NewTableRenderer(cli, tty, resolver)
+		output, _ := renderer.Render(prs)
+		return output, nil
+	case OutputURL:
+		return renderURLs(prs), nil
+	case OutputBullet:
+		return renderBullets(prs), nil
+	case OutputJSON:
+		return renderJSON(prs)
+	case OutputSlack:
+		if cli.Send && cli.SendTo == "" {
+			return renderSlackDisplay(prs, cfg), nil
+		}
+		output, _ := renderSlack(prs, cfg)
+		return output, nil
+	case OutputRepo:
+		return renderRepos(prs), nil
+	default:
+		return renderURLs(prs), nil
+	}
+}
+
+func runOnce(
+	prl *prl,
+	rest *api.RESTClient,
+	cli *CLI,
+	cfg *Config,
+	tty bool,
+	params *SearchParams,
+) error {
 	// Execute search
 	prs, err := executeSearch(rest, params)
 	if err != nil {
@@ -138,7 +292,7 @@ func run() error {
 	}
 
 	// Apply filters
-	prs, err = applyFilters(&cli, prs)
+	prs, err = applyFilters(cli, prs)
 	if err != nil {
 		return err
 	}
@@ -216,7 +370,7 @@ func run() error {
 	switch cli.OutputFormat() {
 	case OutputTable:
 		resolver := NewAuthorResolver(cfg)
-		renderer := prl.NewTableRenderer(&cli, tty, resolver)
+		renderer := prl.NewTableRenderer(cli, tty, resolver)
 		output, rows = renderer.Render(prs)
 	case OutputURL:
 		output = renderURLs(prs)
@@ -252,16 +406,16 @@ func run() error {
 
 	// Interactive selection (only for table output with action flags)
 	if cli.IsInteractive() && rows != nil {
-		return runInteractive(&cli, rest, cfg, rows)
+		return runInteractive(cli, rest, cfg, rows)
 	}
 
 	// Non-interactive actions: pass PRs directly
 	if cli.HasAction() {
-		actions, aErr := newActionRunner(&cli, rest)
+		actions, aErr := newActionRunner(cli, rest)
 		if aErr != nil {
 			return aErr
 		}
-		return actions.Execute(&cli, prs)
+		return actions.Execute(cli, prs)
 	}
 
 	// Open in browser
@@ -278,7 +432,7 @@ func run() error {
 
 	// Send to Slack
 	if cli.Send {
-		if err := sendSlack(prs, &cli, cfg); err != nil {
+		if err := sendSlack(prs, cli, cfg); err != nil {
 			return err
 		}
 	}

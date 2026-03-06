@@ -46,6 +46,9 @@ const (
 	vcsJJ  = "jj"
 )
 
+// Watch mode.
+const watchInterval = 10 * time.Second
+
 // UI layout.
 const (
 	editBodyMinLines = 3 // minimum body textarea height

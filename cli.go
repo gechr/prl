@@ -81,10 +81,11 @@ type CLI struct {
 	Sort    *string `name:"sort"    help:"Sort by"                                                                                            placeholder:"<field>"                               clib:"terse='Sort field',complete='values=name created updated',group='Output',enum='name,created,updated',highlight='n,c,u',default='name'"`
 
 	// Miscellaneous
-	Color   string `name:"color"   help:"When to use color (auto, always, never)"    clib:"terse='Color mode',complete='values=auto always never',group='Miscellaneous',enum='auto,always,never'" default:"auto"`
+	Color   string `name:"color"   help:"When to use color"                          clib:"terse='Color mode',complete='values=auto always never',group='Miscellaneous',enum='auto,always,never',default='auto'" default:"auto"`
 	Debug   bool   `name:"debug"   help:"Log HTTP requests to stderr"                clib:"terse='Debug mode',group='Miscellaneous'"`
 	Quick   bool   `name:"quick"   help:"Skip enrichment (merge status, auto-merge)" short:"Q"                                                                                                    clib:"terse='Skip enrichment',group='Miscellaneous'"`
 	Verbose bool   `name:"verbose" help:"Enable verbose logging"                     short:"v"                                                                                                    clib:"terse='Verbose',group='Miscellaneous'"`
+	Watch   bool   `name:"watch"   help:"Refresh output every 10 seconds"            short:"W"                                                                                                    clib:"terse='Watch mode',group='Miscellaneous'"`
 
 	sortExplicit   bool `kong:"-"`
 	outputExplicit bool `kong:"-"`
@@ -149,6 +150,21 @@ func (c *CLI) Validate() error {
 	}
 	if c.Author != nil && len(c.Team.Values) > 0 {
 		return fmt.Errorf("--author and --team are mutually exclusive")
+	}
+	if c.Watch && c.HasAction() {
+		return fmt.Errorf("--watch cannot be combined with action flags")
+	}
+	if c.Watch && c.Send {
+		return fmt.Errorf("--watch and --send are mutually exclusive")
+	}
+	if c.Watch && c.Clone {
+		return fmt.Errorf("--watch and --clone are mutually exclusive")
+	}
+	if c.Watch && c.Open {
+		return fmt.Errorf("--watch and --open are mutually exclusive")
+	}
+	if c.Watch && c.Web {
+		return fmt.Errorf("--watch and --web are mutually exclusive")
 	}
 
 	// Validate limit
