@@ -52,6 +52,7 @@ type CLI struct {
 	Close        bool   `name:"close"         help:"Close each PR"                                                   clib:"terse='Close PRs',group='Interactive/1'"`
 	DeleteBranch bool   `name:"delete-branch" help:"Delete branch after close (requires --close)"                    clib:"terse='Delete branch',group='Interactive/1'"`
 	Comment      string `name:"comment"       help:"Add a comment to each PR"                                        placeholder:"<body>"                                  clib:"terse='Add comment',group='Interactive/1'"`
+	Edit         bool   `name:"edit"          help:"Edit title and body of each PR"                                  short:"e"                                             clib:"terse='Edit PR',group='Interactive/1'"`
 	MarkDraft    bool   `name:"mark-draft"    help:"Convert each PR to draft (only targets non-draft PRs)"           clib:"terse='Convert to draft',group='Interactive/1'"`
 	MarkReady    bool   `name:"mark-ready"    help:"Mark each PR as ready for review (only targets draft PRs)"       clib:"terse='Mark as ready',group='Interactive/1'"`
 	Merge        *bool  `name:"merge"         help:"Toggle auto-merge (squash) on each PR"                           negatable:""                                          clib:"terse='Auto-merge',group='Interactive/1'"`
@@ -115,6 +116,15 @@ func (c *CLI) Validate() error {
 	}
 	if c.ForceMerge && c.MarkDraft {
 		return fmt.Errorf("--force-merge and --mark-draft are mutually exclusive")
+	}
+	if c.Edit && c.Yes {
+		return fmt.Errorf("--edit requires interactive mode (cannot use --yes)")
+	}
+	if c.Edit && c.Close {
+		return fmt.Errorf("--edit and --close are mutually exclusive")
+	}
+	if c.Edit && c.ForceMerge {
+		return fmt.Errorf("--edit and --force-merge are mutually exclusive")
 	}
 	if c.DeleteBranch && !c.Close {
 		return fmt.Errorf("--delete-branch requires --close")
@@ -285,7 +295,8 @@ func (c *CLI) Normalize(cfg *Config) {
 
 // HasAction returns true if any action flag is set.
 func (c *CLI) HasAction() bool {
-	return c.Approve || c.Close || c.Comment != "" || c.ForceMerge || c.MarkDraft || c.MarkReady ||
+	return c.Approve || c.Close || c.Comment != "" || c.Edit || c.ForceMerge || c.MarkDraft ||
+		c.MarkReady ||
 		c.Merge != nil ||
 		c.Update
 }
@@ -296,8 +307,11 @@ func (c *CLI) IsInteractive() bool {
 	if c.Yes {
 		return false
 	}
-	return c.Approve || c.Close || c.Comment != "" || c.ForceMerge || c.MarkDraft || c.MarkReady ||
-		(c.Merge != nil && *c.Merge) || c.Update || c.Send
+	return c.Approve || c.Close || c.Comment != "" || c.Edit || c.ForceMerge || c.MarkDraft ||
+		c.MarkReady ||
+		(c.Merge != nil && *c.Merge) ||
+		c.Update ||
+		c.Send
 }
 
 // setOutput sets the output format string.

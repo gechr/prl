@@ -277,6 +277,22 @@ func (a *ActionRunner) mergePR(owner, repo string, number int) error {
 	return a.rest.Put(path, jsonBody(map[string]string{"merge_method": "squash"}), nil)
 }
 
+func (a *ActionRunner) updatePR(owner, repo string, number int, title, body string) error {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
+	return a.rest.Patch(path, jsonBody(map[string]string{"title": title, "body": body}), nil)
+}
+
+func (a *ActionRunner) fetchPRBody(owner, repo string, number int) (string, error) {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
+	var pr struct {
+		Body string `json:"body"`
+	}
+	if err := a.rest.Get(path, &pr); err != nil {
+		return "", err
+	}
+	return pr.Body, nil
+}
+
 func (a *ActionRunner) updateBranch(owner, repo string, number int) error {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/update-branch", owner, repo, number)
 	return a.rest.Put(path, nil, nil)

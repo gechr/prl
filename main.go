@@ -312,6 +312,11 @@ func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow
 	if aErr != nil {
 		return aErr
 	}
+
+	if cli.Edit {
+		return interactiveEdit(actions, selectedPRs)
+	}
+
 	return actions.Execute(cli, selectedPRs)
 }
 
@@ -344,6 +349,9 @@ func buildActionHeader(cli *CLI) string {
 	}
 	if cli.Comment != "" {
 		parts = append(parts, "Comment")
+	}
+	if cli.Edit {
+		parts = append(parts, "Edit")
 	}
 	if cli.ForceMerge {
 		parts = append(parts, "Force-merge")

@@ -47,4 +47,7 @@ const (
 )
 
 // UI layout.
-const maxSelectHeight = 50
+const (
+	editBodyLines   = 15
+	maxSelectHeight = 50
+)
