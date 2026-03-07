@@ -374,15 +374,16 @@ func TestRender_SingleRow(t *testing.T) {
 	r := newTestRenderer(simpleColumns(), table.WithShowIndex(true))
 	out, _ := r.Render(prs)
 
-	// Single row should NOT show index (matches bash behavior: skip index for single result)
+	// Single row should still show index.
 	lines := strings.Split(out, "\n")
 	require.Len(t, lines, 2, "expected header + 1 data line")
 
-	// Data line should have exactly 2 visible fields (repo and number, no index)
+	// Data line should have 3 visible fields (index, repo, number)
 	dataFields := strings.Fields(ansi.Strip(lines[1]))
-	require.Len(t, dataFields, 2)
-	require.Equal(t, "alpha", dataFields[0])
-	require.Equal(t, "#1", dataFields[1])
+	require.Len(t, dataFields, 3)
+	require.Equal(t, "1", dataFields[0])
+	require.Equal(t, "alpha", dataFields[1])
+	require.Equal(t, "#1", dataFields[2])
 }
 
 func TestRender_AuthorColumn(t *testing.T) {

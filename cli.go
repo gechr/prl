@@ -24,7 +24,7 @@ type CLI struct {
 	Query []string `help:"Search term(s) to filter pull requests" arg:"" optional:""`
 
 	// Filter flags
-	Organization    CSVFlag  `name:"owner"       help:"Limit to GitHub owner/organization"                           short:"O"                                         aliases:"organization,org"                                                                                                                       clib:"terse='Owner/organization',group='Filters/1'"`
+	Organization    CSVFlag  `name:"owner"       help:"Limit to GitHub owner/organization"                           short:"O"                                         aliases:"organization,org"                                                                                                                       clib:"terse='Owner/org',group='Filters/1'"`
 	Repo            string   `name:"repo"        help:"Limit to specific repo"                                       short:"R"                                         aliases:"repository"                                                                                                                             clib:"terse='Repository',complete='predictor=repo',group='Filters/1'"`
 	Filter          []string `name:"filter"      help:"Search qualifier"                                             short:"f"                                         clib:"terse='Search qualifier',group='Filters/2'"`
 	Match           string   `name:"match"       help:"Restrict text search to field (title, body, comments)"        placeholder:"<field>"                             clib:"terse='Search field',complete='values=title body comments',group='Filters/2',enum='title,body,comments',highlight='t,b,c',default='title'"`
@@ -74,18 +74,20 @@ type CLI struct {
 	SendTo string `name:"send-to" help:"Override Slack recipient (#channel, @user, email)" placeholder:"<recipient>"                      clib:"terse='Override Slack recipient',complete='predictor=slack-recipient',group='Actions/2'"`
 
 	// Output flags
-	Columns CSVFlag `name:"columns" help:"Table columns [index, ref, repo, org, number, title, labels, author, state, created, updated, url]" aliases:"col"                                       placeholder:"<cols>"                                                                                                                         clib:"terse='Table columns',complete='predictor=columns,comma',group='Output'"`
-	Limit   *int    `name:"limit"   help:"Maximum results"                                                                                    short:"L"                                           placeholder:"<n>"                                                                                                                            clib:"terse='Max results',group='Output'"`
-	Output  *string `name:"output"  help:"Output format"                                                                                      short:"o"                                           placeholder:"<fmt>"                                                                                                                          clib:"terse='Output format',complete='values=url bullet slack table json repo',group='Output',enum='url,bullet,slack,table,json,repo',highlight='u,b,s,t,j,r',default='table'"`
-	Reverse bool    `name:"reverse" help:"Show oldest first (top)"                                                                            clib:"terse='Reverse display order',group='Output'"`
-	Sort    *string `name:"sort"    help:"Sort by"                                                                                            placeholder:"<field>"                               clib:"terse='Sort field',complete='values=name created updated',group='Output',enum='name,created,updated',highlight='n,c,u',default='name'"`
+	Watch    bool    `name:"watch"   help:"Refresh output periodically"                                                                        short:"W"                                             clib:"terse='Watch mode',group='Output/0'"`
+	ExitZero bool    `name:"exit-0"  help:"Exit immediately when there are no results"                                                         short:"0"                                             clib:"terse='Exit on no match',group='Output/0'"`
+	Columns  CSVFlag `name:"columns" help:"Table columns [index, ref, repo, org, number, title, labels, author, state, created, updated, url]" aliases:"col"                                         placeholder:"<cols>"                                                                                                                           clib:"terse='Table columns',complete='predictor=columns,comma',group='Output/1'"`
+	Limit    *int    `name:"limit"   help:"Maximum results"                                                                                    short:"L"                                             placeholder:"<n>"                                                                                                                              clib:"terse='Max results',group='Output/1'"`
+	Output   *string `name:"output"  help:"Output format"                                                                                      short:"o"                                             placeholder:"<fmt>"                                                                                                                            clib:"terse='Output format',complete='values=url bullet slack table json repo',group='Output/1',enum='url,bullet,slack,table,json,repo',highlight='u,b,s,t,j,r',default='table'"`
+	Reverse  bool    `name:"reverse" help:"Show oldest first (top)"                                                                            clib:"terse='Reverse display order',group='Output/1'"`
+	Sort     *string `name:"sort"    help:"Sort by"                                                                                            placeholder:"<field>"                                 clib:"terse='Sort field',complete='values=name created updated',group='Output/1',enum='name,created,updated',highlight='n,c,u',default='name'"`
 
 	// Miscellaneous
-	Color   string `name:"color"   help:"When to use color"                          clib:"terse='Color mode',complete='values=auto always never',group='Miscellaneous',enum='auto,always,never',default='auto'" default:"auto"`
-	Debug   bool   `name:"debug"   help:"Log HTTP requests to stderr"                clib:"terse='Debug mode',group='Miscellaneous'"`
-	Quick   bool   `name:"quick"   help:"Skip enrichment (merge status, auto-merge)" short:"Q"                                                                                                    clib:"terse='Skip enrichment',group='Miscellaneous'"`
-	Verbose bool   `name:"verbose" help:"Enable verbose logging"                     short:"v"                                                                                                    clib:"terse='Verbose',group='Miscellaneous'"`
-	Watch   bool   `name:"watch"   help:"Refresh output every 10 seconds"            short:"W"                                                                                                    clib:"terse='Watch mode',group='Miscellaneous'"`
+	Init    bool   `name:"init"    help:"Initialize config with defaults"            clib:"terse='Initialize config',group='Miscellaneous/0'"`
+	Color   string `name:"color"   help:"When to use color"                          clib:"terse='Color mode',complete='values=auto always never',group='Miscellaneous/1',enum='auto,always,never',default='auto'" default:"auto"`
+	Debug   bool   `name:"debug"   help:"Log HTTP requests to stderr"                clib:"terse='Debug mode',group='Miscellaneous/1'"`
+	Quick   bool   `name:"quick"   help:"Skip enrichment (merge status, auto-merge)" short:"Q"                                                                                                                     clib:"terse='Skip enrichment',group='Miscellaneous/1'"`
+	Verbose bool   `name:"verbose" help:"Enable verbose logging"                     short:"v"                                                                                                                     clib:"terse='Verbose',group='Miscellaneous/1'"`
 
 	sortExplicit   bool `kong:"-"`
 	outputExplicit bool `kong:"-"`
@@ -136,8 +138,8 @@ func (c *CLI) Validate() error {
 		return fmt.Errorf("--clone cannot be combined with PR action flags")
 	}
 	sending := c.Send || c.SendTo != "" || c.SendAt != ""
-	if sending && c.HasAction() {
-		return fmt.Errorf("--send cannot be combined with PR action flags")
+	if sending && c.HasAction() && !c.Yes {
+		return fmt.Errorf("--send cannot be combined with PR action flags without --yes")
 	}
 	if sending && c.Clone {
 		return fmt.Errorf("--send and --clone are mutually exclusive")

@@ -47,7 +47,19 @@ const (
 )
 
 // Watch mode.
-const watchInterval = 10 * time.Second
+const (
+	watchMinInterval = 3 * time.Second                // floor: few results
+	watchMaxInterval = 30 * time.Second               // ceiling: many results
+	watchScalePer    = 500 * time.Millisecond         // additional delay per result
+	ansiClearScreen  = "\033[2J\033[H"                // clear screen + move cursor to top-left
+	ansiHideCursor   = "\033[?25l"                    // hide cursor
+	ansiShowCursor   = "\033[?25h"                    // show cursor
+	ansiAltScreenOn  = "\033[?1049h"                  // switch to alternate screen buffer
+	ansiAltScreenOff = "\033[?1049l"                  // switch back to main screen buffer
+	ansiMoveTo1x1    = "\033[1;1H"                    // move cursor to row 1, col 1
+	ansiClearLine    = "\x1b[2K\r"                    // erase current line and return cursor to col 0
+	ansiSpinnerClear = ansiClearLine + ansiShowCursor // erase spinner line and restore cursor
+)
 
 // UI layout.
 const (

@@ -17,6 +17,14 @@ import (
 
 const envPrefix = "PRL_"
 
+func configPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "prl", "config.yaml"), nil
+}
+
 // Configuration key constants.
 const (
 	keyAuthors              = "authors"
@@ -38,6 +46,8 @@ const (
 	keyTeamAliases          = "team_aliases"
 	keyTerraformMemberDir   = "terraform_membership_dir"
 	keyTerraformRepoDir     = "terraform_repository_dir"
+	keySpinnerStyle         = "spinner.style"
+	keySpinnerColors        = "spinner.colors"
 	keyVCS                  = "vcs"
 )
 
@@ -53,6 +63,12 @@ type Defaults struct {
 	Reverse       bool     `koanf:"reverse"`
 	Sort          string   `koanf:"sort"`
 	State         string   `koanf:"state"`
+}
+
+// SpinnerConfig holds spinner style configuration.
+type SpinnerConfig struct {
+	Style  string   `koanf:"style"`
+	Colors []string `koanf:"colors"`
 }
 
 // OutputConfig holds output format configuration.
@@ -78,6 +94,9 @@ type Config struct {
 
 	// Clone settings
 	VCS string `koanf:"vcs"`
+
+	// Spinner style
+	Spinner SpinnerConfig `koanf:"spinner"`
 
 	// Directory paths
 	CodeDir                string `koanf:"code_dir"`
@@ -118,6 +137,8 @@ func defaultConfig() map[string]any {
 		keySlackTwoApprover:     []string{},
 		keyTeamAliases:          map[string]string{},
 		keyTerraformMemberDir:   "",
+		keySpinnerStyle:         defaultSpinner,
+		keySpinnerColors:        defaultSpinnerColors,
 		keyTerraformRepoDir:     "",
 	}
 }
@@ -135,16 +156,11 @@ func loadConfig() (*Config, error) {
 	}
 
 	// 2. YAML config file (optional)
-	home, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		clog.Debug().Err(homeErr).Msg("Failed to determine home directory")
-	}
-	if home != "" {
-		configPath := filepath.Join(home, ".config", "prl", "config.yaml")
-		if _, err := os.Stat(configPath); err == nil {
-			if err := k.Load(file.Provider(configPath), yaml.Parser()); err != nil {
-				return nil, fmt.Errorf("loading config file %s: %w", configPath, err)
-			}
+	if cp, cpErr := configPath(); cpErr != nil {
+		clog.Debug().Err(cpErr).Msg("Failed to determine config path")
+	} else if _, statErr := os.Stat(cp); statErr == nil {
+		if err := k.Load(file.Provider(cp), yaml.Parser()); err != nil {
+			return nil, fmt.Errorf("loading config file %s: %w", cp, err)
 		}
 	}
 
@@ -246,6 +262,143 @@ func deriveTerraformDir(k *koanf.Koanf, key, defaultPath string) {
 	if err := k.Load(confmap.Provider(map[string]any{key: defaultPath}, "."), nil); err != nil {
 		clog.Debug().Err(err).Str("key", key).Msg("Failed to set derived terraform dir")
 	}
+}
+
+var defaultConfigYAML = fmt.Sprintf(`# prl configuration
+# See: prl --help
+
+# Default query parameters applied when the corresponding flag is not set.
+default:
+  # Default authors to search for.
+  # Use "@me" for the authenticated user, or specify GitHub usernames.
+  # Examples:
+  #   authors: ["@me"]
+  #   authors: ["octocat", "hubot"]
+  authors:
+    - "@me"
+
+  # Whether to include PRs from bot accounts (e.g. dependabot, renovate).
+  bots: true
+
+  # Maximum number of results to return.
+  limit: %d
+
+  # Restrict text search to a specific field.
+  # Options: title, body, comments
+  match: title
+
+  # Merge method used for auto-merge.
+  # Options: squash, merge, rebase
+  merge_method: squash
+
+  # Limit searches to specific GitHub organizations.
+  # Examples:
+  #   organizations: ["my-org"]
+  #   organizations: ["org-a", "org-b"]
+  organizations: []
+
+  # Output format for results.
+  # Options: table, url, bullet, slack, json, repo
+  output: %s
+
+  # Show oldest results first (at the top).
+  reverse: false
+
+  # Sort order for results.
+  # Options: name, created, updated
+  sort: %s
+
+  # Filter by PR state.
+  # Options: open, closed, merged, all
+  state: %s
+
+# VCS used for --clone.
+# Options: git, jj
+vcs: %s
+
+# Spinner displayed while fetching data.
+spinner:
+  # Animation style.
+  # Options: dots, stars
+  style: %s
+
+  # Colors for spinner frames (256-color palette).
+  # Each frame cycles through these colors in order.
+  colors: [%s]
+
+# Base directory for code repositories.
+# Example: code_dir: ~/code/github
+code_dir: ""
+
+# Organizations to exclude from results.
+# Example: ignored_organizations: ["archived-org", "old-org"]
+ignored_organizations: []
+
+# Map GitHub usernames to display names for prettier output.
+# Example:
+#   authors:
+#     octocat: Mona Lisa
+#     hubot: Hubot Bot
+authors: {}
+
+# Short aliases for team slugs, usable with --team.
+# Example:
+#   team_aliases:
+#     fe: my-org/frontend
+#     be: my-org/backend
+team_aliases: {}
+
+# Slack output configuration for --send.
+output:
+  slack:
+    # Map GitHub usernames to Slack recipients.
+    # Example:
+    #   recipients:
+    #     octocat: "@mona"
+    #     hubot: "#bots"
+    recipients: {}
+
+    # Repos to exclude from Slack output.
+    # Example: skip_repos: ["my-org/noisy-repo"]
+    skip_repos: []
+
+    # Repos that require two approvals (highlighted in Slack output).
+    # Example: two_approver_repos: ["my-org/critical-service"]
+    two_approver_repos: []
+`,
+	defaultLimit,
+	valueTable,
+	valueName,
+	valueOpen,
+	vcsGit,
+	defaultSpinner,
+	`"`+strings.Join(defaultSpinnerColors, `", "`)+`"`,
+)
+
+func initConfig() error {
+	cp, err := configPath()
+	if err != nil {
+		return fmt.Errorf("determining config path: %w", err)
+	}
+
+	if _, err := os.Stat(cp); err == nil {
+		clog.Warn().Path("path", cp).Msg("Config already exists")
+		return errFatal
+	}
+
+	if err := os.MkdirAll(
+		filepath.Dir(cp),
+		0o755,
+	); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	if err := os.WriteFile(cp, []byte(defaultConfigYAML), 0o600); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+
+	clog.Info().Path("path", cp).Msg("Initialized default config")
+	return nil
 }
 
 // resolveTeamAlias resolves a team alias to its full name.

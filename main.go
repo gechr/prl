@@ -4,9 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/kong"
 	"github.com/cli/go-gh/v2/pkg/api"
 	clib "github.com/gechr/clib/cli/kong"
@@ -16,9 +20,22 @@ import (
 	"github.com/gechr/clog"
 )
 
+// Sentinel errors for controlled exits.
+var (
+	errOK    = errors.New("ok")    // caller handled it; exit 0
+	errFatal = errors.New("fatal") // caller already logged; exit 1
+)
+
 func main() {
 	if err := run(); err != nil {
-		clog.Fatal().Err(err).Send()
+		switch {
+		case errors.Is(err, errOK):
+			return
+		case errors.Is(err, errFatal):
+			os.Exit(1)
+		default:
+			clog.Fatal().Err(err).Send()
+		}
 	}
 }
 
@@ -66,6 +83,11 @@ func run() error {
 	}
 	if handled {
 		return nil
+	}
+
+	// Init mode: write default config and exit
+	if cli.Init {
+		return initConfig()
 	}
 
 	// Configure logging and color
@@ -132,16 +154,140 @@ func run() error {
 		return nil
 	}
 
+	s := buildSpinner(cfg.Spinner)
+
 	// Watch mode: loop search+render with screen clear
 	if cli.Watch {
-		return runWatch(prl, rest, &cli, cfg, tty, params)
+		return runWatch(prl, rest, &cli, cfg, tty, params, s)
 	}
 
-	return runOnce(prl, rest, &cli, cfg, tty, params)
+	var output string
+	if err := withSpinner(tty, s, func(stopSpinner func()) error {
+		var runErr error
+		output, runErr = runOnce(prl, rest, &cli, cfg, tty, params, stopSpinner)
+		return runErr
+	}); err != nil {
+		return err
+	}
+	if output != "" {
+		fmt.Println(output)
+	}
+	return nil
 }
 
-// runWatch loops runOnce every watchInterval, clearing the screen between refreshes.
-// The screen is only cleared once new output is ready, avoiding blank flashes.
+// withSpinner runs fn in a goroutine while displaying an inline spinner on a TTY.
+// Returns fn's result. On non-TTY it just runs fn directly.
+func withSpinner[T any](tty bool, s spinner, fn func(stop func()) T) T {
+	if !tty {
+		return fn(func() {})
+	}
+
+	stopReq := make(chan struct{})
+	stopAck := make(chan struct{})
+	done := make(chan T, 1)
+	go func() {
+		var once sync.Once
+		stop := func() {
+			once.Do(func() {
+				stopReq <- struct{}{}
+				<-stopAck
+			})
+		}
+		done <- fn(stop)
+	}()
+
+	fmt.Print(ansiHideCursor)
+	ticker := time.NewTicker(s.interval)
+	defer ticker.Stop()
+
+	i := 0
+	for {
+		select {
+		case result := <-done:
+			fmt.Print(ansiSpinnerClear)
+			return result
+		case <-stopReq:
+			fmt.Print(ansiSpinnerClear)
+			stopAck <- struct{}{}
+			return <-done
+		case <-ticker.C:
+			fmt.Print("\r" + s.frames[i%len(s.frames)])
+			i++
+		}
+	}
+}
+
+// Spinner style names.
+const (
+	spinnerDots  = "dots"
+	spinnerStars = "stars"
+
+	defaultSpinner = spinnerDots
+)
+
+// Default spinner colors (256-color palette).
+var defaultSpinnerColors = []string{"210", "211", "212", "217", "218", "225"}
+
+type spinner struct {
+	frames   []string
+	interval time.Duration
+}
+
+// spinnerStyle defines the raw glyphs and tick rate for a spinner style.
+type spinnerStyle struct {
+	glyphs   []string
+	interval time.Duration
+}
+
+var spinnerStyles = map[string]spinnerStyle{
+	spinnerDots: {
+		glyphs:   []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		interval: 80 * time.Millisecond, //nolint:mnd // spinner tick rate
+	},
+	spinnerStars: {
+		glyphs:   []string{"·", "✢", "✳", "✶", "✻", "✽"},
+		interval: 150 * time.Millisecond, //nolint:mnd // spinner tick rate
+	},
+}
+
+func buildSpinner(cfg SpinnerConfig) spinner {
+	style, ok := spinnerStyles[cfg.Style]
+	if !ok {
+		clog.Warn().
+			Msgf("Invalid spinner '%s' defined in config - falling back to '%s'", cfg.Style, defaultSpinner)
+		style = spinnerStyles[defaultSpinner]
+	}
+
+	colors := cfg.Colors
+	if len(colors) == 0 {
+		colors = defaultSpinnerColors
+	}
+
+	frames := make([]string, len(style.glyphs))
+	for i, glyph := range style.glyphs {
+		c := colors[i%len(colors)]
+		frames[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render(glyph)
+	}
+
+	return spinner{frames: frames, interval: style.interval}
+}
+
+var noResults = "\n  " + lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("8")).
+	Render("[no results]")
+
+// watchInterval returns a refresh duration scaled by result count:
+// fewer results refresh faster, more results refresh slower to conserve API calls.
+func watchInterval(n int) time.Duration {
+	d := watchMinInterval + time.Duration(n)*watchScalePer
+	if d > watchMaxInterval {
+		return watchMaxInterval
+	}
+	return d
+}
+
+// runWatch loops buildOutput every watchInterval, clearing the screen between refreshes.
 func runWatch(
 	p *prl,
 	rest *api.RESTClient,
@@ -149,27 +295,113 @@ func runWatch(
 	cfg *Config,
 	tty bool,
 	params *SearchParams,
+	s spinner,
 ) error {
-	first := true
-	for {
-		output, err := buildOutput(p, rest, cli, cfg, tty, params)
-		if err != nil {
-			clog.Error().Err(err).Msg("Refresh failed")
-		} else if output != "" {
-			if !first {
-				// Clear screen and move cursor to top-left
-				fmt.Print("\033[2J\033[H")
+	// First fetch with spinner before entering the alternate screen.
+	type fetchResult struct {
+		output string
+		count  int
+		err    error
+	}
+	r := withSpinner(tty, s, func(func()) fetchResult {
+		out, n, fErr := buildOutput(p, rest, cli, cfg, tty, params)
+		return fetchResult{out, n, fErr}
+	})
+
+	if r.err != nil {
+		return r.err
+	}
+	if r.output == "" && cli.ExitZero {
+		return errFatal
+	}
+
+	output, count := r.output, r.count
+
+	fmt.Print(ansiAltScreenOn + ansiHideCursor)
+	cleanup := func() { fmt.Print(ansiShowCursor + ansiAltScreenOff) }
+	defer cleanup()
+
+	// Restore terminal on interrupt.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		cleanup()
+		os.Exit(0)
+	}()
+
+	results := make(chan fetchResult, 1)
+	fetch := func() {
+		go func() {
+			out, n, fErr := buildOutput(p, rest, cli, cfg, tty, params)
+			results <- fetchResult{out, n, fErr}
+		}()
+	}
+
+	var (
+		fetching    bool
+		interval    time.Duration
+		lastOutput  string
+		nextFetchAt time.Time
+		spinnerTick int
+	)
+
+	// Use the first fetch result.
+	if output != "" {
+		lastOutput = output
+	} else {
+		lastOutput = noResults
+	}
+	interval = watchInterval(count)
+	nextFetchAt = time.Now().Add(interval)
+
+	ticker := time.NewTicker(s.interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// Check for fetch completion (non-blocking).
+		select {
+		case r := <-results:
+			fetching = false
+			switch {
+			case r.err != nil:
+				clog.Error().Err(r.err).Msg("Refresh failed")
+			case r.output != "":
+				lastOutput = r.output
+			case cli.ExitZero:
+				return errFatal
+			default:
+				lastOutput = noResults
 			}
-			first = false
-			fmt.Println(output)
+			interval = watchInterval(r.count)
+			nextFetchAt = time.Now().Add(interval)
+		default:
 		}
 
-		time.Sleep(watchInterval)
+		// Repaint.
+		fmt.Print(ansiClearScreen)
+		if lastOutput != "" {
+			fmt.Println(lastOutput)
+		}
+		if fetching && lastOutput != "" {
+			frame := s.frames[spinnerTick%len(s.frames)]
+			fmt.Print(ansiMoveTo1x1 + frame)
+			spinnerTick++
+		}
+
+		// Schedule next fetch when due.
+		if !fetching && !nextFetchAt.IsZero() && time.Now().After(nextFetchAt) {
+			fetching = true
+			spinnerTick = 0
+			fetch()
+		}
 	}
+
+	return nil
 }
 
 // buildOutput runs the search+filter+enrich+render pipeline and returns the
-// rendered output string. It does not print anything or perform side effects.
+// rendered output string, the number of PRs, and any error.
 func buildOutput(
 	p *prl,
 	rest *api.RESTClient,
@@ -177,20 +409,20 @@ func buildOutput(
 	cfg *Config,
 	tty bool,
 	params *SearchParams,
-) (string, error) {
+) (string, int, error) {
 	// Execute search
 	prs, err := executeSearch(rest, params)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	// Apply filters
 	prs, err = applyFilters(cli, prs)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	if len(prs) == 0 {
-		return "", nil
+		return "", 0, nil
 	}
 
 	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
@@ -211,14 +443,14 @@ func buildOutput(
 	if cli.Merge != nil {
 		g, gqlErr := getGQL()
 		if gqlErr != nil {
-			return "", gqlErr
+			return "", 0, gqlErr
 		}
 		prs, err = filterByAutoMerge(g, prs, !*cli.Merge)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		if len(prs) == 0 {
-			return "", nil
+			return "", 0, nil
 		}
 	}
 
@@ -252,31 +484,36 @@ func buildOutput(
 	}
 
 	// Render output
+	n := len(prs)
 	switch cli.OutputFormat() {
 	case OutputTable:
 		resolver := NewAuthorResolver(cfg)
 		renderer := p.NewTableRenderer(cli, tty, resolver)
 		output, _ := renderer.Render(prs)
-		return output, nil
+		return output, n, nil
 	case OutputURL:
-		return renderURLs(prs), nil
+		return renderURLs(prs), n, nil
 	case OutputBullet:
-		return renderBullets(prs), nil
+		return renderBullets(prs), n, nil
 	case OutputJSON:
-		return renderJSON(prs)
+		out, err := renderJSON(prs)
+		return out, n, err
 	case OutputSlack:
 		if cli.Send && cli.SendTo == "" {
-			return renderSlackDisplay(prs, cfg), nil
+			return renderSlackDisplay(prs, cfg), n, nil
 		}
 		output, _ := renderSlack(prs, cfg)
-		return output, nil
+		return output, n, nil
 	case OutputRepo:
-		return renderRepos(prs), nil
+		return renderRepos(prs), n, nil
 	default:
-		return renderURLs(prs), nil
+		return renderURLs(prs), n, nil
 	}
 }
 
+// runOnce executes a single search+render cycle. It returns the output string
+// to print (if any) separately from the error, so the caller can print it
+// after clearing the spinner.
 func runOnce(
 	prl *prl,
 	rest *api.RESTClient,
@@ -284,20 +521,24 @@ func runOnce(
 	cfg *Config,
 	tty bool,
 	params *SearchParams,
-) error {
+	stopSpinner func(),
+) (string, error) {
 	// Execute search
 	prs, err := executeSearch(rest, params)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Apply filters
 	prs, err = applyFilters(cli, prs)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(prs) == 0 {
-		return nil
+		if cli.ExitZero {
+			return "", errFatal
+		}
+		return "", nil
 	}
 
 	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
@@ -318,20 +559,20 @@ func runOnce(
 	if cli.Merge != nil {
 		g, gqlErr := getGQL()
 		if gqlErr != nil {
-			return gqlErr
+			return "", gqlErr
 		}
 		prs, err = filterByAutoMerge(g, prs, !*cli.Merge)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if len(prs) == 0 {
-			return nil
+			return "", nil
 		}
 	}
 
 	// Clone mode: clone unique repos and exit
 	if cli.Clone {
-		return cloneRepos(rest, prs, cfg.VCS)
+		return "", cloneRepos(rest, prs, cfg.VCS)
 	}
 
 	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
@@ -379,7 +620,7 @@ func runOnce(
 	case OutputJSON:
 		output, err = renderJSON(prs)
 		if err != nil {
-			return err
+			return "", err
 		}
 	case OutputSlack:
 		if cli.Send && cli.SendTo == "" {
@@ -394,7 +635,7 @@ func runOnce(
 	}
 
 	if output == "" {
-		return nil
+		return "", nil
 	}
 
 	// Clipboard copy (before interactive selection)
@@ -406,16 +647,19 @@ func runOnce(
 
 	// Interactive selection (only for table output with action flags)
 	if cli.IsInteractive() && rows != nil {
-		return runInteractive(cli, rest, cfg, rows)
+		if stopSpinner != nil {
+			stopSpinner()
+		}
+		return "", runInteractive(cli, rest, cfg, rows)
 	}
 
 	// Non-interactive actions: pass PRs directly
 	if cli.HasAction() {
 		actions, aErr := newActionRunner(cli, rest)
 		if aErr != nil {
-			return aErr
+			return "", aErr
 		}
-		return actions.Execute(cli, prs)
+		return "", actions.Execute(cli, prs)
 	}
 
 	// Open in browser
@@ -424,20 +668,17 @@ func runOnce(
 		for i, pr := range prs {
 			urls[i] = pr.URL
 		}
-		return openBrowser(urls...)
+		return "", openBrowser(urls...)
 	}
-
-	// Print output
-	fmt.Println(output)
 
 	// Send to Slack
 	if cli.Send {
 		if err := sendSlack(prs, cli, cfg); err != nil {
-			return err
+			return "", err
 		}
 	}
 
-	return nil
+	return output, nil
 }
 
 // runInteractive shows the multi-select prompt and dispatches to send or action runner.
