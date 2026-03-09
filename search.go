@@ -30,7 +30,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 
 	state := cli.PRState()
 	switch state {
-	case StateOpen:
+	case StateOpen, StateReady:
 		qualifiers = append(qualifiers, "state:open")
 	case StateClosed:
 		qualifiers = append(qualifiers, "state:closed")
@@ -173,11 +173,6 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// Language filter
 	if cli.Language != "" {
 		qualifiers = append(qualifiers, "language:"+cli.Language)
-	}
-
-	// CI status filter
-	if ci := cli.CIStatus(); ci != CINone {
-		qualifiers = append(qualifiers, "status:"+ci.String())
 	}
 
 	// Explicit filter values

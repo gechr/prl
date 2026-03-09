@@ -68,6 +68,8 @@ func TestParsePRState(t *testing.T) {
 		{"o", StateOpen, true},
 		{"closed", StateClosed, true},
 		{"c", StateClosed, true},
+		{"ready", StateReady, true},
+		{"r", StateReady, true},
 		{"merged", StateMerged, true},
 		{"m", StateMerged, true},
 		{"all", StateAll, true},

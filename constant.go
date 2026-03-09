@@ -19,6 +19,8 @@ const (
 	valueUnknown = "unknown"
 	valueUpdated = "updated"
 	valueURL     = "url"
+
+	colTitle = "title"
 )
 
 // Defaults.
@@ -26,8 +28,14 @@ const (
 	defaultLimit   = 30
 	maxConcurrency = 10
 	maxPerPage     = 100
-	maxTitleLen    = 80
+	maxTitleLen    = 100
 	daysPerWeek    = 7
+)
+
+// Layout: terminal width thresholds and column width estimates.
+const (
+	compactTimeThreshold = 120 // use compact time format below this terminal width
+	columnGap            = 2   // spaces between columns (matches clib/table defaultColumnPadding)
 )
 
 // Duration multipliers in seconds.

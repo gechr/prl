@@ -291,6 +291,43 @@ func enrichMergeStatus(gql *api.GraphQLClient, prs []PullRequest) {
 	}
 }
 
+// filterByCI keeps only PRs whose enriched MergeStatus matches the given CI status.
+// CISuccess matches PRs where CI passed (MergeStatusReady or MergeStatusBlocked).
+// CIFailure matches MergeStatusCIFailed. CIPending matches MergeStatusCIPending.
+func filterByCI(prs []PullRequest, ci CIStatus) []PullRequest {
+	result := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		switch ci {
+		case CISuccess:
+			if pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusBlocked {
+				result = append(result, pr)
+			}
+		case CIFailure:
+			if pr.MergeStatus == MergeStatusCIFailed {
+				result = append(result, pr)
+			}
+		case CIPending:
+			if pr.MergeStatus == MergeStatusCIPending {
+				result = append(result, pr)
+			}
+		case CINone:
+			break
+		}
+	}
+	return result
+}
+
+// filterReady keeps only PRs with MergeStatusReady (CI passing + approved).
+func filterReady(prs []PullRequest) []PullRequest {
+	result := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.MergeStatus == MergeStatusReady {
+			result = append(result, pr)
+		}
+	}
+	return result
+}
+
 // sortPRs sorts pull requests by the given field.
 func sortPRs(prs []PullRequest, field SortField) {
 	switch field {

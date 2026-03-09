@@ -85,7 +85,7 @@ func newTestRendererWithTTY(
 
 // simpleColumns returns minimal columns (repo, number) for testing ordering/indexing.
 func simpleColumns() []Column {
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	return []Column{defs["repo"], defs["number"]}
 }
 
@@ -243,7 +243,7 @@ func TestRender_HeaderContainsBoldStyle(t *testing.T) {
 func TestRender_RefContainsStateColor(t *testing.T) {
 	// Open PR ref with unknown merge status should be styled with dim.
 	prs := testPRs()[:1] // state = "open"
-	defs := testPRL.allColumnDefs("org", nil)
+	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
 	_, rows := r.Render(prs)
 
@@ -254,7 +254,7 @@ func TestRender_RefContainsStateColor(t *testing.T) {
 
 func TestRender_RefMergedColor(t *testing.T) {
 	prs := testPRs()[1:2] // state = "merged"
-	defs := testPRL.allColumnDefs("org", nil)
+	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
 	_, rows := r.Render(prs)
 
@@ -265,7 +265,7 @@ func TestRender_RefMergedColor(t *testing.T) {
 
 func TestRender_RefClosedColor(t *testing.T) {
 	prs := testPRs()[2:3] // state = "closed"
-	defs := testPRL.allColumnDefs("org", nil)
+	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
 	_, rows := r.Render(prs)
 
@@ -277,7 +277,7 @@ func TestRender_RefClosedColor(t *testing.T) {
 func TestRender_RefContainsHyperlink(t *testing.T) {
 	// With tty=true, ref column should contain OSC 8 hyperlinks.
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("org", nil)
+	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
 	_, rows := r.Render(prs)
 
@@ -288,7 +288,7 @@ func TestRender_RefContainsHyperlink(t *testing.T) {
 
 func TestRender_RepoContainsHyperlink(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["repo"]})
 	_, rows := r.Render(prs)
 
@@ -298,7 +298,7 @@ func TestRender_RepoContainsHyperlink(t *testing.T) {
 
 func TestRender_NoHyperlinkWhenNoTTY(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("org", nil)
+	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
 	r := newTestRendererWithTTY([]Column{defs["ref"]}, false)
 	_, rows := r.Render(prs)
 
@@ -309,7 +309,7 @@ func TestRender_NoHyperlinkWhenNoTTY(t *testing.T) {
 
 func TestRender_RefIncludesOrg_WhenNoOrgFilter(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
 	_, rows := r.Render(prs)
 
@@ -321,7 +321,7 @@ func TestRender_RefIncludesOrg_WhenNoOrgFilter(t *testing.T) {
 
 func TestRender_RefIncludesOrg_WhenOrgFilterAll(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs(valueAll, nil)
+	defs := testPRL.allColumnDefs(valueAll, nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
 	_, rows := r.Render(prs)
 
@@ -333,7 +333,7 @@ func TestRender_RefIncludesOrg_WhenOrgFilterAll(t *testing.T) {
 
 func TestRender_RefExcludesOrg_WhenOrgFilter(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("org", nil)
+	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
 	_, rows := r.Render(prs)
 
@@ -388,7 +388,7 @@ func TestRender_SingleRow(t *testing.T) {
 
 func TestRender_AuthorColumn(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["author"]})
 	_, rows := r.Render(prs)
 
@@ -407,7 +407,7 @@ func TestRender_LabelsColumn(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}}
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["labels"]})
 	_, rows := r.Render(prs)
 
@@ -416,7 +416,7 @@ func TestRender_LabelsColumn(t *testing.T) {
 
 func TestRender_StateColumn(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["state"]})
 	_, rows := r.Render(prs)
 
@@ -425,7 +425,7 @@ func TestRender_StateColumn(t *testing.T) {
 
 func TestRender_URLColumn(t *testing.T) {
 	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["url"]})
 	_, rows := r.Render(prs)
 
@@ -444,7 +444,7 @@ func TestRender_TitleTruncation(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}}
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["title"]})
 	_, rows := r.Render(prs)
 
@@ -458,7 +458,7 @@ func TestRender_ColumnAlignment(t *testing.T) {
 	// Verify that columns are aligned: all data lines should have same visible width
 	// for each column position as the header.
 	prs := testPRs()
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["state"], defs["author"]})
 	out, _ := r.Render(prs)
 
@@ -492,7 +492,7 @@ func TestRender_IndexHeaderPadding(t *testing.T) {
 func TestRender_NumberColumnStateColor(t *testing.T) {
 	// Number column should also use state-based colors.
 	prs := testPRs()[:1] // open
-	defs := testPRL.allColumnDefs("", nil)
+	defs := testPRL.allColumnDefs("", nil, tableLayout{})
 	r := newTestRenderer([]Column{defs["number"]})
 	_, rows := r.Render(prs)
 
@@ -519,7 +519,7 @@ func TestNormalizeColumns(t *testing.T) {
 
 func TestNewTableRenderer_Columns(t *testing.T) {
 	cli := &CLI{Columns: CSVFlag{Values: []string{"ref", "title", "author"}}}
-	r := testPRL.NewTableRenderer(cli, true, nil)
+	r := testPRL.newTableRenderer(cli, true, nil, 0)
 
 	// Verify by rendering and checking the header columns.
 	prs := testPRs()[:1]
@@ -531,7 +531,7 @@ func TestNewTableRenderer_Columns(t *testing.T) {
 
 func TestNewTableRenderer_IndexColumn(t *testing.T) {
 	cli := &CLI{Columns: CSVFlag{Values: []string{"index", "ref"}}}
-	r := testPRL.NewTableRenderer(cli, true, nil)
+	r := testPRL.newTableRenderer(cli, true, nil, 0)
 
 	// Index should show for >1 result.
 	prs := testPRs()
@@ -545,7 +545,7 @@ func TestNewTableRenderer_IndexColumn(t *testing.T) {
 
 func TestNewTableRenderer_IndexDisabledInInteractive(t *testing.T) {
 	cli := &CLI{Columns: CSVFlag{Values: []string{"index", "ref"}}, Approve: true}
-	r := testPRL.NewTableRenderer(cli, true, nil)
+	r := testPRL.newTableRenderer(cli, true, nil, 0)
 
 	// In interactive mode, index should not be shown.
 	prs := testPRs()
@@ -561,7 +561,7 @@ func TestNewTableRenderer_OrgFilter(t *testing.T) {
 		Organization: CSVFlag{Values: []string{"myorg"}},
 		Columns:      CSVFlag{Values: []string{"ref"}},
 	}
-	r := testPRL.NewTableRenderer(cli, true, nil)
+	r := testPRL.newTableRenderer(cli, true, nil, 0)
 
 	// With single org, ref should exclude org prefix. But org is "myorg" and PR has "org/alpha".
 	// singleOrg returns "myorg", orgFilter = "myorg" (not empty, not "all").
@@ -577,7 +577,7 @@ func TestNewTableRenderer_OrgFilter_Multiple(t *testing.T) {
 		Organization: CSVFlag{Values: []string{"org1", "org2"}},
 		Columns:      CSVFlag{Values: []string{"ref"}},
 	}
-	r := testPRL.NewTableRenderer(cli, true, nil)
+	r := testPRL.newTableRenderer(cli, true, nil, 0)
 
 	// Multiple orgs → no org filter → ref includes full org/repo
 	prs := testPRs()[:1]
@@ -588,11 +588,254 @@ func TestNewTableRenderer_OrgFilter_Multiple(t *testing.T) {
 
 func TestNewTableRenderer_Reverse(t *testing.T) {
 	cli := &CLI{Reverse: true, Columns: CSVFlag{Values: []string{"ref"}}}
-	r := testPRL.NewTableRenderer(cli, true, nil)
+	r := testPRL.newTableRenderer(cli, true, nil, 0)
 
 	// --reverse → oldest at top (clib reverse=false).
 	prs := testPRs()
 	_, rows := r.Render(prs)
 	require.Equal(t, "oldest PR", rows[0].Item.Title)
 	require.Equal(t, "newest PR", rows[2].Item.Title)
+}
+
+// --- Layout computation tests ---
+
+func TestComputeLayout_ZeroWidth(t *testing.T) {
+	// Zero width (non-TTY / unknown) → no compact, no hiding.
+	layout := computeLayout(0, defaultColumns())
+	require.False(t, layout.compact)
+	require.Empty(t, layout.hidden)
+}
+
+func TestComputeLayout_WideTerminal(t *testing.T) {
+	// Wide terminal: no compact, no hiding.
+	layout := computeLayout(200, defaultColumns())
+	require.False(t, layout.compact)
+	require.Empty(t, layout.hidden)
+}
+
+func TestComputeLayout_NarrowTerminal_CompactTime(t *testing.T) {
+	// Narrow terminal with time columns: should trigger compact time.
+	layout := computeLayout(80, defaultColumns())
+	require.True(t, layout.compact)
+}
+
+func TestComputeLayout_MediumTerminal(t *testing.T) {
+	// At or above compact threshold: no compact.
+	layout := computeLayout(compactTimeThreshold, defaultColumns())
+	require.False(t, layout.compact)
+}
+
+func TestComputeLayout_CustomColumns_NoTime(t *testing.T) {
+	// Without time columns, compact is not needed.
+	cols := []string{"index", colTitle, "ref"}
+	layout := computeLayout(80, cols)
+	require.False(t, layout.compact)
+}
+
+func TestEstimatedWidth_CompactShorter(t *testing.T) {
+	cols := defaultColumns()
+	long := estimatedWidth(cols, false)
+	compact := estimatedWidth(cols, true)
+	require.Less(t, compact, long, "compact layout should be narrower")
+}
+
+func testCLI() *CLI {
+	cli := &CLI{}
+	cli.Normalize(&Config{
+		Default: Defaults{
+			Limit:  defaultLimit,
+			State:  valueOpen,
+			Output: valueTable,
+			Sort:   valueName,
+			Match:  "title",
+		},
+	})
+	return cli
+}
+
+func TestRender_NarrowTerminal_CompactTime(t *testing.T) {
+	// Render with a narrow terminal width: time columns should use compact format.
+	prs := testPRs()[:1]
+	r := testPRL.newTableRenderer(testCLI(), true, nil, 80)
+	out, _ := r.Render(prs)
+
+	stripped := ansi.Strip(out)
+	require.NotContains(t, stripped, "minutes")
+	require.NotContains(t, stripped, "hours")
+}
+
+func TestRender_WideTerminal_LongTime(t *testing.T) {
+	// Render with a wide terminal: time columns should use long format.
+	prs := testPRs()[:1]
+	r := testPRL.newTableRenderer(testCLI(), true, nil, 200)
+	out, _ := r.Render(prs)
+
+	stripped := ansi.Strip(out)
+	require.Contains(t, stripped, "hour")
+}
+
+func TestRender_FlexTruncation(t *testing.T) {
+	// The flex column (title) should be truncated to fit within terminal width.
+	longTitle := strings.Repeat("x", maxTitleLen)
+	prs := []PullRequest{{
+		Number:     1,
+		Title:      longTitle,
+		URL:        "https://github.com/org/repo/pull/1",
+		State:      "open",
+		Repository: Repository{Name: "repo", NameWithOwner: "org/repo"},
+		Author:     Author{Login: "user"},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}}
+
+	r := testPRL.newTableRenderer(testCLI(), true, nil, 80)
+	out, _ := r.Render(prs)
+
+	// Every line should fit within 80 columns.
+	for i, line := range strings.Split(out, "\n") {
+		w := lipgloss.Width(line)
+		require.LessOrEqual(t, w, 80,
+			"line %d has visible width %d, exceeds terminal width 80", i, w)
+	}
+}
+
+func TestRender_FlexNoTruncationWhenWide(t *testing.T) {
+	// On a wide terminal, title should not be truncated beyond maxTitleLen.
+	longTitle := strings.Repeat("x", maxTitleLen+20)
+	prs := []PullRequest{{
+		Number:     1,
+		Title:      longTitle,
+		URL:        "https://github.com/org/repo/pull/1",
+		State:      "open",
+		Repository: Repository{Name: "repo", NameWithOwner: "org/repo"},
+		Author:     Author{Login: "user"},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}}
+
+	r := testPRL.newTableRenderer(testCLI(), true, nil, 300)
+	_, rows := r.Render(prs)
+
+	// Title cell should be truncated to maxTitleLen (the pre-render cap), not beyond.
+	visible := ansi.Strip(rows[0].Cells[0])
+	require.Len(t, []rune(visible), maxTitleLen)
+	require.True(t, strings.HasSuffix(visible, "…"))
+}
+
+// --- Column hiding tests ---
+
+func TestComputeLayout_NeverHidesIndex(t *testing.T) {
+	// Index should never be hidden, even at very narrow widths.
+	layout := computeLayout(30, defaultColumns())
+	require.False(t, layout.hidden["index"], "index should never be hidden")
+	require.False(t, layout.hidden["idx"], "idx should never be hidden")
+	require.False(t, layout.hidden["i"], "i should never be hidden")
+}
+
+func TestComputeLayout_HidesCreatedBeforeUpdated(t *testing.T) {
+	// Progressively narrowing: created should be hidden before updated.
+	// Find a width where created is hidden but updated is not.
+	cols := defaultColumns()
+	var foundWidth int
+	for w := 80; w > 30; w-- {
+		layout := computeLayout(w, cols)
+		if layout.hidden[valueCreated] && !layout.hidden[valueUpdated] {
+			foundWidth = w
+			break
+		}
+	}
+	require.NotZero(t, foundWidth,
+		"should find a width where created is hidden but updated is not")
+}
+
+func TestComputeLayout_HidesUpdatedBeforeTitle(t *testing.T) {
+	// Find a width where updated is hidden but title is not.
+	cols := defaultColumns()
+	var foundWidth int
+	for w := 80; w > 20; w-- {
+		layout := computeLayout(w, cols)
+		if layout.hidden[valueUpdated] && !layout.hidden[colTitle] {
+			foundWidth = w
+			break
+		}
+	}
+	require.NotZero(t, foundWidth,
+		"should find a width where updated is hidden but title is not")
+}
+
+func TestComputeLayout_NeverHidesRef(t *testing.T) {
+	// Even at extremely narrow widths, ref should never be hidden.
+	layout := computeLayout(10, defaultColumns())
+	require.False(t, layout.hidden["ref"], "ref should never be hidden")
+}
+
+func TestComputeLayout_HideOrder(t *testing.T) {
+	// Verify the progressive hiding order: created → updated → title.
+	cols := defaultColumns()
+	var (
+		createdHiddenAt int
+		updatedHiddenAt int
+		titleHiddenAt   int
+	)
+
+	for w := 200; w > 10; w-- {
+		layout := computeLayout(w, cols)
+		if layout.hidden[valueCreated] && createdHiddenAt == 0 {
+			createdHiddenAt = w
+		}
+		if layout.hidden[valueUpdated] && updatedHiddenAt == 0 {
+			updatedHiddenAt = w
+		}
+		if layout.hidden[colTitle] && titleHiddenAt == 0 {
+			titleHiddenAt = w
+		}
+		// Index should never be hidden.
+		require.False(t, layout.hidden["index"],
+			"index should never be hidden (width=%d)", w)
+	}
+
+	if createdHiddenAt > 0 && updatedHiddenAt > 0 {
+		require.GreaterOrEqual(t, createdHiddenAt, updatedHiddenAt,
+			"created should be hidden before updated")
+	}
+	if updatedHiddenAt > 0 && titleHiddenAt > 0 {
+		require.GreaterOrEqual(t, updatedHiddenAt, titleHiddenAt,
+			"updated should be hidden before title")
+	}
+}
+
+func TestComputeLayout_WideDoesNotHide(t *testing.T) {
+	// At a wide terminal, nothing should be hidden.
+	layout := computeLayout(200, defaultColumns())
+	require.Empty(t, layout.hidden, "nothing should be hidden on a wide terminal")
+}
+
+func TestRender_VeryNarrow_HidesColumns(t *testing.T) {
+	// At a very narrow width, the rendered table should have fewer header columns.
+	prs := testPRs()[:1]
+	cli := &CLI{}
+	cli.Normalize(&Config{
+		Default: Defaults{
+			Limit:  defaultLimit,
+			State:  valueOpen,
+			Output: valueTable,
+			Sort:   valueName,
+			Match:  "title",
+		},
+	})
+
+	// Wide: should have TITLE, PR, CREATED, UPDATED in header.
+	rWide := testPRL.newTableRenderer(cli, true, nil, 200)
+	outWide, _ := rWide.Render(prs)
+	wideHeader := strings.Fields(ansi.Strip(strings.Split(outWide, "\n")[0]))
+
+	// Very narrow: should have fewer columns.
+	rNarrow := testPRL.newTableRenderer(cli, true, nil, 40)
+	outNarrow, _ := rNarrow.Render(prs)
+	narrowHeader := strings.Fields(ansi.Strip(strings.Split(outNarrow, "\n")[0]))
+
+	require.Less(t, len(narrowHeader), len(wideHeader),
+		"narrow terminal should show fewer columns than wide")
+	// PR column should always be present.
+	require.Contains(t, narrowHeader, "PR", "PR column should always be visible")
 }

@@ -145,7 +145,10 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("merge %s: %v", pr.URL, err))
 		} else {
-			clog.Info().Link("pr", pr.URL, pr.Ref()).Str("title", truncateTitle(pr.Title)).Msg(msg)
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg(msg)
 		}
 	}
 	if cli.Merge != nil && !*cli.Merge {

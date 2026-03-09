@@ -157,6 +157,7 @@ type PRState int
 const (
 	StateOpen PRState = iota
 	StateClosed
+	StateReady
 	StateMerged
 	StateAll
 )
@@ -167,6 +168,8 @@ func parsePRState(s string) (PRState, bool) {
 		return StateOpen, true
 	case valueClosed, "c":
 		return StateClosed, true
+	case valueReady, "r":
+		return StateReady, true
 	case valueMerged, "m":
 		return StateMerged, true
 	case valueAll, valueAny, "a":
@@ -186,6 +189,8 @@ func (s PRState) String() string {
 		return valueMerged
 	case StateAll:
 		return valueAll
+	case StateReady:
+		return valueReady
 	default:
 		return valueUnknown
 	}

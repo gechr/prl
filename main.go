@@ -300,12 +300,12 @@ func runWatch(
 	// First fetch with spinner before entering the alternate screen.
 	type fetchResult struct {
 		output string
-		count  int
+		prs    []PullRequest
 		err    error
 	}
 	r := withSpinner(tty, s, func(func()) fetchResult {
-		out, n, fErr := buildOutput(p, rest, cli, cfg, tty, params)
-		return fetchResult{out, n, fErr}
+		out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params)
+		return fetchResult{out, prs, fErr}
 	})
 
 	if r.err != nil {
@@ -314,8 +314,6 @@ func runWatch(
 	if r.output == "" && cli.ExitZero {
 		return errFatal
 	}
-
-	output, count := r.output, r.count
 
 	fmt.Print(ansiAltScreenOn + ansiHideCursor)
 	cleanup := func() { fmt.Print(ansiShowCursor + ansiAltScreenOff) }
@@ -330,11 +328,15 @@ func runWatch(
 		os.Exit(0)
 	}()
 
+	// Re-render cached PRs on terminal resize (SIGWINCH).
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+
 	results := make(chan fetchResult, 1)
 	fetch := func() {
 		go func() {
-			out, n, fErr := buildOutput(p, rest, cli, cfg, tty, params)
-			results <- fetchResult{out, n, fErr}
+			out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params)
+			results <- fetchResult{out, prs, fErr}
 		}()
 	}
 
@@ -342,17 +344,19 @@ func runWatch(
 		fetching    bool
 		interval    time.Duration
 		lastOutput  string
+		lastPRs     []PullRequest
 		nextFetchAt time.Time
 		spinnerTick int
 	)
 
 	// Use the first fetch result.
-	if output != "" {
-		lastOutput = output
+	lastPRs = r.prs
+	if r.output != "" {
+		lastOutput = r.output
 	} else {
 		lastOutput = noResults
 	}
-	interval = watchInterval(count)
+	interval = watchInterval(len(lastPRs))
 	nextFetchAt = time.Now().Add(interval)
 
 	ticker := time.NewTicker(s.interval)
@@ -368,13 +372,26 @@ func runWatch(
 				clog.Error().Err(r.err).Msg("Refresh failed")
 			case r.output != "":
 				lastOutput = r.output
+				lastPRs = r.prs
 			case cli.ExitZero:
 				return errFatal
 			default:
 				lastOutput = noResults
+				lastPRs = nil
 			}
-			interval = watchInterval(r.count)
+			interval = watchInterval(len(lastPRs))
 			nextFetchAt = time.Now().Add(interval)
+		default:
+		}
+
+		// Re-render on terminal resize.
+		select {
+		case <-winch:
+			if len(lastPRs) > 0 {
+				if out, err := renderOutput(p, cli, cfg, tty, lastPRs); err == nil && out != "" {
+					lastOutput = out
+				}
+			}
 		default:
 		}
 
@@ -401,7 +418,7 @@ func runWatch(
 }
 
 // buildOutput runs the search+filter+enrich+render pipeline and returns the
-// rendered output string, the number of PRs, and any error.
+// rendered output string, the PRs (for re-rendering on resize), and any error.
 func buildOutput(
 	p *prl,
 	rest *api.RESTClient,
@@ -409,20 +426,20 @@ func buildOutput(
 	cfg *Config,
 	tty bool,
 	params *SearchParams,
-) (string, int, error) {
+) (string, []PullRequest, error) {
 	// Execute search
 	prs, err := executeSearch(rest, params)
 	if err != nil {
-		return "", 0, err
+		return "", nil, err
 	}
 
 	// Apply filters
 	prs, err = applyFilters(cli, prs)
 	if err != nil {
-		return "", 0, err
+		return "", nil, err
 	}
 	if len(prs) == 0 {
-		return "", 0, nil
+		return "", nil, nil
 	}
 
 	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
@@ -443,19 +460,23 @@ func buildOutput(
 	if cli.Merge != nil {
 		g, gqlErr := getGQL()
 		if gqlErr != nil {
-			return "", 0, gqlErr
+			return "", nil, gqlErr
 		}
 		prs, err = filterByAutoMerge(g, prs, !*cli.Merge)
 		if err != nil {
-			return "", 0, err
+			return "", nil, err
 		}
 		if len(prs) == 0 {
-			return "", 0, nil
+			return "", nil, nil
 		}
 	}
 
+	ready := cli.PRState() == StateReady
+	ciFilter := cli.CIStatus()
+	needsEnrich := ready || ciFilter != CINone
+
 	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
-	if cli.Quick {
+	if cli.Quick && !needsEnrich {
 		for i := range prs {
 			if prs[i].State == valueOpen {
 				prs[i].MergeStatus = MergeStatusBlocked
@@ -463,12 +484,29 @@ func buildOutput(
 		}
 	}
 
-	// Enrich open PRs with CI/review status for table coloring and status column.
-	if !cli.Quick && cli.OutputFormat() == OutputTable {
+	// Enrich open PRs with CI/review status for table coloring, status column,
+	// --state=ready post-filtering, and --ci post-filtering.
+	if (!cli.Quick || needsEnrich) && (cli.OutputFormat() == OutputTable || needsEnrich) {
 		if g, gqlErr := getGQL(); gqlErr == nil {
 			enrichMergeStatus(g, prs)
 		} else {
 			clog.Debug().Err(gqlErr).Msg("skipping merge status enrichment")
+		}
+	}
+
+	// Post-filter: --state=ready keeps only PRs that are ready to merge.
+	if ready {
+		prs = filterReady(prs)
+		if len(prs) == 0 {
+			return "", nil, nil
+		}
+	}
+
+	// Post-filter: --ci keeps only PRs matching the requested CI status.
+	if ciFilter != CINone {
+		prs = filterByCI(prs, ciFilter)
+		if len(prs) == 0 {
+			return "", nil, nil
 		}
 	}
 
@@ -484,30 +522,40 @@ func buildOutput(
 	}
 
 	// Render output
-	n := len(prs)
+	out, rErr := renderOutput(p, cli, cfg, tty, prs)
+	return out, prs, rErr
+}
+
+// renderOutput renders PRs in the requested output format.
+func renderOutput(
+	p *prl,
+	cli *CLI,
+	cfg *Config,
+	tty bool,
+	prs []PullRequest,
+) (string, error) {
 	switch cli.OutputFormat() {
 	case OutputTable:
 		resolver := NewAuthorResolver(cfg)
 		renderer := p.NewTableRenderer(cli, tty, resolver)
 		output, _ := renderer.Render(prs)
-		return output, n, nil
+		return output, nil
 	case OutputURL:
-		return renderURLs(prs), n, nil
+		return renderURLs(prs), nil
 	case OutputBullet:
-		return renderBullets(prs), n, nil
+		return renderBullets(prs), nil
 	case OutputJSON:
-		out, err := renderJSON(prs)
-		return out, n, err
+		return renderJSON(prs)
 	case OutputSlack:
 		if cli.Send && cli.SendTo == "" {
-			return renderSlackDisplay(prs, cfg), n, nil
+			return renderSlackDisplay(prs, cfg), nil
 		}
 		output, _ := renderSlack(prs, cfg)
-		return output, n, nil
+		return output, nil
 	case OutputRepo:
-		return renderRepos(prs), n, nil
+		return renderRepos(prs), nil
 	default:
-		return renderURLs(prs), n, nil
+		return renderURLs(prs), nil
 	}
 }
 
@@ -575,8 +623,12 @@ func runOnce(
 		return "", cloneRepos(rest, prs, cfg.VCS)
 	}
 
+	ready := cli.PRState() == StateReady
+	ciFilter := cli.CIStatus()
+	needsEnrich := ready || ciFilter != CINone
+
 	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
-	if cli.Quick {
+	if cli.Quick && !needsEnrich {
 		for i := range prs {
 			if prs[i].State == valueOpen {
 				prs[i].MergeStatus = MergeStatusBlocked
@@ -584,12 +636,29 @@ func runOnce(
 		}
 	}
 
-	// Enrich open PRs with CI/review status for table coloring and status column.
-	if !cli.Quick && cli.OutputFormat() == OutputTable {
+	// Enrich open PRs with CI/review status for table coloring, status column,
+	// --state=ready post-filtering, and --ci post-filtering.
+	if (!cli.Quick || needsEnrich) && (cli.OutputFormat() == OutputTable || needsEnrich) {
 		if g, gqlErr := getGQL(); gqlErr == nil {
 			enrichMergeStatus(g, prs)
 		} else {
 			clog.Debug().Err(gqlErr).Msg("skipping merge status enrichment")
+		}
+	}
+
+	// Post-filter: --state=ready keeps only PRs that are ready to merge.
+	if ready {
+		prs = filterReady(prs)
+		if len(prs) == 0 {
+			return "", nil
+		}
+	}
+
+	// Post-filter: --ci keeps only PRs matching the requested CI status.
+	if ciFilter != CINone {
+		prs = filterByCI(prs, ciFilter)
+		if len(prs) == 0 {
+			return "", nil
 		}
 	}
 
@@ -654,12 +723,8 @@ func runOnce(
 	}
 
 	// Non-interactive actions: pass PRs directly
-	if cli.HasAction() {
-		actions, aErr := newActionRunner(cli, rest)
-		if aErr != nil {
-			return "", aErr
-		}
-		return "", actions.Execute(cli, prs)
+	if err := runActions(cli, rest, prs); err != nil {
+		return "", err
 	}
 
 	// Open in browser
@@ -671,13 +736,16 @@ func runOnce(
 		return "", openBrowser(urls...)
 	}
 
-	// Send to Slack
+	// Send to Slack (after actions, if any)
 	if cli.Send {
 		if err := sendSlack(prs, cli, cfg); err != nil {
 			return "", err
 		}
 	}
 
+	if cli.HasAction() {
+		return "", nil
+	}
 	return output, nil
 }
 
@@ -699,20 +767,43 @@ func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow
 		selectedPRs[i] = row.Item
 	}
 
+	// Run actions first (approve, merge, close, etc.)
+	if err := runActions(cli, rest, selectedPRs); err != nil {
+		return err
+	}
+
+	// Then send to Slack
 	if cli.Send {
 		return runInteractiveSend(cli, cfg, selectedPRs)
 	}
 
-	actions, aErr := newActionRunner(cli, rest)
-	if aErr != nil {
-		return aErr
-	}
+	return nil
+}
 
+// runActions executes PR action flags (approve, edit, close, etc.) if any are set.
+// After enabling automerge (--merge), it updates the in-memory PR structs so
+// downstream consumers (e.g. --send Slack reactions) reflect the new state.
+func runActions(cli *CLI, rest *api.RESTClient, prs []PullRequest) error {
+	if !cli.HasAction() {
+		return nil
+	}
+	actions, err := newActionRunner(cli, rest)
+	if err != nil {
+		return err
+	}
 	if cli.Edit {
-		return interactiveEdit(actions, selectedPRs)
+		return interactiveEdit(actions, prs)
 	}
-
-	return actions.Execute(cli, selectedPRs)
+	if err := actions.Execute(cli, prs); err != nil {
+		return err
+	}
+	// Reflect automerge state change so --send picks it up.
+	if cli.Merge != nil {
+		for i := range prs {
+			prs[i].AutoMerge = *cli.Merge
+		}
+	}
+	return nil
 }
 
 // runInteractiveSend renders and sends selected PRs to Slack after interactive selection.
