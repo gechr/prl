@@ -54,6 +54,9 @@ const (
 	vcsJJ  = "jj"
 )
 
+// Action result strings returned by mergeOrAutoMerge.
+const resultAutoMerged = "Enabled automerge"
+
 // Watch mode.
 const (
 	watchMinInterval = 3 * time.Second                // floor: few results
@@ -77,4 +80,31 @@ const (
 	editBodyYOffset  = 5 // header + blank + "Title" label + title-end + blank + "Body" label (excluding title lines)
 	editWidth        = 120
 	maxSelectHeight  = 50
+)
+
+// Browse TUI.
+const (
+	browseCursorPrefix = "❯ "
+
+	browseActionApprove = "approve-pr"
+	browseActionInfo    = "info"
+
+	browseClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
+
+	browseConfirmPadX = 4
+	browseConfirmPadY = 2
+
+	browseJumpTimeout = 500 * time.Millisecond
+	browseStatusFlash = 5 * time.Second
+
+	browseKeyAltA         = "alt+a"
+	browseKeyCtrlC        = "ctrl+c"
+	browseKeyCtrlD        = "ctrl+d"
+	browseKeyDown         = "down"
+	browseKeyEnter        = "enter"
+	browseKeyEsc          = "esc"
+	browseKeyLeft         = "left"
+	browseKeyRight        = "right"
+	browseKeyUp           = "up"
+	browseNonCursorPrefix = "  "
 )

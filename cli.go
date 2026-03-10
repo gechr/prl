@@ -49,6 +49,8 @@ type CLI struct {
 	Draft           *bool    `name:"draft"       help:"Show only draft PRs"                                          negatable:""                                      clib:"terse='Draft filter',group='Filters/6'"`
 
 	// Interactive flags
+	Interactive bool `name:"interactive" help:"Launch interactive TUI browser" short:"i" clib:"terse='TUI browser',group='Interactive/0'"`
+
 	Approve      bool   `name:"approve"       help:"Approve each PR"                                                 clib:"terse='Approve PRs',group='Interactive/1'"`
 	Close        bool   `name:"close"         help:"Close each PR"                                                   clib:"terse='Close PRs',group='Interactive/1'"`
 	DeleteBranch bool   `name:"delete-branch" help:"Delete branch after close (requires --close)"                    clib:"terse='Delete branch',group='Interactive/1'"`
@@ -149,6 +151,27 @@ func (c *CLI) Validate() error {
 	}
 	if c.Author != nil && len(c.Team.Values) > 0 {
 		return fmt.Errorf("--author and --team are mutually exclusive")
+	}
+	if c.Interactive && c.HasAction() {
+		return fmt.Errorf("--interactive cannot be combined with action flags")
+	}
+	if c.Interactive && c.Yes {
+		return fmt.Errorf("--interactive and --yes are mutually exclusive")
+	}
+	if c.Interactive && c.Watch {
+		return fmt.Errorf("--interactive and --watch are mutually exclusive")
+	}
+	if c.Interactive && c.Send {
+		return fmt.Errorf("--interactive and --send are mutually exclusive")
+	}
+	if c.Interactive && c.Clone {
+		return fmt.Errorf("--interactive and --clone are mutually exclusive")
+	}
+	if c.Interactive && c.Web {
+		return fmt.Errorf("--interactive and --web are mutually exclusive")
+	}
+	if c.Interactive && c.Open {
+		return fmt.Errorf("--interactive and --open are mutually exclusive")
 	}
 	if c.Watch && c.HasAction() {
 		return fmt.Errorf("--watch cannot be combined with action flags")
@@ -292,6 +315,10 @@ func (c *CLI) Normalize(cfg *Config) {
 	}
 
 	// Author defaults
+	// --requested implies --author=any (don't restrict to self)
+	if c.Author == nil && len(c.ReviewRequested.Values) > 0 {
+		c.Author = &CSVFlag{Values: []string{valueAll}}
+	}
 	if c.Author == nil {
 		c.Author = &CSVFlag{Values: cfg.Default.Authors}
 	}

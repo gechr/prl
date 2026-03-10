@@ -289,7 +289,7 @@ Two sources (HCL has higher priority):
 `--team <name>` resolves team members from `groups_*.tf` files:
 
 1. Finds `module` block with matching `name` attribute
-1. Extracts `members` list (e.g., `local.users["username"]`)
+1. Extracts `members` list (e.g. `local.users["username"]`)
 1. Maps internal names to GitHub usernames via `users.tf`
 1. Builds `(author:user1 OR author:user2 ...)` query
 
@@ -648,7 +648,7 @@ Action Runner (REST + GraphQL)
 ## Tips and Tricks
 
 1. **Use `-a all` for org-wide searches** - Default is `@me` (your PRs only)
-1. **Combine date + drift for stale PR discovery** - e.g., `-c '>2weeks' --drift 0`
+1. **Combine date + drift for stale PR discovery** - e.g. `-c '>2weeks' --drift 0`
 1. **Use `--filter` for anything not covered by flags** - Raw GitHub search qualifiers like `label:bug`, `-label:wontfix`, `assignee:user`
 1. **Pipe URL output for scripting** - `prl -a all -o url | xargs -I{} gh pr view {}`
 1. **Dry run complex queries first** - `prl -a all --team ops -c 2weeks -n` to verify the query

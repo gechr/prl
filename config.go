@@ -8,6 +8,8 @@ import (
 
 	"github.com/gechr/clib/shell"
 	"github.com/gechr/clog"
+	goyaml "github.com/goccy/go-yaml"
+	goyamlparser "github.com/goccy/go-yaml/parser"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env"
@@ -48,6 +50,7 @@ const (
 	keyTerraformRepoDir     = "terraform_repository_dir"
 	keySpinnerStyle         = "spinner.style"
 	keySpinnerColors        = "spinner.colors"
+	keyTUIAutoRefresh       = "tui.refresh.enabled"
 	keyVCS                  = "vcs"
 )
 
@@ -87,6 +90,16 @@ type SlackOutputConfig struct {
 	TwoApproverRepos []string        `koanf:"two_approver_repos"`
 }
 
+// TUIAutoRefreshConfig holds auto-refresh settings.
+type TUIAutoRefreshConfig struct {
+	Enabled bool `koanf:"enabled"`
+}
+
+// TUIConfig holds TUI-specific configuration.
+type TUIConfig struct {
+	AutoRefresh TUIAutoRefreshConfig `koanf:"refresh"`
+}
+
 // Config holds all prl configuration.
 type Config struct {
 	// Defaults
@@ -97,6 +110,9 @@ type Config struct {
 
 	// Spinner style
 	Spinner SpinnerConfig `koanf:"spinner"`
+
+	// TUI settings
+	TUI TUIConfig `koanf:"tui"`
 
 	// Directory paths
 	CodeDir                string `koanf:"code_dir"`
@@ -138,6 +154,7 @@ func defaultConfig() map[string]any {
 		keyTeamAliases:          map[string]string{},
 		keyTerraformMemberDir:   "",
 		keySpinnerStyle:         defaultSpinner,
+		keyTUIAutoRefresh:       true,
 		keySpinnerColors:        defaultSpinnerColors,
 		keyTerraformRepoDir:     "",
 	}
@@ -264,6 +281,73 @@ func deriveTerraformDir(k *koanf.Koanf, key, defaultPath string) {
 	}
 }
 
+// saveConfigKey reads the config file, sets a dotted key (e.g. "tui.refresh.enabled")
+// to the given value, and writes it back preserving comments and formatting.
+func saveConfigKey(key string, value any) error {
+	cp, err := configPath()
+	if err != nil {
+		return err
+	}
+
+	// Resolve symlinks so we write to the actual file.
+	if resolved, evalErr := filepath.EvalSymlinks(cp); evalErr == nil {
+		cp = resolved
+	}
+
+	// Read existing file, or start empty.
+	data, err := os.ReadFile(cp)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading config: %w", err)
+	}
+
+	// Parse into an AST to preserve comments/formatting.
+	f, err := goyamlparser.ParseBytes(data, goyamlparser.ParseComments)
+	if err != nil {
+		return fmt.Errorf("parsing config: %w", err)
+	}
+
+	// Build the path from the dotted key.
+	path, pathErr := goyaml.PathString("$." + key)
+	if pathErr != nil {
+		return fmt.Errorf("building path: %w", pathErr)
+	}
+	// Try to read the existing value - if it fails, the key doesn't exist yet.
+	_, readErr := path.ReadNode(f)
+	if readErr != nil {
+		// Key doesn't exist - append it as new YAML.
+		parts := strings.Split(key, ".")
+		nested := make(map[string]any)
+		cur := nested
+		for i, p := range parts {
+			if i == len(parts)-1 {
+				cur[p] = value
+			} else {
+				next := make(map[string]any)
+				cur[p] = next
+				cur = next
+			}
+		}
+		section, mErr := goyaml.Marshal(nested)
+		if mErr != nil {
+			return fmt.Errorf("marshalling new key: %w", mErr)
+		}
+		out := strings.TrimRight(f.String(), "\n") + "\n\n" + string(section)
+		//nolint:gosec // config file, not sensitive
+		return os.WriteFile(cp, []byte(out), 0o644)
+	}
+
+	// Key exists - replace in-place.
+	if replaceErr := path.ReplaceWithReader(
+		f,
+		strings.NewReader(fmt.Sprintf("%v", value)),
+	); replaceErr != nil {
+		return fmt.Errorf("replacing key %s: %w", key, replaceErr)
+	}
+
+	//nolint:gosec // config file, not sensitive
+	return os.WriteFile(cp, []byte(f.String()+"\n"), 0o644)
+}
+
 var defaultConfigYAML = fmt.Sprintf(`# prl configuration
 # See: prl --help
 
@@ -311,6 +395,12 @@ default:
   # Filter by PR state.
   # Options: open, closed, merged, all
   state: %s
+
+# TUI (interactive browse) settings.
+tui:
+  refresh:
+    # Automatically refresh results in the background.
+    enabled: true
 
 # VCS used for --clone.
 # Options: git, jj

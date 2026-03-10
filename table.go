@@ -76,7 +76,7 @@ func (p *prl) newTableRenderer(
 		// prl default: newest at top → clib reverse=true.
 		// --reverse flag means oldest at top → clib reverse=false.
 		// Non-TTY: ignore --reverse, always newest at top (#1, #2, #3… from top).
-		table.WithReverse(!cli.Reverse || !tty),
+		table.WithReverse(cli.Interactive || !cli.Reverse || !tty),
 		table.WithShowIndex(showIndex),
 		table.WithTermWidth(termWidth),
 	)
@@ -241,7 +241,7 @@ func truncateTitle(title string) string {
 }
 
 // Estimated column widths for layout decisions (compact mode, column hiding).
-// These are rough estimates — actual truncation is handled by the grid's flex
+// These are rough estimates - actual truncation is handled by the grid's flex
 // column support, which uses real measured widths.
 //
 //nolint:mnd // width estimates are inherently magic numbers

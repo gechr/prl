@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -225,6 +227,11 @@ func (a *ActionRunner) approve(owner, repo string, number int) error {
 	return a.rest.Post(path, jsonBody(map[string]string{"event": "APPROVE"}), nil)
 }
 
+func (a *ActionRunner) reopenPR(owner, repo string, number int) error {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
+	return a.rest.Patch(path, jsonBody(map[string]string{"state": "open"}), nil)
+}
+
 func (a *ActionRunner) closePR(
 	owner, repo string,
 	number int,
@@ -267,7 +274,7 @@ func (a *ActionRunner) closePR(
 func (a *ActionRunner) mergeOrAutoMerge(owner, repo string, pr PullRequest) (string, error) {
 	err := a.enableAutoMerge(pr.NodeID)
 	if err == nil {
-		return "Enabled automerge", nil
+		return resultAutoMerged, nil
 	}
 	if !strings.Contains(err.Error(), "clean status") {
 		return "", err
@@ -298,6 +305,84 @@ func (a *ActionRunner) fetchPRBody(owner, repo string, number int) (string, erro
 		return "", err
 	}
 	return pr.Body, nil
+}
+
+// PRDetail holds the full detail for a PR detail view.
+type PRDetail struct {
+	Body    string
+	Reviews []PRReview
+	Files   []PRFile
+}
+
+// PRReview holds a single review.
+type PRReview struct {
+	User  string
+	State string // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
+}
+
+// PRFile holds a changed file in a PR.
+type PRFile struct {
+	Filename  string
+	Status    string // added, modified, removed, renamed
+	Additions int
+	Deletions int
+}
+
+func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, error) {
+	var detail PRDetail
+
+	// Fetch body.
+	prPath := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
+	var pr struct {
+		Body string `json:"body"`
+	}
+	if err := a.rest.Get(prPath, &pr); err != nil {
+		return detail, err
+	}
+	detail.Body = pr.Body
+
+	// Fetch reviews.
+	reviewPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)
+	var reviews []struct {
+		User  struct{ Login string } `json:"user"`
+		State string                 `json:"state"`
+	}
+	if err := a.rest.Get(reviewPath, &reviews); err != nil {
+		return detail, err
+	}
+	// Keep only the latest review per user.
+	seen := make(map[string]int)
+	for _, r := range reviews {
+		if idx, ok := seen[r.User.Login]; ok {
+			detail.Reviews[idx] = PRReview{User: r.User.Login, State: r.State}
+		} else {
+			seen[r.User.Login] = len(detail.Reviews)
+			detail.Reviews = append(detail.Reviews, PRReview{User: r.User.Login, State: r.State})
+		}
+	}
+
+	// Fetch changed files.
+	filesPath := fmt.Sprintf("repos/%s/%s/pulls/%d/files", owner, repo, number)
+	var files []struct {
+		Filename  string `json:"filename"`
+		Status    string `json:"status"`
+		Additions int    `json:"additions"`
+		Deletions int    `json:"deletions"`
+	}
+	if err := a.rest.Get(filesPath, &files); err != nil {
+		return detail, err
+	}
+	detail.Files = make([]PRFile, len(files))
+	for i, f := range files {
+		detail.Files[i] = PRFile{
+			Filename:  f.Filename,
+			Status:    f.Status,
+			Additions: f.Additions,
+			Deletions: f.Deletions,
+		}
+	}
+
+	return detail, nil
 }
 
 func (a *ActionRunner) updateBranch(owner, repo string, number int) error {
@@ -350,6 +435,29 @@ func (a *ActionRunner) disableAutoMerge(nodeID string) error {
 				clientMutationId
 			}
 		}`, nodeID)
+}
+
+func (a *ActionRunner) removeReviewRequest(owner, repo string, number int, login string) error {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/requested_reviewers", owner, repo, number)
+	body := jsonBody(map[string][]string{"reviewers": {login}})
+	return a.rest.Do(http.MethodDelete, path, body, nil)
+}
+
+func (a *ActionRunner) fetchDiff(owner, repo string, number int) (string, error) {
+	diffClient, err := api.NewRESTClient(api.ClientOptions{
+		Headers: map[string]string{"Accept": "application/vnd.github.diff"},
+	})
+	if err != nil {
+		return "", err
+	}
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
+	resp, err := diffClient.Request(http.MethodGet, path, nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	return string(b), err
 }
 
 // Force-merge: poll for checks, then merge with bypass.

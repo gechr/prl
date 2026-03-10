@@ -161,6 +161,15 @@ func run() error {
 		return runWatch(prl, rest, &cli, cfg, tty, params, s)
 	}
 
+	// Interactive TUI browser
+	if cli.Interactive {
+		if !tty {
+			return fmt.Errorf("--interactive requires a TTY")
+		}
+		cli.setOutput(valueTable)
+		return runBrowse(prl, rest, &cli, cfg, tty, params, s)
+	}
+
 	var output string
 	if err := withSpinner(tty, s, func(stopSpinner func()) error {
 		var runErr error
