@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/alecthomas/kong"
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clib/help"
-	"github.com/gechr/clib/human"
+	"github.com/gechr/prl/internal/human"
 )
 
 // helpPrinter returns a Kong HelpPrinter that renders colored help output.
@@ -24,7 +25,7 @@ func (p *prl) helpPrinter(cfg *Config) kong.HelpPrinter {
 		help.WithFlagDefault("author", defaultAuthors),
 		help.WithFlagDefault("limit", fmt.Sprintf("%d", cfg.Default.Limit)),
 		help.WithHelpFlags("Print short help", "Print long help with examples"),
-		help.WithLongHelp(
+		help.WithLongHelp(os.Args,
 			buildExamplesSection(),
 			p.buildConfigurationSection(cfg),
 		),

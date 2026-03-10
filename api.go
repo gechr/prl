@@ -14,6 +14,16 @@ import (
 	"github.com/gechr/clog"
 )
 
+// HintError wraps an error with a command suggestion for the user.
+// The TUI displays the hint as an info popover instead of a hard failure.
+type HintError struct {
+	Err  error
+	Hint string
+}
+
+func (e *HintError) Error() string { return e.Err.Error() }
+func (e *HintError) Unwrap() error { return e.Err }
+
 // ActionRunner executes PR actions using GitHub REST and GraphQL APIs.
 type ActionRunner struct {
 	rest *api.RESTClient
@@ -437,10 +447,38 @@ func (a *ActionRunner) disableAutoMerge(nodeID string) error {
 		}`, nodeID)
 }
 
-func (a *ActionRunner) removeReviewRequest(owner, repo string, number int, login string) error {
+func (a *ActionRunner) requestReview(owner, repo string, number int, login string) error {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/requested_reviewers", owner, repo, number)
 	body := jsonBody(map[string][]string{"reviewers": {login}})
-	return a.rest.Do(http.MethodDelete, path, body, nil)
+	return a.rest.Do(http.MethodPost, path, body, nil)
+}
+
+func (a *ActionRunner) removeReviewRequest(
+	owner, repo string,
+	number int,
+	login, nodeID string,
+) error {
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/requested_reviewers", owner, repo, number)
+	body := jsonBody(map[string][]string{"reviewers": {login}})
+	if err := a.rest.Do(http.MethodDelete, path, body, nil); err != nil {
+		return err
+	}
+	if err := a.unsubscribe(nodeID); err != nil {
+		return &HintError{
+			Err:  err,
+			Hint: "gh auth refresh -s notifications",
+		}
+	}
+	return nil
+}
+
+func (a *ActionRunner) unsubscribe(nodeID string) error {
+	return a.doNodeMutation(
+		`mutation Unsubscribe($id: ID!) {
+			updateSubscription(input: {subscribableId: $id, state: UNSUBSCRIBED}) {
+				clientMutationId
+			}
+		}`, nodeID)
 }
 
 func (a *ActionRunner) fetchDiff(owner, repo string, number int) (string, error) {

@@ -15,9 +15,9 @@ import (
 	"github.com/cli/go-gh/v2/pkg/api"
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clib/complete"
-	"github.com/gechr/clib/prompt"
-	"github.com/gechr/clib/terminal"
 	"github.com/gechr/clog"
+	"github.com/gechr/prl/internal/prompt"
+	"github.com/gechr/prl/internal/term"
 )
 
 // Sentinel errors for controlled exits.
@@ -167,7 +167,7 @@ func run() error {
 			return fmt.Errorf("--interactive requires a TTY")
 		}
 		cli.setOutput(valueTable)
-		return runBrowse(prl, rest, &cli, cfg, tty, params, s)
+		return runTui(prl, rest, &cli, cfg, tty, params, s)
 	}
 
 	var output string
@@ -235,7 +235,7 @@ const (
 )
 
 // Default spinner colors (256-color palette).
-var defaultSpinnerColors = []string{"210", "211", "212", "217", "218", "225"}
+var defaultSpinnerColors = []string{"218"}
 
 type spinner struct {
 	frames   []string
@@ -546,8 +546,10 @@ func renderOutput(
 	switch cli.OutputFormat() {
 	case OutputTable:
 		resolver := NewAuthorResolver(cfg)
-		renderer := p.NewTableRenderer(cli, tty, resolver)
-		output, _ := renderer.Render(prs)
+		orgFilter := singleOrg(cli.Organization.Values)
+		models := buildPRRowModels(prs, orgFilter, resolver)
+		renderer := p.NewTableRenderer(cli, tty)
+		output := renderer.Render(models).String()
 		return output, nil
 	case OutputURL:
 		return renderURLs(prs), nil
@@ -689,8 +691,12 @@ func runOnce(
 	switch cli.OutputFormat() {
 	case OutputTable:
 		resolver := NewAuthorResolver(cfg)
-		renderer := prl.NewTableRenderer(cli, tty, resolver)
-		output, rows = renderer.Render(prs)
+		orgFilter := singleOrg(cli.Organization.Values)
+		models := buildPRRowModels(prs, orgFilter, resolver)
+		renderer := prl.NewTableRenderer(cli, tty)
+		rt := renderer.Render(models)
+		output = rt.String()
+		rows = rt.Rows
 	case OutputURL:
 		output = renderURLs(prs)
 	case OutputBullet:
@@ -773,7 +779,7 @@ func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow
 
 	selectedPRs := make([]PullRequest, len(selected))
 	for i, row := range selected {
-		selectedPRs[i] = row.Item
+		selectedPRs[i] = row.Item.PR
 	}
 
 	// Run actions first (approve, merge, close, etc.)
@@ -883,6 +889,6 @@ func applyColorMode(color string) bool {
 		clog.SetColorMode(clog.ColorNever)
 		return false
 	default: // "auto"
-		return terminal.Is(os.Stdout)
+		return term.Is(os.Stdout)
 	}
 }

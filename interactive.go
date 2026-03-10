@@ -5,8 +5,8 @@ import (
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/gechr/clib/prompt"
 	"github.com/gechr/clog"
+	"github.com/gechr/prl/internal/prompt"
 )
 
 // prlHuhTheme implements huh.Theme with prl's custom styling.

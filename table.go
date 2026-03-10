@@ -6,10 +6,11 @@ import (
 	"slices"
 	"strings"
 
-	cliansi "github.com/gechr/clib/ansi"
-	"github.com/gechr/clib/table"
-	"github.com/gechr/clib/terminal"
+	"charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
+	"github.com/gechr/prl/internal/ansiutil"
+	"github.com/gechr/prl/internal/table"
+	"github.com/gechr/prl/internal/term"
 )
 
 // tableLayout holds width-aware rendering decisions.
@@ -18,31 +19,30 @@ type tableLayout struct {
 	hidden  map[string]bool // columns to hide due to narrow terminal
 }
 
-// Type aliases for clib generic types.
+// Type aliases for generic table types parameterized on PRRowModel.
 type (
-	Column   = table.Column[PullRequest]
-	TableRow = table.Row[PullRequest]
+	Column   = table.Column[PRRowModel]
+	TableRow = table.Row[PRRowModel]
 )
 
-// NewTableRenderer creates a table renderer for pull requests.
+// NewTableRenderer creates a table renderer for pull request row models.
 func (p *prl) NewTableRenderer(
-	cli *CLI, tty bool, resolver *AuthorResolver,
-) *table.Renderer[PullRequest] {
-	return p.newTableRenderer(cli, tty, resolver, terminal.Width(os.Stdout))
+	cli *CLI, tty bool, opts ...table.Option,
+) *table.Renderer[PRRowModel] {
+	return p.newTableRenderer(cli, tty, term.Width(os.Stdout), opts...)
 }
 
 func (p *prl) newTableRenderer(
-	cli *CLI, tty bool, resolver *AuthorResolver, termWidth int,
-) *table.Renderer[PullRequest] {
-	ansiOpts := []cliansi.Option{cliansi.WithTerminal(tty)}
+	cli *CLI, tty bool, termWidth int, opts ...table.Option,
+) *table.Renderer[PRRowModel] {
+	ansiOpts := []ansiutil.Option{ansiutil.WithTerminal(tty)}
 	if !tty {
-		ansiOpts = append(ansiOpts, cliansi.WithHyperlinkFallback(cliansi.HyperlinkFallbackURL))
+		ansiOpts = append(ansiOpts, ansiutil.WithHyperlinkFallback(ansiutil.HyperlinkFallbackURL))
 	}
-	ctx := table.NewRenderContext(p.theme, cliansi.New(ansiOpts...))
-	orgFilter := singleOrg(cli.Organization.Values)
+	ctx := table.NewRenderContext(p, ansiutil.New(ansiOpts...))
 	columns := resolveColumns(cli)
 	layout := computeLayout(termWidth, columns)
-	defs := p.allColumnDefs(orgFilter, resolver, layout)
+	defs := p.allColumnDefs(layout)
 
 	var showIndex bool
 	var cols []Column
@@ -70,24 +70,23 @@ func (p *prl) newTableRenderer(
 		}
 	}
 
-	return table.NewRenderer[PullRequest](
-		cols,
-		ctx,
+	renderOpts := []table.Option{
 		// prl default: newest at top → clib reverse=true.
 		// --reverse flag means oldest at top → clib reverse=false.
 		// Non-TTY: ignore --reverse, always newest at top (#1, #2, #3… from top).
 		table.WithReverse(cli.Interactive || !cli.Reverse || !tty),
 		table.WithShowIndex(showIndex),
 		table.WithTermWidth(termWidth),
-	)
+	}
+	renderOpts = append(renderOpts, opts...)
+
+	return table.NewRenderer[PRRowModel](cols, ctx, renderOpts...)
 }
 
 // allColumnDefs returns all available column definitions.
-func (p *prl) allColumnDefs(
-	orgFilter string,
-	resolver *AuthorResolver,
-	layout tableLayout,
-) map[string]Column {
+// Columns render from PRRowModel; enrichment (author resolution, ref text,
+// merge reason) is pre-computed in buildPRRowModels.
+func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 	return map[string]Column{
 		"index": {Name: "index", Header: "", Render: nil},
 		"idx":   {Name: "index", Header: "", Render: nil},
@@ -95,128 +94,139 @@ func (p *prl) allColumnDefs(
 		"org": {
 			Name:   "org",
 			Header: "ORG",
-			Render: func(pr PullRequest, _ *table.RenderContext) string {
-				return pr.Repository.NameWithOwner
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(row.RepoNWO)
 			},
 		},
 		"owner": {
 			Name:   "org",
 			Header: "ORG",
-			Render: func(pr PullRequest, _ *table.RenderContext) string {
-				return pr.Repository.NameWithOwner
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(row.RepoNWO)
 			},
 		},
 		"ref": {
 			Name:   "ref",
 			Header: "PR",
-			Render: func(pr PullRequest, ctx *table.RenderContext) string {
-				name := pr.Repository.Name
-				if orgFilter == "" || orgFilter == valueAll {
-					name = pr.Repository.NameWithOwner
-				}
-				ref := fmt.Sprintf("%s#%d", name, pr.Number)
-				style := p.prMergeStyle(pr)
-				return ctx.Hyperlink(pr.URL, style.Render(ref))
+			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
+				style := p.prMergeStyle(row.PR)
+				display := ctx.Hyperlink(row.URL, style.Render(row.Ref))
+				return table.StyledCell(display, row.Ref)
 			},
 		},
 		"status": {
 			Name:   "status",
 			Header: "STATUS",
-			Render: func(pr PullRequest, _ *table.RenderContext) string {
-				return p.renderMergeStatus(pr)
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(p.renderMergeStatus(row.PR))
 			},
 		},
 		"reason": {
 			Name:   "reason",
 			Header: "REASON",
-			Render: func(pr PullRequest, _ *table.RenderContext) string {
-				return p.renderMergeReason(pr)
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(row.MergeReason)
 			},
 		},
 		"repo": {
 			Name:   "repo",
 			Header: "REPO",
-			Render: func(pr PullRequest, ctx *table.RenderContext) string {
-				url := fmt.Sprintf("https://github.com/%s", pr.Repository.NameWithOwner)
-				return ctx.Hyperlink(url, pr.Repository.Name)
+			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
+				url := fmt.Sprintf("https://github.com/%s", row.RepoNWO)
+				display := ctx.Hyperlink(url, row.Repo)
+				return table.StyledCell(display, row.Repo)
 			},
 		},
 		"number": {
 			Name:   "number",
 			Header: "NUMBER",
-			Render: func(pr PullRequest, ctx *table.RenderContext) string {
-				num := fmt.Sprintf("#%d", pr.Number)
-				style := p.prMergeStyle(pr)
-				return ctx.Hyperlink(pr.URL, style.Render(num))
+			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
+				num := fmt.Sprintf("#%d", row.Number)
+				style := p.prMergeStyle(row.PR)
+				display := ctx.Hyperlink(row.URL, style.Render(num))
+				return table.SortableCell(display, num, row.Number)
 			},
 		},
 		colTitle: {
 			Name:   colTitle,
 			Header: "TITLE",
 			Flex:   true,
-			Render: func(pr PullRequest, ctx *table.RenderContext) string {
-				title := truncateTitle(pr.Title)
+			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
+				title := truncateTitle(row.Title)
 				if ctx.Ansi.Terminal() {
-					if rendered := p.theme.RenderMarkdown(title); rendered != "" {
-						return rendered
+					displayTitle := normalizeTUIDisplayText(title)
+					if rendered := p.theme.RenderMarkdown(displayTitle); rendered != "" {
+						return table.StyledCell(rendered, title)
 					}
+					return table.StyledCell(displayTitle, title)
 				}
-				return title
+				return table.TextCell(title)
 			},
 		},
 		"labels": {
 			Name:   "labels",
 			Header: "LABELS",
-			Render: func(pr PullRequest, _ *table.RenderContext) string {
-				names := make([]string, len(pr.Labels))
-				for i, l := range pr.Labels {
-					names[i] = l.Name
-				}
-				return strings.Join(names, ", ")
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(strings.Join(row.Labels, ", "))
 			},
 		},
 		"author": {
 			Name:   "author",
 			Header: "AUTHOR",
-			Render: func(pr PullRequest, ctx *table.RenderContext) string {
-				if resolver != nil {
-					return renderAuthor(pr, ctx, resolver)
+			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
+				am := row.Author
+				if !ctx.Ansi.Terminal() {
+					return table.TextCell(am.Display)
 				}
-				return pr.Author.Login
+				color := ctx.AssignEntityColor(am.Login)
+				style := lipgloss.NewStyle().Foreground(color)
+				if am.IsBot {
+					style = style.Faint(true)
+				} else if am.IsDeparted {
+					style = style.Strikethrough(true)
+				}
+				display := ctx.Hyperlink(am.URL, style.Render(am.Display))
+				return table.StyledCell(display, am.Display)
 			},
 		},
 		"state": {
 			Name:   "state",
 			Header: "STATE",
-			Render: func(pr PullRequest, _ *table.RenderContext) string {
-				return pr.State
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(row.State)
 			},
 		},
 		valueCreated: {
 			Name:   valueCreated,
 			Header: "CREATED",
-			Render: func(pr PullRequest, ctx *table.RenderContext) string {
+			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
+				var text string
 				if layout.compact {
-					return p.theme.RenderTimeAgoCompact(pr.CreatedAt, ctx.Ansi.Terminal())
+					text = p.theme.RenderTimeAgoCompact(row.CreatedAt, ctx.Ansi.Terminal())
+				} else {
+					text = p.theme.RenderTimeAgo(row.CreatedAt, ctx.Ansi.Terminal())
 				}
-				return p.theme.RenderTimeAgo(pr.CreatedAt, ctx.Ansi.Terminal())
+				return table.TimeCell(text, row.CreatedAt)
 			},
 		},
 		valueUpdated: {
 			Name:   valueUpdated,
 			Header: "UPDATED",
-			Render: func(pr PullRequest, ctx *table.RenderContext) string {
+			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
+				var text string
 				if layout.compact {
-					return p.theme.RenderTimeAgoCompact(pr.UpdatedAt, ctx.Ansi.Terminal())
+					text = p.theme.RenderTimeAgoCompact(row.UpdatedAt, ctx.Ansi.Terminal())
+				} else {
+					text = p.theme.RenderTimeAgo(row.UpdatedAt, ctx.Ansi.Terminal())
 				}
-				return p.theme.RenderTimeAgo(pr.UpdatedAt, ctx.Ansi.Terminal())
+				return table.TimeCell(text, row.UpdatedAt)
 			},
 		},
 		"url": {
 			Name:   "url",
 			Header: "URL",
-			Render: func(pr PullRequest, _ *table.RenderContext) string {
-				return pr.URL
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(row.URL)
 			},
 		},
 	}
@@ -238,6 +248,13 @@ func truncateTitle(title string) string {
 		return string(runes[:maxTitleLen-1]) + "…"
 	}
 	return title
+}
+
+// normalizeTUIDisplayText preserves emoji presentation while compensating for
+// variation-selector sequences that some TUI renderers/font combinations draw
+// a cell wider than their measured width, visually eating the following space.
+func normalizeTUIDisplayText(text string) string {
+	return strings.ReplaceAll(text, "\ufe0f ", "\ufe0f  ")
 }
 
 // Estimated column widths for layout decisions (compact mode, column hiding).

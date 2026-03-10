@@ -9,8 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
-	cliansi "github.com/gechr/clib/ansi"
-	"github.com/gechr/clib/table"
+	"github.com/gechr/prl/internal/ansiutil"
+	"github.com/gechr/prl/internal/table"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,29 +63,39 @@ func testPRs() []PullRequest {
 	}
 }
 
+// testModels builds PRRowModels from testPRs with the given orgFilter.
+func testModels(orgFilter string) []PRRowModel {
+	return buildPRRowModels(testPRs(), orgFilter, nil)
+}
+
+// testModelsFrom builds PRRowModels from the given PRs with the given orgFilter.
+func testModelsFrom(prs []PullRequest, orgFilter string) []PRRowModel {
+	return buildPRRowModels(prs, orgFilter, nil)
+}
+
 // newTestRenderer creates a table.Renderer with tty=true and prl's default reverse
 // (newest at top). Extra options override the defaults.
-func newTestRenderer(columns []Column, opts ...table.Option) *table.Renderer[PullRequest] {
+func newTestRenderer(columns []Column, opts ...table.Option) *table.Renderer[PRRowModel] {
 	return newTestRendererWithTTY(columns, true, opts...)
 }
 
 func newTestRendererWithTTY(
 	columns []Column, tty bool, opts ...table.Option,
-) *table.Renderer[PullRequest] {
-	ansiOpts := []cliansi.Option{cliansi.WithTerminal(tty)}
+) *table.Renderer[PRRowModel] {
+	ansiOpts := []ansiutil.Option{ansiutil.WithTerminal(tty)}
 	if !tty {
-		ansiOpts = append(ansiOpts, cliansi.WithHyperlinkFallback(cliansi.HyperlinkFallbackURL))
+		ansiOpts = append(ansiOpts, ansiutil.WithHyperlinkFallback(ansiutil.HyperlinkFallbackURL))
 	}
-	ctx := table.NewRenderContext(testPRL.theme, cliansi.New(ansiOpts...))
+	ctx := table.NewRenderContext(testPRL, ansiutil.New(ansiOpts...))
 	// prl default: newest at top → clib WithReverse(true).
 	allOpts := []table.Option{table.WithReverse(true)}
 	allOpts = append(allOpts, opts...)
-	return table.NewRenderer[PullRequest](columns, ctx, allOpts...)
+	return table.NewRenderer[PRRowModel](columns, ctx, allOpts...)
 }
 
 // simpleColumns returns minimal columns (repo, number) for testing ordering/indexing.
 func simpleColumns() []Column {
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	defs := testPRL.allColumnDefs(tableLayout{})
 	return []Column{defs["repo"], defs["number"]}
 }
 
@@ -106,51 +116,59 @@ func extractVisibleColumn(output string, col int) []string {
 	return vals
 }
 
+func visibleIndex(s, substr string) int {
+	before, _, ok := strings.Cut(s, substr)
+	if !ok {
+		return -1
+	}
+	return lipgloss.Width(before)
+}
+
 func TestRender_Empty(t *testing.T) {
 	r := newTestRenderer(simpleColumns())
-	out, rows := r.Render(nil)
-	require.Empty(t, out)
-	require.Nil(t, rows)
+	rt := r.Render(nil)
+	require.Empty(t, rt.String())
+	require.Nil(t, rt.Rows)
 }
 
 func TestRender_NoColumns(t *testing.T) {
 	r := newTestRenderer(nil)
-	out, rows := r.Render(testPRs())
-	require.Empty(t, out)
-	require.Nil(t, rows)
+	rt := r.Render(testModels("org"))
+	require.Empty(t, rt.String())
+	require.Nil(t, rt.Rows)
 }
 
 func TestRender_DefaultOrder_NewestAtTop(t *testing.T) {
 	// Default (prl reverse=true → newest at top).
-	prs := testPRs()
+	models := testModels("org")
 	r := newTestRenderer(simpleColumns())
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Len(t, rows, 3)
-	require.Equal(t, "newest PR", rows[0].Item.Title)
-	require.Equal(t, "oldest PR", rows[2].Item.Title)
+	require.Len(t, rt.Rows, 3)
+	require.Equal(t, "newest PR", rt.Rows[0].Item.Title)
+	require.Equal(t, "oldest PR", rt.Rows[2].Item.Title)
 }
 
 func TestRender_Reverse_OldestAtTop(t *testing.T) {
 	// --reverse: oldest first → clib reverse=false.
-	prs := testPRs()
+	models := testModels("org")
 	r := newTestRenderer(simpleColumns(), table.WithReverse(false))
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Len(t, rows, 3)
-	require.Equal(t, "oldest PR", rows[0].Item.Title)
-	require.Equal(t, "newest PR", rows[2].Item.Title)
+	require.Len(t, rt.Rows, 3)
+	require.Equal(t, "oldest PR", rt.Rows[0].Item.Title)
+	require.Equal(t, "newest PR", rt.Rows[2].Item.Title)
 }
 
 func TestRender_Index_DefaultOrder(t *testing.T) {
 	// Default order: #1 at top (newest), highest number at bottom (oldest).
-	prs := testPRs()
+	models := testModels("org")
 	r := newTestRenderer(simpleColumns(), table.WithShowIndex(true))
-	out, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Len(t, rows, 3)
+	require.Len(t, rt.Rows, 3)
 
-	indices := extractVisibleColumn(out, 0)
+	indices := extractVisibleColumn(rt.String(), 0)
 	require.Len(t, indices, 3)
 	// Top row = newest = #1
 	require.Equal(t, "1", indices[0], "top index should be 1 (newest)")
@@ -160,16 +178,16 @@ func TestRender_Index_DefaultOrder(t *testing.T) {
 
 func TestRender_Index_Reverse(t *testing.T) {
 	// Reverse order: #1 at bottom (newest), highest number at top (oldest).
-	prs := testPRs()
+	models := testModels("org")
 	r := newTestRenderer(simpleColumns(),
 		table.WithReverse(false),
 		table.WithShowIndex(true),
 	)
-	out, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Len(t, rows, 3)
+	require.Len(t, rt.Rows, 3)
 
-	indices := extractVisibleColumn(out, 0)
+	indices := extractVisibleColumn(rt.String(), 0)
 	require.Len(t, indices, 3)
 	// Top row = oldest = highest number
 	require.Equal(t, "3", indices[0], "top index should be 3 (oldest)")
@@ -179,8 +197,8 @@ func TestRender_Index_Reverse(t *testing.T) {
 
 func TestRender_IndexLeftPadding(t *testing.T) {
 	// With 10+ items, single-digit indices should be left-padded with spaces.
-	prs := make([]PullRequest, 12)
 	now := time.Now().UTC()
+	prs := make([]PullRequest, 12)
 	for i := range prs {
 		prs[i] = PullRequest{
 			Number:     i + 1,
@@ -194,8 +212,10 @@ func TestRender_IndexLeftPadding(t *testing.T) {
 		}
 	}
 
+	models := testModelsFrom(prs, "org")
 	r := newTestRenderer(simpleColumns(), table.WithShowIndex(true))
-	out, _ := r.Render(prs)
+	rt := r.Render(models)
+	out := rt.String()
 
 	lines := strings.Split(out, "\n")
 	// First data line = newest = #1. The dim style wraps " 1", so the visible
@@ -212,23 +232,41 @@ func TestRender_IndexLeftPadding(t *testing.T) {
 
 func TestRender_IndexContainsDimStyle(t *testing.T) {
 	// Index numbers should be wrapped in faint/dim ANSI styling.
-	prs := testPRs()[:2]
+	models := testModels("org")[:2]
 	r := newTestRenderer(simpleColumns(), table.WithShowIndex(true))
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	// Default order: newest first. Row 0 = newest = index 1.
 	// Display line starts with dim-styled index, followed by SGR8-wrapped gap.
-	parts := strings.SplitN(rows[0].Display, sgr8spaces(2), 2)
+	parts := strings.SplitN(rt.Rows[0].Display, sgr8spaces(2), 2)
 	require.Equal(t, testPRL.theme.Dim.Render("1"), parts[0])
 }
 
-func TestRender_HeaderContainsBoldStyle(t *testing.T) {
-	prs := testPRs()[:1]
-	r := newTestRenderer(simpleColumns())
-	out, _ := r.Render(prs)
+func TestNormalizeTUIDisplayTextPreservesEmojiPresentation(t *testing.T) {
+	require.Equal(t, "⬆️  Bump", normalizeTUIDisplayText("⬆️ Bump"))
+	require.Equal(t, "ℹ️  Info", normalizeTUIDisplayText("ℹ️ Info"))
+	require.Equal(t, "✅ Done", normalizeTUIDisplayText("✅ Done"))
+}
 
-	lines := strings.Split(out, "\n")
-	headerFields := strings.Fields(ansi.Strip(lines[0]))
+func TestTitleColumnPreservesEmojiVariationSelectorInTTY(t *testing.T) {
+	pr := testPRs()[0]
+	pr.Title = "⬆️ Bump tar from 7.5.7 to 7.5.11"
+	row := testModelsFrom([]PullRequest{pr}, "org")[0]
+	ctx := table.NewRenderContext(testPRL, ansiutil.New(ansiutil.WithTerminal(true)))
+
+	cell := testPRL.allColumnDefs(tableLayout{})[colTitle].Render(row, ctx)
+
+	require.Equal(t, pr.Title, cell.Plain)
+	require.Contains(t, cell.Text, "\ufe0f")
+	require.Contains(t, ansi.Strip(cell.Text), "⬆️  Bump tar")
+}
+
+func TestRender_HeaderContainsBoldStyle(t *testing.T) {
+	models := testModels("org")[:1]
+	r := newTestRenderer(simpleColumns())
+	rt := r.Render(models)
+
+	headerFields := strings.Fields(ansi.Strip(rt.Header))
 	require.Equal(t, []string{"REPO", "NUMBER"}, headerFields)
 
 	// Verify bold styling by checking the raw header contains bold-rendered values
@@ -237,127 +275,152 @@ func TestRender_HeaderContainsBoldStyle(t *testing.T) {
 	expectedHeader := testPRL.theme.Bold.Render("REPO") +
 		sgr8spaces(1) + sgr8spaces(2) +
 		testPRL.theme.Bold.Render("NUMBER")
-	require.Equal(t, expectedHeader, lines[0])
+	require.Equal(t, expectedHeader, rt.Header)
+}
+
+func TestRender_HeaderRendererPreservesColumnAlignment(t *testing.T) {
+	models := testModels("")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
+	cols := []Column{defs["repo"], defs["number"], defs["state"]}
+	r := newTestRenderer(cols, table.WithHeaderRenderer(
+		func(name, header string, ctx *table.RenderContext) string {
+			rendered := ctx.Theme.RenderBold(header)
+			if name == "number" {
+				return rendered + ctx.Theme.RenderDim(" ▲")
+			}
+			return rendered
+		},
+	))
+	rt := r.Render(models)
+
+	header := ansi.Strip(rt.Header)
+	row := ansi.Strip(rt.Rows[0].Display)
+
+	require.Contains(t, header, "NUMBER ▲")
+	require.Equal(t, visibleIndex(row, "alpha"), visibleIndex(header, "REPO"))
+	require.Equal(t, visibleIndex(row, "#1"), visibleIndex(header, "NUMBER"))
+	require.Equal(t, visibleIndex(row, "open"), visibleIndex(header, "STATE"))
 }
 
 func TestRender_RefContainsStateColor(t *testing.T) {
 	// Open PR ref with unknown merge status should be styled with dim.
-	prs := testPRs()[:1] // state = "open"
-	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
+	models := testModels("org")[:1] // state = "open"
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	expected := ansi.SetHyperlink("https://github.com/org/alpha/pull/1") +
 		testPRL.theme.Dim.Render("alpha#1") + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RefMergedColor(t *testing.T) {
-	prs := testPRs()[1:2] // state = "merged"
-	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
+	models := testModels("org")[1:2] // state = "merged"
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	expected := ansi.SetHyperlink("https://github.com/org/bravo/pull/2") +
 		testPRL.theme.Magenta.Render("bravo#2") + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RefClosedColor(t *testing.T) {
-	prs := testPRs()[2:3] // state = "closed"
-	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
+	models := testModels("org")[2:3] // state = "closed"
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	expected := ansi.SetHyperlink("https://github.com/org/charlie/pull/3") +
 		testPRL.theme.Red.Render("charlie#3") + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RefContainsHyperlink(t *testing.T) {
 	// With tty=true, ref column should contain OSC 8 hyperlinks.
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
+	models := testModels("org")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	expected := ansi.SetHyperlink("https://github.com/org/alpha/pull/1") +
 		testPRL.theme.Dim.Render("alpha#1") + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RepoContainsHyperlink(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModels("")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["repo"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	expected := ansi.SetHyperlink("https://github.com/org/alpha") + "alpha" + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_NoHyperlinkWhenNoTTY(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
+	models := testModels("org")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRendererWithTTY([]Column{defs["ref"]}, false)
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	// tty=false: falls back to plain URL
 	expected := "https://github.com/org/alpha/pull/1"
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RefIncludesOrg_WhenNoOrgFilter(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModels("")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	// Without org filter, ref includes org/repo#N
 	expected := ansi.SetHyperlink("https://github.com/org/alpha/pull/1") +
 		testPRL.theme.Dim.Render("org/alpha#1") + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RefIncludesOrg_WhenOrgFilterAll(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs(valueAll, nil, tableLayout{})
+	models := testModelsFrom(testPRs()[:1], valueAll)
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	// With "all" org filter, ref includes org/repo#N (same as no filter)
 	expected := ansi.SetHyperlink("https://github.com/org/alpha/pull/1") +
 		testPRL.theme.Dim.Render("org/alpha#1") + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RefExcludesOrg_WhenOrgFilter(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("org", nil, tableLayout{})
+	models := testModels("org")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["ref"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	// With org filter, ref uses just repo#N (no org prefix)
 	expected := ansi.SetHyperlink("https://github.com/org/alpha/pull/1") +
 		testPRL.theme.Dim.Render("alpha#1") + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_RowDisplayLinesSet(t *testing.T) {
-	prs := testPRs()[:2]
+	models := testModels("org")[:2]
 	r := newTestRenderer(simpleColumns())
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	for i, row := range rows {
+	for i, row := range rt.Rows {
 		require.NotEmpty(t, row.Display, "row[%d].Display should not be empty", i)
 	}
 }
 
 func TestRender_HeaderPresent(t *testing.T) {
-	prs := testPRs()[:1]
+	models := testModels("org")[:1]
 	r := newTestRenderer(simpleColumns())
-	out, _ := r.Render(prs)
+	rt := r.Render(models)
 
+	out := rt.String()
 	lines := strings.Split(out, "\n")
 	require.Len(t, lines, 2, "expected header + 1 data line")
 
@@ -366,13 +429,14 @@ func TestRender_HeaderPresent(t *testing.T) {
 	expectedHeader := testPRL.theme.Bold.Render("REPO") +
 		sgr8spaces(1) + sgr8spaces(2) +
 		testPRL.theme.Bold.Render("NUMBER")
-	require.Equal(t, expectedHeader, lines[0])
+	require.Equal(t, expectedHeader, rt.Header)
 }
 
 func TestRender_SingleRow(t *testing.T) {
-	prs := testPRs()[:1]
+	models := testModels("org")[:1]
 	r := newTestRenderer(simpleColumns(), table.WithShowIndex(true))
-	out, _ := r.Render(prs)
+	rt := r.Render(models)
+	out := rt.String()
 
 	// Single row should still show index.
 	lines := strings.Split(out, "\n")
@@ -387,12 +451,12 @@ func TestRender_SingleRow(t *testing.T) {
 }
 
 func TestRender_AuthorColumn(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModels("")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["author"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Equal(t, "alice", rows[0].Cells[0])
+	require.Equal(t, "alice", rt.Rows[0].Cells[0].Plain)
 }
 
 func TestRender_LabelsColumn(t *testing.T) {
@@ -407,29 +471,30 @@ func TestRender_LabelsColumn(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}}
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModelsFrom(prs, "")
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["labels"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Equal(t, "bug, urgent", rows[0].Cells[0])
+	require.Equal(t, "bug, urgent", rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_StateColumn(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModels("")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["state"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Equal(t, "open", rows[0].Cells[0])
+	require.Equal(t, "open", rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_URLColumn(t *testing.T) {
-	prs := testPRs()[:1]
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModels("")[:1]
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["url"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	require.Equal(t, "https://github.com/org/alpha/pull/1", rows[0].Cells[0])
+	require.Equal(t, "https://github.com/org/alpha/pull/1", rt.Rows[0].Cells[0].Text)
 }
 
 func TestRender_TitleTruncation(t *testing.T) {
@@ -444,12 +509,13 @@ func TestRender_TitleTruncation(t *testing.T) {
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}}
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModelsFrom(prs, "")
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["title"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
-	// The cell value itself should be truncated to maxTitleLen runes (with ellipsis).
-	visible := ansi.Strip(rows[0].Cells[0])
+	// The cell plain value should be truncated to maxTitleLen runes (with ellipsis).
+	visible := rt.Rows[0].Cells[0].Plain
 	require.Len(t, []rune(visible), maxTitleLen)
 	require.True(t, strings.HasSuffix(visible, "…"))
 }
@@ -457,10 +523,11 @@ func TestRender_TitleTruncation(t *testing.T) {
 func TestRender_ColumnAlignment(t *testing.T) {
 	// Verify that columns are aligned: all data lines should have same visible width
 	// for each column position as the header.
-	prs := testPRs()
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModels("")
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["state"], defs["author"]})
-	out, _ := r.Render(prs)
+	rt := r.Render(models)
+	out := rt.String()
 
 	lines := strings.Split(out, "\n")
 	require.GreaterOrEqual(t, len(lines), 2, "expected header + data lines")
@@ -476,9 +543,10 @@ func TestRender_ColumnAlignment(t *testing.T) {
 
 func TestRender_IndexHeaderPadding(t *testing.T) {
 	// When showIndex is on, the header's index column should be spaces (not a label).
-	prs := testPRs()
+	models := testModels("org")
 	r := newTestRenderer(simpleColumns(), table.WithShowIndex(true))
-	out, _ := r.Render(prs)
+	rt := r.Render(models)
+	out := rt.String()
 
 	lines := strings.Split(out, "\n")
 	header := ansi.Strip(lines[0])
@@ -491,14 +559,14 @@ func TestRender_IndexHeaderPadding(t *testing.T) {
 
 func TestRender_NumberColumnStateColor(t *testing.T) {
 	// Number column should also use state-based colors.
-	prs := testPRs()[:1] // open
-	defs := testPRL.allColumnDefs("", nil, tableLayout{})
+	models := testModels("")[:1] // open
+	defs := testPRL.allColumnDefs(tableLayout{})
 	r := newTestRenderer([]Column{defs["number"]})
-	_, rows := r.Render(prs)
+	rt := r.Render(models)
 
 	expected := ansi.SetHyperlink("https://github.com/org/alpha/pull/1") +
-		testPRL.theme.Dim.Render(fmt.Sprintf("#%d", prs[0].Number)) + ansi.ResetHyperlink()
-	require.Equal(t, expected, rows[0].Cells[0])
+		testPRL.theme.Dim.Render(fmt.Sprintf("#%d", testPRs()[0].Number)) + ansi.ResetHyperlink()
+	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
 func TestNormalizeColumns(t *testing.T) {
@@ -519,25 +587,23 @@ func TestNormalizeColumns(t *testing.T) {
 
 func TestNewTableRenderer_Columns(t *testing.T) {
 	cli := &CLI{Columns: CSVFlag{Values: []string{"ref", "title", "author"}}}
-	r := testPRL.newTableRenderer(cli, true, nil, 0)
+	r := testPRL.newTableRenderer(cli, true, 0)
 
 	// Verify by rendering and checking the header columns.
-	prs := testPRs()[:1]
-	out, _ := r.Render(prs)
-	lines := strings.Split(out, "\n")
-	headerFields := strings.Fields(ansi.Strip(lines[0]))
+	models := testModels("")[:1]
+	rt := r.Render(models)
+	headerFields := strings.Fields(ansi.Strip(rt.Header))
 	require.Equal(t, []string{"PR", "TITLE", "AUTHOR"}, headerFields)
 }
 
 func TestNewTableRenderer_IndexColumn(t *testing.T) {
 	cli := &CLI{Columns: CSVFlag{Values: []string{"index", "ref"}}}
-	r := testPRL.newTableRenderer(cli, true, nil, 0)
+	r := testPRL.newTableRenderer(cli, true, 0)
 
 	// Index should show for >1 result.
-	prs := testPRs()
-	out, _ := r.Render(prs)
-	lines := strings.Split(out, "\n")
-	header := ansi.Strip(lines[0])
+	models := testModels("")
+	rt := r.Render(models)
+	header := ansi.Strip(rt.Header)
 	fields := strings.Fields(header)
 	// Index header is blank spaces, first visible field should be "PR"
 	require.Equal(t, "PR", fields[0])
@@ -545,13 +611,12 @@ func TestNewTableRenderer_IndexColumn(t *testing.T) {
 
 func TestNewTableRenderer_IndexDisabledInInteractive(t *testing.T) {
 	cli := &CLI{Columns: CSVFlag{Values: []string{"index", "ref"}}, Approve: true}
-	r := testPRL.newTableRenderer(cli, true, nil, 0)
+	r := testPRL.newTableRenderer(cli, true, 0)
 
 	// In interactive mode, index should not be shown.
-	prs := testPRs()
-	out, _ := r.Render(prs)
-	lines := strings.Split(out, "\n")
-	headerFields := strings.Fields(ansi.Strip(lines[0]))
+	models := testModels("")
+	rt := r.Render(models)
+	headerFields := strings.Fields(ansi.Strip(rt.Header))
 	// Should only have "PR" (no index padding).
 	require.Equal(t, []string{"PR"}, headerFields)
 }
@@ -561,14 +626,14 @@ func TestNewTableRenderer_OrgFilter(t *testing.T) {
 		Organization: CSVFlag{Values: []string{"myorg"}},
 		Columns:      CSVFlag{Values: []string{"ref"}},
 	}
-	r := testPRL.newTableRenderer(cli, true, nil, 0)
+	r := testPRL.newTableRenderer(cli, true, 0)
 
 	// With single org, ref should exclude org prefix. But org is "myorg" and PR has "org/alpha".
 	// singleOrg returns "myorg", orgFilter = "myorg" (not empty, not "all").
 	// So ref should use repo#N (without org prefix).
-	prs := testPRs()[:1]
-	_, rows := r.Render(prs)
-	visible := ansi.Strip(rows[0].Cells[0])
+	models := testModelsFrom(testPRs()[:1], "myorg")
+	rt := r.Render(models)
+	visible := ansi.Strip(rt.Rows[0].Cells[0].Text)
 	require.Equal(t, "alpha#1", visible)
 }
 
@@ -577,24 +642,24 @@ func TestNewTableRenderer_OrgFilter_Multiple(t *testing.T) {
 		Organization: CSVFlag{Values: []string{"org1", "org2"}},
 		Columns:      CSVFlag{Values: []string{"ref"}},
 	}
-	r := testPRL.newTableRenderer(cli, true, nil, 0)
+	r := testPRL.newTableRenderer(cli, true, 0)
 
 	// Multiple orgs → no org filter → ref includes full org/repo
-	prs := testPRs()[:1]
-	_, rows := r.Render(prs)
-	visible := ansi.Strip(rows[0].Cells[0])
+	models := testModelsFrom(testPRs()[:1], "")
+	rt := r.Render(models)
+	visible := ansi.Strip(rt.Rows[0].Cells[0].Text)
 	require.Equal(t, "org/alpha#1", visible)
 }
 
 func TestNewTableRenderer_Reverse(t *testing.T) {
 	cli := &CLI{Reverse: true, Columns: CSVFlag{Values: []string{"ref"}}}
-	r := testPRL.newTableRenderer(cli, true, nil, 0)
+	r := testPRL.newTableRenderer(cli, true, 0)
 
 	// --reverse → oldest at top (clib reverse=false).
-	prs := testPRs()
-	_, rows := r.Render(prs)
-	require.Equal(t, "oldest PR", rows[0].Item.Title)
-	require.Equal(t, "newest PR", rows[2].Item.Title)
+	models := testModels("")
+	rt := r.Render(models)
+	require.Equal(t, "oldest PR", rt.Rows[0].Item.Title)
+	require.Equal(t, "newest PR", rt.Rows[2].Item.Title)
 }
 
 // --- Layout computation tests ---
@@ -655,22 +720,22 @@ func testCLI() *CLI {
 
 func TestRender_NarrowTerminal_CompactTime(t *testing.T) {
 	// Render with a narrow terminal width: time columns should use compact format.
-	prs := testPRs()[:1]
-	r := testPRL.newTableRenderer(testCLI(), true, nil, 80)
-	out, _ := r.Render(prs)
+	models := testModels("org")[:1]
+	r := testPRL.newTableRenderer(testCLI(), true, 80)
+	rt := r.Render(models)
 
-	stripped := ansi.Strip(out)
+	stripped := ansi.Strip(rt.String())
 	require.NotContains(t, stripped, "minutes")
 	require.NotContains(t, stripped, "hours")
 }
 
 func TestRender_WideTerminal_LongTime(t *testing.T) {
 	// Render with a wide terminal: time columns should use long format.
-	prs := testPRs()[:1]
-	r := testPRL.newTableRenderer(testCLI(), true, nil, 200)
-	out, _ := r.Render(prs)
+	models := testModels("org")[:1]
+	r := testPRL.newTableRenderer(testCLI(), true, 200)
+	rt := r.Render(models)
 
-	stripped := ansi.Strip(out)
+	stripped := ansi.Strip(rt.String())
 	require.Contains(t, stripped, "hour")
 }
 
@@ -688,11 +753,12 @@ func TestRender_FlexTruncation(t *testing.T) {
 		UpdatedAt:  time.Now().UTC(),
 	}}
 
-	r := testPRL.newTableRenderer(testCLI(), true, nil, 80)
-	out, _ := r.Render(prs)
+	models := testModelsFrom(prs, "org")
+	r := testPRL.newTableRenderer(testCLI(), true, 80)
+	rt := r.Render(models)
 
 	// Every line should fit within 80 columns.
-	for i, line := range strings.Split(out, "\n") {
+	for i, line := range strings.Split(rt.String(), "\n") {
 		w := lipgloss.Width(line)
 		require.LessOrEqual(t, w, 80,
 			"line %d has visible width %d, exceeds terminal width 80", i, w)
@@ -713,11 +779,12 @@ func TestRender_FlexNoTruncationWhenWide(t *testing.T) {
 		UpdatedAt:  time.Now().UTC(),
 	}}
 
-	r := testPRL.newTableRenderer(testCLI(), true, nil, 300)
-	_, rows := r.Render(prs)
+	models := testModelsFrom(prs, "org")
+	r := testPRL.newTableRenderer(testCLI(), true, 300)
+	rt := r.Render(models)
 
 	// Title cell should be truncated to maxTitleLen (the pre-render cap), not beyond.
-	visible := ansi.Strip(rows[0].Cells[0])
+	visible := rt.Rows[0].Cells[0].Plain
 	require.Len(t, []rune(visible), maxTitleLen)
 	require.True(t, strings.HasSuffix(visible, "…"))
 }
@@ -812,7 +879,7 @@ func TestComputeLayout_WideDoesNotHide(t *testing.T) {
 
 func TestRender_VeryNarrow_HidesColumns(t *testing.T) {
 	// At a very narrow width, the rendered table should have fewer header columns.
-	prs := testPRs()[:1]
+	models := testModels("org")[:1]
 	cli := &CLI{}
 	cli.Normalize(&Config{
 		Default: Defaults{
@@ -825,17 +892,164 @@ func TestRender_VeryNarrow_HidesColumns(t *testing.T) {
 	})
 
 	// Wide: should have TITLE, PR, CREATED, UPDATED in header.
-	rWide := testPRL.newTableRenderer(cli, true, nil, 200)
-	outWide, _ := rWide.Render(prs)
-	wideHeader := strings.Fields(ansi.Strip(strings.Split(outWide, "\n")[0]))
+	rWide := testPRL.newTableRenderer(cli, true, 200)
+	rtWide := rWide.Render(models)
+	wideHeader := strings.Fields(ansi.Strip(rtWide.Header))
 
 	// Very narrow: should have fewer columns.
-	rNarrow := testPRL.newTableRenderer(cli, true, nil, 40)
-	outNarrow, _ := rNarrow.Render(prs)
-	narrowHeader := strings.Fields(ansi.Strip(strings.Split(outNarrow, "\n")[0]))
+	rNarrow := testPRL.newTableRenderer(cli, true, 40)
+	rtNarrow := rNarrow.Render(models)
+	narrowHeader := strings.Fields(ansi.Strip(rtNarrow.Header))
 
 	require.Less(t, len(narrowHeader), len(wideHeader),
 		"narrow terminal should show fewer columns than wide")
 	// PR column should always be present.
 	require.Contains(t, narrowHeader, "PR", "PR column should always be visible")
+}
+
+// --- Render does not mutate input ---
+
+func TestRender_DoesNotMutateInput(t *testing.T) {
+	models := testModels("org")
+	// Copy the first item's title for comparison.
+	firstTitle := models[0].Title
+	lastTitle := models[len(models)-1].Title
+
+	r := newTestRenderer(simpleColumns())
+	_ = r.Render(models)
+
+	// Input slice order should be unchanged.
+	require.Equal(t, firstTitle, models[0].Title)
+	require.Equal(t, lastTitle, models[len(models)-1].Title)
+}
+
+// --- SortRows tests ---
+
+func TestSortRows_ByString(t *testing.T) {
+	models := testModels("org")
+	r := newTestRenderer(simpleColumns())
+	rt := r.Render(models)
+
+	sorted := table.SortRows(rt.Rows, r.Columns(), "repo", true)
+	require.Len(t, sorted, 3)
+	require.Equal(t, "alpha", sorted[0].Item.Repo)
+	require.Equal(t, "bravo", sorted[1].Item.Repo)
+	require.Equal(t, "charlie", sorted[2].Item.Repo)
+}
+
+func TestSortRows_ByStringDescending(t *testing.T) {
+	models := testModels("org")
+	r := newTestRenderer(simpleColumns())
+	rt := r.Render(models)
+
+	sorted := table.SortRows(rt.Rows, r.Columns(), "repo", false)
+	require.Len(t, sorted, 3)
+	require.Equal(t, "charlie", sorted[0].Item.Repo)
+	require.Equal(t, "bravo", sorted[1].Item.Repo)
+	require.Equal(t, "alpha", sorted[2].Item.Repo)
+}
+
+func TestSortRows_ByInt(t *testing.T) {
+	models := testModels("org")
+	defs := testPRL.allColumnDefs(tableLayout{})
+	r := newTestRenderer([]Column{defs["number"]})
+	rt := r.Render(models)
+
+	sorted := table.SortRows(rt.Rows, r.Columns(), "number", true)
+	require.Len(t, sorted, 3)
+	require.Equal(t, 1, sorted[0].Item.Number)
+	require.Equal(t, 2, sorted[1].Item.Number)
+	require.Equal(t, 3, sorted[2].Item.Number)
+}
+
+func TestSortRows_ByTime(t *testing.T) {
+	models := testModels("org")
+	defs := testPRL.allColumnDefs(tableLayout{})
+	r := newTestRenderer([]Column{defs["created"]})
+	rt := r.Render(models)
+
+	sorted := table.SortRows(rt.Rows, r.Columns(), "created", true)
+	require.Len(t, sorted, 3)
+	// Ascending: oldest first
+	require.Equal(t, "oldest PR", sorted[0].Item.Title)
+	require.Equal(t, "newest PR", sorted[2].Item.Title)
+}
+
+func TestSortRows_UnknownColumn(t *testing.T) {
+	models := testModels("org")
+	r := newTestRenderer(simpleColumns())
+	rt := r.Render(models)
+
+	// Unknown column returns input unchanged.
+	sorted := table.SortRows(rt.Rows, r.Columns(), "nonexistent", true)
+	require.Equal(t, rt.Rows, sorted)
+}
+
+func TestSortRows_Stable(t *testing.T) {
+	// Create PRs with same repo name to test stability.
+	now := time.Now().UTC()
+	prs := []PullRequest{
+		{
+			Number:     1,
+			Title:      "first",
+			URL:        "u",
+			State:      "open",
+			Repository: Repository{Name: "repo", NameWithOwner: "org/repo"},
+			Author:     Author{Login: "a"},
+			CreatedAt:  now.Add(-3 * time.Hour),
+			UpdatedAt:  now,
+		},
+		{
+			Number:     2,
+			Title:      "second",
+			URL:        "u",
+			State:      "open",
+			Repository: Repository{Name: "repo", NameWithOwner: "org/repo"},
+			Author:     Author{Login: "b"},
+			CreatedAt:  now.Add(-2 * time.Hour),
+			UpdatedAt:  now,
+		},
+		{
+			Number:     3,
+			Title:      "third",
+			URL:        "u",
+			State:      "open",
+			Repository: Repository{Name: "repo", NameWithOwner: "org/repo"},
+			Author:     Author{Login: "c"},
+			CreatedAt:  now.Add(-1 * time.Hour),
+			UpdatedAt:  now,
+		},
+	}
+	models := testModelsFrom(prs, "org")
+	r := newTestRenderer(simpleColumns(), table.WithReverse(false))
+	rt := r.Render(models)
+
+	// Sort by repo (all same) - order should be preserved (stable).
+	sorted := table.SortRows(rt.Rows, r.Columns(), "repo", true)
+	require.Equal(t, "first", sorted[0].Item.Title)
+	require.Equal(t, "second", sorted[1].Item.Title)
+	require.Equal(t, "third", sorted[2].Item.Title)
+}
+
+// --- RenderedTable.String() tests ---
+
+func TestRenderedTable_String(t *testing.T) {
+	models := testModels("org")[:2]
+	r := newTestRenderer(simpleColumns())
+	rt := r.Render(models)
+
+	s := rt.String()
+	lines := strings.Split(s, "\n")
+	// Header + 2 data lines
+	require.Len(t, lines, 3)
+	// First line is header
+	require.Equal(t, rt.Header, lines[0])
+	// Remaining lines are row displays
+	require.Equal(t, rt.Rows[0].Display, lines[1])
+	require.Equal(t, rt.Rows[1].Display, lines[2])
+}
+
+func TestRenderedTable_String_Empty(t *testing.T) {
+	rt := table.RenderedTable[PRRowModel]{}
+	require.Empty(t, rt.String())
 }

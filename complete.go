@@ -243,7 +243,7 @@ func completeSlackRecipients(cfg *Config) []string {
 
 // completeColumns returns column name completions.
 func (p *prl) completeColumns() []string {
-	defs := p.allColumnDefs("", nil, tableLayout{})
+	defs := p.allColumnDefs(tableLayout{})
 
 	canonical := make(map[string]bool)
 	var results []string

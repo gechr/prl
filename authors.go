@@ -2,9 +2,6 @@ package main
 
 import (
 	"strings"
-
-	"charm.land/lipgloss/v2"
-	"github.com/gechr/clib/table"
 )
 
 // AuthorResolver resolves GitHub usernames to display names.
@@ -61,51 +58,4 @@ func (r *AuthorResolver) IsHCL(username string) bool {
 func (r *AuthorResolver) IsKnown(username string) bool {
 	_, ok := r.names[strings.ToLower(username)]
 	return ok
-}
-
-// renderAuthor renders a styled author string for table display.
-func renderAuthor(pr PullRequest, ctx *table.RenderContext, resolver *AuthorResolver) string {
-	login := pr.Author.Login
-	isBot := strings.HasSuffix(strings.ToLower(login), BotSuffix)
-
-	// Resolve display name
-	displayName := resolver.Resolve(login)
-
-	// Bot name handling
-	botBaseName := login
-	if isBot {
-		botBaseName = strings.TrimSuffix(login, BotSuffix)
-		if before, ok := strings.CutSuffix(displayName, BotSuffix); ok {
-			strippedName := before
-			resolved := resolver.Resolve(strippedName)
-			if resolved != strippedName {
-				displayName = resolved
-			} else {
-				displayName = strippedName
-			}
-		}
-	}
-
-	if !ctx.Ansi.Terminal() {
-		return displayName
-	}
-
-	// Assign color (stable per author across all rows)
-	color := ctx.AssignEntityColor(login)
-	style := lipgloss.NewStyle().Foreground(color)
-	if isBot {
-		style = style.Faint(true)
-	} else if resolver.IsKnown(login) && !resolver.IsHCL(login) {
-		style = style.Strikethrough(true)
-	}
-
-	// Hyperlink
-	var url string
-	if isBot {
-		url = "https://github.com/apps/" + botBaseName
-	} else {
-		url = "https://github.com/" + login
-	}
-
-	return ctx.Hyperlink(url, style.Render(displayName))
 }

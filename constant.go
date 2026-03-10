@@ -35,7 +35,7 @@ const (
 // Layout: terminal width thresholds and column width estimates.
 const (
 	compactTimeThreshold = 120 // use compact time format below this terminal width
-	columnGap            = 2   // spaces between columns (matches clib/table defaultColumnPadding)
+	columnGap            = 2   // spaces between columns (matches internal/table defaultColumnPadding)
 )
 
 // Duration multipliers in seconds.
@@ -82,29 +82,32 @@ const (
 	maxSelectHeight  = 50
 )
 
-// Browse TUI.
+// TUI constants.
 const (
-	browseCursorPrefix = "❯ "
+	tuiCursorPrefix = "❯ "
 
-	browseActionApprove = "approve-pr"
-	browseActionInfo    = "info"
+	tuiActionApprove = "approve-pr"
+	tuiActionInfo    = "info"
 
-	browseClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
+	tuiClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
 
-	browseConfirmPadX = 4
-	browseConfirmPadY = 2
+	tuiConfirmPadX = 4
+	tuiConfirmPadY = 2
 
-	browseJumpTimeout = 500 * time.Millisecond
-	browseStatusFlash = 5 * time.Second
+	tuiJumpTimeout = 500 * time.Millisecond
+	tuiStatusFlash = 5 * time.Second
 
-	browseKeyAltA         = "alt+a"
-	browseKeyCtrlC        = "ctrl+c"
-	browseKeyCtrlD        = "ctrl+d"
-	browseKeyDown         = "down"
-	browseKeyEnter        = "enter"
-	browseKeyEsc          = "esc"
-	browseKeyLeft         = "left"
-	browseKeyRight        = "right"
-	browseKeyUp           = "up"
-	browseNonCursorPrefix = "  "
+	tuiKeyAltA         = "alt+a"
+	tuiKeyCtrlC        = "ctrl+c"
+	tuiKeyCtrlD        = "ctrl+d"
+	tuiKeyDown         = "down"
+	tuiKeyEnter        = "enter"
+	tuiKeyEsc          = "esc"
+	tuiKeyLeft         = "left"
+	tuiKeyRight        = "right"
+	tuiKeyShiftDown    = "shift+down"
+	tuiKeyShiftUp      = "shift+up"
+	tuiKeyTab          = "tab"
+	tuiKeyUp           = "up"
+	tuiNonCursorPrefix = "  "
 )

@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +23,8 @@ import (
 	"github.com/charmbracelet/glamour"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
-	"github.com/gechr/clib/terminal"
+	"github.com/gechr/prl/internal/table"
+	"github.com/gechr/prl/internal/term"
 )
 
 type claudeReviewLauncher string
@@ -49,48 +53,48 @@ var (
 	styledOff = lg.NewStyle().Foreground(lg.Color("197")).Render("off")
 )
 
-// browseView tracks which view is active in the browse TUI.
-type browseView int
+// tuiView tracks which view is active in the interactive TUI.
+type tuiView int
 
 const (
-	browseViewList browseView = iota
-	browseViewDiff
-	browseViewDetail
+	tuiViewList tuiView = iota
+	tuiViewDiff
+	tuiViewDetail
 )
 
-// browseStyles holds all styles for the browse TUI.
-type browseStyles struct {
-	cursor         lg.Style
-	selectedPrefix lg.Style
-	statusOK       lg.Style
-	statusErr      lg.Style
-	statusAction   lg.Style
-	helpText       lg.Style
-	helpKey        lg.Style
-	separator      lg.Style
-	diffHead       lg.Style
-	confirmBox     lg.Style
-	confirmYes     lg.Style
-	confirmYesDim  lg.Style
-	confirmNo      lg.Style
-	confirmNoDim   lg.Style
+// tuiStyles holds all styles for the interactive TUI.
+type tuiStyles struct {
+	confirmNo     lg.Style
+	confirmNoDim  lg.Style
+	confirmYes    lg.Style
+	confirmYesDim lg.Style
+	cursor        lg.Style
+	diffHead      lg.Style
+	helpKey       lg.Style
+	helpText      lg.Style
+	overlayBox    lg.Style
+	selectedIndex lg.Style
+	separator     lg.Style
+	statusAction  lg.Style
+	statusErr     lg.Style
+	statusOK      lg.Style
 }
 
-func newBrowseStyles() browseStyles {
-	return browseStyles{
-		cursor:         lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
-		selectedPrefix: lg.NewStyle().Foreground(lg.Color("48")),
-		statusOK:       lg.NewStyle().Foreground(lg.Color("48")),
-		statusErr:      lg.NewStyle().Foreground(lg.Color("196")),
-		statusAction:   lg.NewStyle().Bold(true),
-		helpText:       lg.NewStyle().Foreground(lg.Color("175")),
-		helpKey:        lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
-		separator:      lg.NewStyle().Foreground(lg.Color("198")).Faint(true),
-		diffHead:       lg.NewStyle().Foreground(lg.Color("208")).Bold(true),
-		confirmBox: lg.NewStyle().
+func newTuiStyles() tuiStyles {
+	return tuiStyles{
+		cursor:        lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
+		selectedIndex: lg.NewStyle().Foreground(lg.Color("118")).Bold(true),
+		statusOK:      lg.NewStyle().Foreground(lg.Color("48")),
+		statusErr:     lg.NewStyle().Foreground(lg.Color("196")),
+		statusAction:  lg.NewStyle().Bold(true),
+		helpText:      lg.NewStyle().Foreground(lg.Color("175")),
+		helpKey:       lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
+		separator:     lg.NewStyle().Foreground(lg.Color("198")).Faint(true),
+		diffHead:      lg.NewStyle().Foreground(lg.Color("208")).Bold(true),
+		overlayBox: lg.NewStyle().
 			Border(lg.RoundedBorder()).
 			BorderForeground(lg.Color("198")).
-			Padding(browseConfirmPadY, browseConfirmPadX),
+			Padding(tuiConfirmPadY, tuiConfirmPadX),
 		confirmYes: lg.NewStyle().
 			Background(lg.Color("48")).
 			Foreground(lg.Color("#000000")).
@@ -110,75 +114,110 @@ func newBrowseStyles() browseStyles {
 	}
 }
 
-// browseAction identifies the type of action performed on a PR.
-type browseAction int
+func tuiIndexWidth(total int) int {
+	return len(strconv.Itoa(max(1, total)))
+}
+
+func tuiListPrefixWidth(total int) int {
+	return lg.Width(
+		tuiNonCursorPrefix,
+	) + tuiIndexWidth(
+		total,
+	) + lg.Width(
+		tuiNonCursorPrefix,
+	)
+}
+
+func (m tuiModel) listPrefixWidth() int {
+	return tuiListPrefixWidth(len(m.rows))
+}
+
+func (m tuiModel) renderTuiIndex(num int, selected bool) string {
+	text := fmt.Sprintf("%*d", tuiIndexWidth(len(m.rows)), num)
+	if selected {
+		return m.styles.selectedIndex.Render(text)
+	}
+	if m.p != nil && m.p.theme != nil {
+		return m.p.RenderDim(text)
+	}
+	return lg.NewStyle().Foreground(lg.Color("240")).Render(text)
+}
+
+// tuiAction identifies the type of action performed on a PR.
+type tuiAction int
 
 const (
-	browseActionApproved browseAction = iota
-	browseActionClosed
-	browseActionMerged
-	browseActionAutoMerged
-	browseActionForceMerged
-	browseActionOpened
-	browseActionReopened
-	browseActionUnassigned
+	tuiActionApproved tuiAction = iota
+	tuiActionClosed
+	tuiActionMerged
+	tuiActionAutoMerged
+	tuiActionForceMerged
+	tuiActionOpened
+	tuiActionReopened
+	tuiActionUnsubscribed
+	tuiActionReviewRequested
 )
 
-func (a browseAction) String() string {
+func (a tuiAction) String() string {
 	switch a {
-	case browseActionApproved:
+	case tuiActionApproved:
 		return "Approved"
-	case browseActionClosed:
+	case tuiActionClosed:
 		return "Closed"
-	case browseActionMerged:
+	case tuiActionMerged:
 		return "Merged"
-	case browseActionAutoMerged:
+	case tuiActionAutoMerged:
 		return resultAutoMerged
-	case browseActionForceMerged:
+	case tuiActionForceMerged:
 		return "Force-merged"
-	case browseActionOpened:
+	case tuiActionOpened:
 		return "Opened"
-	case browseActionReopened:
+	case tuiActionReopened:
 		return "Reopened"
-	case browseActionUnassigned:
-		return "Unassigned"
+	case tuiActionUnsubscribed:
+		return "Unsubscribed"
+	case tuiActionReviewRequested:
+		return "Copilot review requested"
 	default:
 		return "Unknown"
 	}
 }
 
 // removes returns true if this action removes a PR from the list.
-func (a browseAction) removes() bool {
+func (a tuiAction) removes() bool {
 	switch a {
-	case browseActionClosed, browseActionMerged, browseActionAutoMerged, browseActionForceMerged,
-		browseActionUnassigned:
+	case tuiActionClosed, tuiActionMerged, tuiActionAutoMerged, tuiActionForceMerged,
+		tuiActionUnsubscribed:
 		return true
-	case browseActionApproved, browseActionOpened, browseActionReopened:
+	case tuiActionApproved,
+		tuiActionOpened,
+		tuiActionReopened,
+		tuiActionReviewRequested:
 		return false
 	}
 	return false
 }
 
-// parseMergeResult converts a mergeOrAutoMerge result string to a browseAction.
-func parseMergeResult(result string) browseAction {
+// parseMergeResult converts a mergeOrAutoMerge result string to a tuiAction.
+func parseMergeResult(result string) tuiAction {
 	if result == resultAutoMerged {
-		return browseActionAutoMerged
+		return tuiActionAutoMerged
 	}
-	return browseActionMerged
+	return tuiActionMerged
 }
 
 // actionMsg is sent when an async action completes.
 type actionMsg struct {
 	index  int
-	key    string // prKey for stable lookup after refresh
-	action browseAction
+	key    prKey // stable lookup after refresh
+	action tuiAction
 	err    error
 }
 
 // detailFetchedMsg is sent when PR detail has been fetched.
 type detailFetchedMsg struct {
 	index  int
-	key    string // prKey for stable lookup after refresh
+	key    prKey // stable lookup after refresh
 	detail PRDetail
 	err    error
 }
@@ -186,17 +225,25 @@ type detailFetchedMsg struct {
 // diffFetchedMsg is sent when a diff has been fetched.
 type diffFetchedMsg struct {
 	index int
-	key   string // prKey for stable lookup after refresh
+	key   prKey // stable lookup after refresh
 	diff  string
 	err   error
 }
 
 // batchActionMsg is sent when a batch action (multi-select) completes.
 type batchActionMsg struct {
-	action  browseAction
-	count   int
-	failed  int
-	indices []int // indices of successfully acted PRs
+	action   tuiAction
+	count    int
+	failed   int
+	keys     []prKey
+	failures []batchFailure
+}
+
+type batchFailure struct {
+	key prKey
+	ref string
+	url string
+	err error
 }
 
 // clearStatusMsg clears the status bar after a timeout.
@@ -205,7 +252,7 @@ type clearStatusMsg struct{ id int }
 // claudeReviewMsg is sent when the Claude review clone+launch completes.
 type claudeReviewMsg struct {
 	index int
-	key   string // prKey for stable lookup after refresh
+	key   prKey // stable lookup after refresh
 	err   error
 }
 
@@ -219,29 +266,38 @@ type slackSentMsg struct {
 type jumpTimeoutMsg struct{ id int }
 
 // refreshTickMsg fires when it's time to start a background refresh.
-type refreshTickMsg struct{}
+type refreshTickMsg struct{ id int }
+
+// spinnerTickMsg fires to advance the spinner animation frame.
+type spinnerTickMsg struct{ id int }
 
 // refreshResultMsg carries the result of a background data refresh.
 type refreshResultMsg struct {
-	rows []TableRow
-	prs  []PullRequest
-	err  error
+	rows  []TableRow
+	items []PRRowModel
+	err   error
 }
 
-// browseModel is the Bubble Tea model for the browse TUI.
-type browseModel struct {
-	rows         []TableRow
-	prs          []PullRequest
+// tuiModel is the Bubble Tea model for the interactive TUI.
+//
+//nolint:recvcheck // selection helpers use pointer receivers to mutate maps/fields in-place
+type tuiModel struct {
+	items        []PRRowModel // canonical data for rerender on resize/refresh
+	rows         []TableRow   // current rendered order; row.Item is the action target
+	header       string
+	colWidths    []int // visible column widths for header click hit-testing
+	sortColumn   string
+	sortAsc      bool
 	cursor       int
 	offset       int
-	view         browseView
+	view         tuiView
 	diff         string
 	diffLines    []string
-	diffIndex    int
+	diffKey      prKey
 	diffScroll   int
 	detail       PRDetail
 	detailLines  []string
-	detailIndex  int
+	detailKey    prKey
 	detailScroll int
 	statusMsg    string
 	statusErr    bool
@@ -249,16 +305,19 @@ type browseModel struct {
 	actions      *ActionRunner
 	width        int
 	height       int
-	styles       browseStyles
-	removed      map[int]bool
-	selected     map[int]bool
+	styles       tuiStyles
+	removed      prKeys
+	selected     prKeys
 
 	// Diff queue for sequential multi-PR review.
-	diffQueue      []int // remaining PR indices to diff through
-	diffHistory    []int // previously viewed PR indices (for going back)
-	diffQueueTotal int   // total PRs in the queue (for counter display)
-	diffAdvanced   bool  // true when queue was advanced from diff view (skip actionMsg view switch)
-	diffExpected   bool  // true when a diffFetchedMsg is expected (cleared on dismiss)
+	diffQueue      []prKey // remaining PR keys to diff through
+	diffHistory    []prKey // previously viewed PR keys (for going back)
+	diffQueueTotal int     // total PRs in the queue (for counter display)
+	diffAdvanced   bool    // true when queue was advanced from diff view (skip actionMsg view switch)
+	diffExpected   bool    // true when a diffFetchedMsg is expected (cleared on dismiss)
+
+	// Empty overlay dismissed (esc to dismiss, then esc again to quit).
+	dismissedEmpty bool
 
 	// Filter mode.
 	filterInput textinput.Model
@@ -275,6 +334,11 @@ type browseModel struct {
 
 	// Background auto-refresh.
 	autoRefresh bool
+	refreshing  bool    // true while a background refresh is in-flight
+	refreshID   int     // generation counter to discard stale refresh ticks
+	spinner     spinner // spinner animation frames
+	spinnerTick int     // current spinner frame index
+	spinnerID   int     // generation counter to discard stale ticks
 	showHelp    bool
 
 	// Retained for re-rendering the table on resize and background refresh.
@@ -287,31 +351,40 @@ type browseModel struct {
 	params   *SearchParams
 }
 
-func (m browseModel) Init() tea.Cmd {
+func (m tuiModel) Init() tea.Cmd {
 	if m.autoRefresh {
-		return scheduleRefresh(len(m.prs))
+		return scheduleRefresh(len(m.items), m.refreshID)
 	}
 	return nil
 }
 
 // scheduleRefresh returns a tea.Cmd that fires a refreshTickMsg after a delay
 // scaled by the number of results (reusing watch-mode intervals).
-func scheduleRefresh(n int) tea.Cmd {
+func scheduleRefresh(n, id int) tea.Cmd {
 	d := watchInterval(n)
-	return tea.Tick(d, func(time.Time) tea.Msg { return refreshTickMsg{} })
+	return tea.Tick(d, func(time.Time) tea.Msg { return refreshTickMsg{id: id} })
 }
 
-// resumeRefresh reschedules a refresh tick if auto-refresh is enabled.
-func (m browseModel) resumeRefresh() tea.Cmd {
+// scheduleSpinnerTick returns a tea.Cmd that fires a spinnerTickMsg after the
+// spinner's interval, scoped to the current generation (spinnerID).
+func (m tuiModel) scheduleSpinnerTick() tea.Cmd {
+	id := m.spinnerID
+	d := m.spinner.interval
+	return tea.Tick(d, func(time.Time) tea.Msg { return spinnerTickMsg{id: id} })
+}
+
+// rescheduleRefresh invalidates older refresh ticks and schedules a new one.
+func (m *tuiModel) rescheduleRefresh() tea.Cmd {
 	if m.autoRefresh {
-		return scheduleRefresh(len(m.prs))
+		m.refreshID++
+		return scheduleRefresh(len(m.items), m.refreshID)
 	}
 	return nil
 }
 
-func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok &&
-		(key.String() == browseKeyCtrlC || key.String() == browseKeyCtrlD) &&
+		(key.String() == tuiKeyCtrlC || key.String() == tuiKeyCtrlD) &&
 		!m.filterInput.Focused() {
 		return m, tea.Quit
 	}
@@ -326,9 +399,59 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.rows = m.rerenderedRows()
-		if m.view == browseViewDetail && len(m.detailLines) > 0 {
+		m.header, m.rows, m.colWidths = m.rerender()
+		if m.view == tuiViewDetail && len(m.detailLines) > 0 {
 			m.detailLines = m.renderDetailContent()
+		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		if m.view == tuiViewList && msg.Button == tea.MouseLeft && msg.Y == 0 {
+			col := m.headerColumnAt(msg.X)
+			if col != "" {
+				return m.toggleSort(col)
+			}
+		}
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		switch m.view {
+		case tuiViewList:
+			switch msg.Button {
+			case tea.MouseWheelDown:
+				if next, ok := m.nextVisible(1); ok {
+					m.cursor = next
+					m.offset = m.scrolledOffset()
+				}
+			case tea.MouseWheelUp:
+				if next, ok := m.nextVisible(-1); ok {
+					m.cursor = next
+					m.offset = m.scrolledOffset()
+				}
+			}
+		case tuiViewDiff:
+			switch msg.Button {
+			case tea.MouseWheelDown:
+				if m.diffScroll < m.diffMaxScroll() {
+					m.diffScroll++
+				}
+			case tea.MouseWheelUp:
+				if m.diffScroll > 0 {
+					m.diffScroll--
+				}
+			}
+		case tuiViewDetail:
+			viewport := m.detailViewport()
+			switch msg.Button {
+			case tea.MouseWheelDown:
+				if m.detailScroll < len(m.detailLines)-viewport {
+					m.detailScroll++
+				}
+			case tea.MouseWheelUp:
+				if m.detailScroll > 0 {
+					m.detailScroll--
+				}
+			}
 		}
 		return m, nil
 
@@ -337,9 +460,14 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx < 0 {
 			return m, nil // PR no longer in list (removed by refresh)
 		}
-		pr := m.prs[idx]
+		pr := m.rows[idx].Item.PR
+		// HintError: action succeeded but has a follow-up hint for the user.
+		hint, isHint := errors.AsType[*HintError](msg.err)
+		if isHint {
+			msg.err = nil // treat as success
+		}
 		if msg.err != nil {
-			flashCmd := browseFlashStatus(
+			flashCmd := tuiFlashStatus(
 				&m,
 				msg.action.String()+" failed:",
 				fmt.Sprintf("%v", msg.err),
@@ -353,32 +481,41 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Advance diff queue even on failure so user can continue reviewing.
 			if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-				m.diffHistory = append(m.diffHistory, idx)
+				m.diffHistory = append(m.diffHistory, msg.key)
 				return m, tea.Batch(flashCmd, nextCmd)
 			}
-			if m.view == browseViewDiff {
-				m.view = browseViewList
+			if m.view == tuiViewDiff {
+				m.view = tuiViewList
+				m.diffKey = ""
 				m.diffHistory = nil
 				m.diffQueueTotal = 0
 			}
 			return m, flashCmd
 		}
 		if msg.action.removes() {
-			m.removed[idx] = true
+			m.removed[msg.key] = true
 			m.cursor = m.adjustedCursor()
+			m.offset = m.scrolledOffset()
 		}
-		flashCmd := browseFlashStatus(&m, msg.action.String(), pr.Ref(), pr.URL, false)
+		flashCmd := tuiFlashStatus(&m, msg.action.String(), pr.Ref(), pr.URL, false)
+		if hint != nil {
+			cmd := lg.NewStyle().Bold(true).Foreground(lg.Color("198")).Render(hint.Hint)
+			m.confirmAction = tuiActionInfo
+			m.confirmPrompt = "To also mute notifications, run:\n\n" + cmd
+			m.confirmCmd = nil
+		}
 		// Queue already advanced from diff view - just flash, stay in diff.
 		if m.diffAdvanced {
 			m.diffAdvanced = false
 			return m, flashCmd
 		}
 		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-			m.diffHistory = append(m.diffHistory, idx)
+			m.diffHistory = append(m.diffHistory, msg.key)
 			return m, tea.Batch(flashCmd, nextCmd)
 		}
-		if m.view == browseViewDiff {
-			m.view = browseViewList
+		if m.view == tuiViewDiff {
+			m.view = tuiViewList
+			m.diffKey = ""
 			m.diffHistory = nil
 			m.diffQueueTotal = 0
 		}
@@ -386,16 +523,21 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case batchActionMsg:
 		if msg.action.removes() {
-			for _, idx := range msg.indices {
-				m.removed[idx] = true
-				delete(m.selected, idx)
+			for _, key := range msg.keys {
+				m.removed[key] = true
+				delete(m.selected, key)
 			}
 			m.cursor = m.adjustedCursor()
+			m.offset = m.scrolledOffset()
 		}
-		m.selected = make(map[int]bool)
+		m.selected = make(prKeys)
 		status := fmt.Sprintf("%d/%d", msg.count-msg.failed, msg.count)
 		if msg.failed > 0 {
-			return m, browseFlashStatus(
+			m.confirmAction = tuiActionInfo
+			m.confirmYes = true
+			m.confirmPrompt = renderBatchFailurePrompt(msg)
+			m.confirmCmd = nil
+			return m, tuiFlashStatus(
 				&m,
 				msg.action.String(),
 				status+" ("+fmt.Sprintf("%d failed", msg.failed)+")",
@@ -403,7 +545,7 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				true,
 			)
 		}
-		return m, browseFlashStatus(&m, msg.action.String(), status+" PRs", "", false)
+		return m, tuiFlashStatus(&m, msg.action.String(), status+" PRs", "", false)
 
 	case clearStatusMsg:
 		if msg.id == m.statusID {
@@ -417,7 +559,7 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.diffExpected = false
 		if msg.err != nil {
-			flashCmd := browseFlashStatus(&m, "Diff failed:", fmt.Sprintf("%v", msg.err), "", true)
+			flashCmd := tuiFlashStatus(&m, "Diff failed:", fmt.Sprintf("%v", msg.err), "", true)
 			// Skip to next in queue if available.
 			if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
 				return m, tea.Batch(flashCmd, nextCmd)
@@ -428,54 +570,55 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx < 0 {
 			return m, nil // PR no longer in list
 		}
-		m.diffIndex = idx
+		m.diffKey = msg.key
 		m.diff = highlightDiff(msg.diff)
 		m.diffLines = strings.Split(m.diff, "\n")
 		m.diffScroll = 0
-		m.view = browseViewDiff
+		m.view = tuiViewDiff
 		return m, nil
 
 	case detailFetchedMsg:
 		if msg.err != nil {
-			return m, browseFlashStatus(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, tuiFlashStatus(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
 		idx := m.resolveIndex(msg.key, msg.index)
 		if idx < 0 {
 			return m, nil // PR no longer in list
 		}
-		m.detailIndex = idx
+		m.detailKey = msg.key
 		m.detail = msg.detail
 		m.detailLines = m.renderDetailContent()
 		m.detailScroll = 0
-		m.view = browseViewDetail
+		m.view = tuiViewDetail
 		m.statusMsg = ""
 		return m, nil
 
 	case claudeReviewMsg:
 		if msg.err != nil {
-			return m, browseFlashStatus(&m, "Claude failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, tuiFlashStatus(&m, "Claude failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
 		idx := m.resolveIndex(msg.key, msg.index)
 		if idx < 0 {
 			return m, nil
 		}
-		return m, browseFlashStatus(
+		pr := m.rows[idx].Item.PR
+		return m, tuiFlashStatus(
 			&m,
 			"Claude review launched",
-			m.prs[idx].Ref(),
-			m.prs[idx].URL,
+			pr.Ref(),
+			pr.URL,
 			false,
 		)
 
 	case slackSentMsg:
 		if msg.err != nil {
-			return m, browseFlashStatus(&m, "Slack failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, tuiFlashStatus(&m, "Slack failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
 		status := fmt.Sprintf("%d PRs", msg.count)
 		if msg.count == 1 {
 			status = "1 PR"
 		}
-		return m, browseFlashStatus(&m, "Sent to Slack", status, "", false)
+		return m, tuiFlashStatus(&m, "Sent to Slack", status, "", false)
 
 	case jumpTimeoutMsg:
 		if msg.id == m.jumpID && m.jumpDigit > 0 {
@@ -490,30 +633,49 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case refreshTickMsg:
-		if !m.autoRefresh || m.view != browseViewList {
+		if !m.autoRefresh || m.view != tuiViewList || msg.id != m.refreshID || m.refreshing {
 			return m, nil
 		}
+		m.refreshing = true
+		m.spinnerTick = 0
+		m.spinnerID++
 		model := m
-		return m, func() tea.Msg {
-			return model.backgroundRefresh()
+		return m, tea.Batch(
+			m.scheduleSpinnerTick(),
+			func() tea.Msg { return model.backgroundRefresh() },
+		)
+
+	case spinnerTickMsg:
+		if !m.refreshing || msg.id != m.spinnerID {
+			return m, nil
 		}
+		m.spinnerTick++
+		return m, m.scheduleSpinnerTick()
 
 	case refreshResultMsg:
-		if msg.err == nil && len(msg.prs) > 0 {
-			m = m.mergeRefresh(msg.rows, msg.prs)
+		m.refreshing = false
+		if msg.err == nil {
+			m.dismissedEmpty = false
+			// Re-apply sort to fresh rows before merging state.
+			rows := msg.rows
+			if m.sortColumn != "" {
+				renderer := m.tableRendererFor(len(msg.items))
+				rows = table.SortRows(rows, renderer.Columns(), m.sortColumn, m.sortAsc)
+			}
+			m = m.mergeRefresh(rows, msg.items)
+			// Re-render header with current sort state; the background
+			// goroutine may have captured a stale sortColumn/sortAsc.
+			m.header, _, m.colWidths = m.rerender()
 		}
-		if m.autoRefresh {
-			return m, scheduleRefresh(len(m.prs))
-		}
-		return m, nil
+		return m, m.rescheduleRefresh()
 
 	case tea.KeyMsg:
 		switch m.view {
-		case browseViewDiff:
+		case tuiViewDiff:
 			return m.updateDiffView(msg)
-		case browseViewDetail:
+		case tuiViewDetail:
 			return m.updateDetailView(msg)
-		case browseViewList:
+		case tuiViewList:
 			return m.updateListView(msg)
 		}
 	}
@@ -521,22 +683,22 @@ func (m browseModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle filter input mode.
 	if m.filterInput.Focused() {
 		switch msg.String() {
-		case browseKeyEnter:
+		case tuiKeyEnter:
 			m.filterInput.Blur()
 			return m, nil
-		case browseKeyEsc, browseKeyCtrlC, browseKeyCtrlD:
+		case tuiKeyEsc, tuiKeyCtrlC, tuiKeyCtrlD:
 			m.filterInput.SetValue("")
 			m.filterInput.Blur()
 			m.cursor = m.adjustedCursor()
 			m.offset = m.scrolledOffset()
 			return m, nil
-		case browseKeyUp, browseKeyDown:
+		case tuiKeyUp, tuiKeyDown:
 			dir := 1
-			if msg.String() == browseKeyUp {
+			if msg.String() == tuiKeyUp {
 				dir = -1
 			}
 			if next, ok := m.nextVisible(dir); ok {
@@ -548,10 +710,6 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			prev := m.filterInput.Value()
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
-			if m.filterInput.Value() == "" && prev != "" {
-				// Backspaced to empty - exit filter mode.
-				m.filterInput.Blur()
-			}
 			if m.filterInput.Value() != prev {
 				m.cursor = m.adjustedCursor()
 				m.offset = m.scrolledOffset()
@@ -565,21 +723,21 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Info-only modal (no confirmCmd) - any key dismisses.
 		if m.confirmCmd == nil {
 			switch msg.String() {
-			case browseKeyEnter, "q", browseKeyEsc, "y", "n", " ":
+			case tuiKeyEnter, "q", tuiKeyEsc, "y", "n", " ":
 				return m.confirmDismiss()
 			default:
 				return m, nil
 			}
 		}
 		switch msg.String() {
-		case browseKeyLeft, browseKeyRight, "h", "l":
+		case tuiKeyLeft, tuiKeyRight, "h", "l":
 			m.confirmYes = !m.confirmYes
 			return m, nil
 		case "y":
 			return m.confirmAccept()
-		case "n", "q", browseKeyEsc:
+		case "n", "q", tuiKeyEsc:
 			return m.confirmDismiss()
-		case browseKeyEnter:
+		case tuiKeyEnter:
 			if m.confirmYes {
 				return m.confirmAccept()
 			}
@@ -590,11 +748,15 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case browseKeyEsc:
+	case tuiKeyEsc:
 		if m.filterInput.Value() != "" {
 			m.filterInput.SetValue("")
 			m.cursor = m.adjustedCursor()
 			m.offset = m.scrolledOffset()
+			return m, nil
+		}
+		if len(m.visibleIndices()) == 0 && !m.dismissedEmpty {
+			m.dismissedEmpty = true
 			return m, nil
 		}
 		return m, tea.Quit
@@ -605,7 +767,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		return m, m.filterInput.Focus()
 
-	case browseKeyEnter:
+	case tuiKeyEnter:
 		pr := m.currentPR()
 		if pr == nil {
 			return m, nil
@@ -616,28 +778,28 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = m.styles.statusAction.Render("Fetching") + " " +
 			lg.NewStyle().Foreground(lg.Color("117")).Render(prCopy.Ref())
 		m.statusErr = false
-		key := prKey(prCopy)
+		key := makePRKey(prCopy)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
 			detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number)
 			return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
 		}
 
-	case "j", browseKeyDown:
+	case "j", tuiKeyDown:
 		if next, ok := m.nextVisible(1); ok {
 			m.cursor = next
 			m.offset = m.scrolledOffset()
 		}
 		return m, nil
 
-	case "k", browseKeyUp:
+	case "k", tuiKeyUp:
 		if next, ok := m.nextVisible(-1); ok {
 			m.cursor = next
 			m.offset = m.scrolledOffset()
 		}
 		return m, nil
 
-	case browseKeyLeft:
+	case tuiKeyLeft:
 		visible := m.visibleIndices()
 		if len(visible) > 0 {
 			m.cursor = visible[0]
@@ -645,7 +807,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case browseKeyRight:
+	case tuiKeyRight:
 		visible := m.visibleIndices()
 		if len(visible) > 0 {
 			m.cursor = visible[len(visible)-1]
@@ -654,36 +816,39 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "space":
-		if !m.removed[m.cursor] && m.cursor >= 0 && m.cursor < len(m.prs) {
-			if m.selected[m.cursor] {
-				delete(m.selected, m.cursor)
-			} else {
-				m.selected[m.cursor] = true
-			}
-		}
+		m.toggleCurrentSelection()
+		return m, nil
+
+	case tuiKeyShiftDown:
+		m.extendSelectionAndMove(1)
+		return m, nil
+
+	case tuiKeyShiftUp:
+		m.extendSelectionAndMove(-1)
 		return m, nil
 
 	case "ctrl+a":
 		if len(m.selected) > 0 {
-			m.selected = make(map[int]bool)
+			m.selected = make(prKeys)
 		} else {
 			for _, idx := range m.visibleIndices() {
-				m.selected[idx] = true
+				m.selected[m.rowKeyAt(idx)] = true
 			}
 		}
 		return m, nil
 
 	case "i":
 		for _, idx := range m.visibleIndices() {
-			if m.selected[idx] {
-				delete(m.selected, idx)
+			key := m.rowKeyAt(idx)
+			if m.selected[key] {
+				delete(m.selected, key)
 			} else {
-				m.selected[idx] = true
+				m.selected[key] = true
 			}
 		}
 		return m, nil
 
-	case "a", "y":
+	case "a":
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -691,7 +856,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		m.confirmAction = browseActionApprove
+		m.confirmAction = tuiActionApprove
 		m.confirmYes = true
 		if len(targets) == 1 {
 			m.confirmPrompt = "Approve " + styledRef(&targets[0].pr) + "?"
@@ -701,8 +866,8 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err := actions.approve(owner, repo, t.pr.Number)
 				return actionMsg{
 					index:  t.index,
-					key:    prKey(t.pr),
-					action: browseActionApproved,
+					key:    makePRKey(t.pr),
+					action: tuiActionApproved,
 					err:    err,
 				}
 			}
@@ -712,7 +877,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return runBatchAction(
 					actions,
 					batch,
-					browseActionApproved,
+					tuiActionApproved,
 					func(a *ActionRunner, pr PullRequest) error {
 						owner, repo := prOwnerRepo(pr)
 						return a.approve(owner, repo, pr.Number)
@@ -722,7 +887,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case browseKeyAltA:
+	case tuiKeyAltA:
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -735,8 +900,8 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err := actions.approve(owner, repo, t.pr.Number)
 				return actionMsg{
 					index:  t.index,
-					key:    prKey(t.pr),
-					action: browseActionApproved,
+					key:    makePRKey(t.pr),
+					action: tuiActionApproved,
 					err:    err,
 				}
 			}
@@ -748,7 +913,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return runBatchAction(
 				actions,
 				batch,
-				browseActionApproved,
+				tuiActionApproved,
 				func(a *ActionRunner, pr PullRequest) error {
 					owner, repo := prOwnerRepo(pr)
 					return a.approve(owner, repo, pr.Number)
@@ -762,9 +927,9 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(targets) > 1 {
-			queue := make([]int, 0, len(targets)-1)
+			queue := make([]prKey, 0, len(targets)-1)
 			for _, t := range targets[1:] {
-				queue = append(queue, t.index)
+				queue = append(queue, makePRKey(t.pr))
 			}
 			m.diffQueue = queue
 			m.diffQueueTotal = len(targets)
@@ -778,7 +943,12 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(first.pr)
 			diff, err := actions.fetchDiff(owner, repo, first.pr.Number)
-			return diffFetchedMsg{index: first.index, key: prKey(first.pr), diff: diff, err: err}
+			return diffFetchedMsg{
+				index: first.index,
+				key:   makePRKey(first.pr),
+				diff:  diff,
+				err:   err,
+			}
 		}
 
 	case "m":
@@ -799,7 +969,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				result, err := actions.mergeOrAutoMerge(owner, repo, t.pr)
 				return actionMsg{
 					index:  t.index,
-					key:    prKey(t.pr),
+					key:    makePRKey(t.pr),
 					action: parseMergeResult(result),
 					err:    err,
 				}
@@ -810,9 +980,60 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return runBatchAction(
 					actions,
 					batch,
-					browseActionMerged,
+					tuiActionMerged,
 					func(a *ActionRunner, pr PullRequest) error {
 						owner, repo := prOwnerRepo(pr)
+						_, err := a.mergeOrAutoMerge(owner, repo, pr)
+						return err
+					},
+				)
+			}
+		}
+		return m, nil
+
+	case "A":
+		targets := m.targetPRs()
+		if len(targets) == 0 {
+			return m, nil
+		}
+		actions := m.actions
+		batch := make([]targetPR, len(targets))
+		copy(batch, targets)
+		m.confirmAction = "approve+merge"
+		m.confirmYes = true
+		if len(targets) == 1 {
+			m.confirmPrompt = "Approve & merge " + styledRef(&targets[0].pr) + "?"
+			t := targets[0]
+			m.confirmCmd = func() tea.Msg {
+				owner, repo := prOwnerRepo(t.pr)
+				if err := actions.approve(owner, repo, t.pr.Number); err != nil {
+					return actionMsg{
+						index:  t.index,
+						key:    makePRKey(t.pr),
+						action: tuiActionApproved,
+						err:    err,
+					}
+				}
+				result, err := actions.mergeOrAutoMerge(owner, repo, t.pr)
+				return actionMsg{
+					index:  t.index,
+					key:    makePRKey(t.pr),
+					action: parseMergeResult(result),
+					err:    err,
+				}
+			}
+		} else {
+			m.confirmPrompt = fmt.Sprintf("Approve & merge %d PRs?", len(targets))
+			m.confirmCmd = func() tea.Msg {
+				return runBatchAction(
+					actions,
+					batch,
+					tuiActionMerged,
+					func(a *ActionRunner, pr PullRequest) error {
+						owner, repo := prOwnerRepo(pr)
+						if err := a.approve(owner, repo, pr.Number); err != nil {
+							return err
+						}
 						_, err := a.mergeOrAutoMerge(owner, repo, pr)
 						return err
 					},
@@ -838,8 +1059,8 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err := actions.forceMergePR(t.pr.NodeID)
 				return actionMsg{
 					index:  t.index,
-					key:    prKey(t.pr),
-					action: browseActionForceMerged,
+					key:    makePRKey(t.pr),
+					action: tuiActionForceMerged,
 					err:    err,
 				}
 			}
@@ -849,7 +1070,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return runBatchAction(
 					actions,
 					batch,
-					browseActionForceMerged,
+					tuiActionForceMerged,
 					func(a *ActionRunner, pr PullRequest) error {
 						return a.forceMergePR(pr.NodeID)
 					},
@@ -876,8 +1097,8 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err := actions.closePR(owner, repo, t.pr.Number, "", false)
 				return actionMsg{
 					index:  t.index,
-					key:    prKey(t.pr),
-					action: browseActionClosed,
+					key:    makePRKey(t.pr),
+					action: tuiActionClosed,
 					err:    err,
 				}
 			}
@@ -887,7 +1108,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return runBatchAction(
 					actions,
 					batch,
-					browseActionClosed,
+					tuiActionClosed,
 					func(a *ActionRunner, pr PullRequest) error {
 						owner, repo := prOwnerRepo(pr)
 						return a.closePR(owner, repo, pr.Number, "", false)
@@ -899,9 +1120,10 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		if !hasClaudeReviewLauncher() {
-			m.confirmAction = browseActionInfo
+			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
-			m.confirmPrompt = browseClaudeReviewUnsupported
+			m.confirmPrompt = tuiClaudeReviewUnsupported
+			m.confirmCmd = nil
 			return m, nil
 		}
 		pr := m.currentPR()
@@ -915,9 +1137,10 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "alt+r":
 		if !hasClaudeReviewLauncher() {
-			m.confirmAction = browseActionInfo
+			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
-			m.confirmPrompt = browseClaudeReviewUnsupported
+			m.confirmPrompt = tuiClaudeReviewUnsupported
+			m.confirmCmd = nil
 			return m, nil
 		}
 		pr := m.currentPR()
@@ -928,7 +1151,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		prCopy := *pr
 		return m, func() tea.Msg {
 			err := launchClaudeReview(prCopy)
-			return claudeReviewMsg{index: idx, key: prKey(prCopy), err: err}
+			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 
 	case "s":
@@ -986,8 +1209,8 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(targets) == 1 {
 			msg = last.pr.Ref()
 		}
-		m.selected = make(map[int]bool)
-		return m, browseFlashStatus(&m, browseActionOpened.String(), msg, last.pr.URL, false)
+		m.selected = make(prKeys)
+		return m, tuiFlashStatus(&m, tuiActionOpened.String(), msg, last.pr.URL, false)
 
 	case "O":
 		targets := m.targetPRs()
@@ -1002,8 +1225,8 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err := actions.reopenPR(owner, repo, t.pr.Number)
 				return actionMsg{
 					index:  t.index,
-					key:    prKey(t.pr),
-					action: browseActionReopened,
+					key:    makePRKey(t.pr),
+					action: tuiActionReopened,
 					err:    err,
 				}
 			}
@@ -1015,7 +1238,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return runBatchAction(
 				actions,
 				batch,
-				browseActionReopened,
+				tuiActionReopened,
 				func(a *ActionRunner, pr PullRequest) error {
 					owner, repo := prOwnerRepo(pr)
 					return a.reopenPR(owner, repo, pr.Number)
@@ -1023,7 +1246,61 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			)
 		}
 
-	case "U":
+	case "u":
+		targets := m.targetPRs()
+		if len(targets) == 0 {
+			return m, nil
+		}
+		actions := m.actions
+		rest := m.rest
+		batch := make([]targetPR, len(targets))
+		copy(batch, targets)
+		m.confirmAction = "unassign"
+		m.confirmYes = true
+		if len(targets) == 1 {
+			m.confirmPrompt = "Unassign & unsubscribe from " + styledRef(&targets[0].pr) + "?"
+			t := targets[0]
+			m.confirmCmd = func() tea.Msg {
+				login, err := getCurrentLogin(rest)
+				if err != nil {
+					return actionMsg{
+						index:  t.index,
+						key:    makePRKey(t.pr),
+						action: tuiActionUnsubscribed,
+						err:    err,
+					}
+				}
+				owner, repo := prOwnerRepo(t.pr)
+				err = actions.removeReviewRequest(owner, repo, t.pr.Number, login, t.pr.NodeID)
+				return actionMsg{
+					index:  t.index,
+					key:    makePRKey(t.pr),
+					action: tuiActionUnsubscribed,
+					err:    err,
+				}
+			}
+		} else {
+			m.confirmPrompt = fmt.Sprintf("Unassign & unsubscribe from %d PRs?", len(targets))
+			m.confirmCmd = func() tea.Msg {
+				login, err := getCurrentLogin(rest)
+				if err != nil {
+					return batchActionMsg{
+						action:   tuiActionUnsubscribed,
+						count:    len(batch),
+						failed:   len(batch),
+						failures: batchFailuresForTargets(batch, err),
+					}
+				}
+				return runBatchAction(actions, batch, tuiActionUnsubscribed,
+					func(a *ActionRunner, pr PullRequest) error {
+						owner, repo := prOwnerRepo(pr)
+						return a.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID)
+					})
+			}
+		}
+		return m, nil
+
+	case "alt+u":
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1037,17 +1314,17 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					return actionMsg{
 						index:  t.index,
-						key:    prKey(t.pr),
-						action: browseActionUnassigned,
+						key:    makePRKey(t.pr),
+						action: tuiActionUnsubscribed,
 						err:    err,
 					}
 				}
 				owner, repo := prOwnerRepo(t.pr)
-				err = actions.removeReviewRequest(owner, repo, t.pr.Number, login)
+				err = actions.removeReviewRequest(owner, repo, t.pr.Number, login, t.pr.NodeID)
 				return actionMsg{
 					index:  t.index,
-					key:    prKey(t.pr),
-					action: browseActionUnassigned,
+					key:    makePRKey(t.pr),
+					action: tuiActionUnsubscribed,
 					err:    err,
 				}
 			}
@@ -1058,20 +1335,56 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			login, err := getCurrentLogin(rest)
 			if err != nil {
 				return batchActionMsg{
-					action: browseActionUnassigned,
-					count:  len(batch),
-					failed: len(batch),
+					action:   tuiActionUnsubscribed,
+					count:    len(batch),
+					failed:   len(batch),
+					failures: batchFailuresForTargets(batch, err),
 				}
 			}
-			return runBatchAction(
-				actions,
-				batch,
-				browseActionUnassigned,
+			return runBatchAction(actions, batch, tuiActionUnsubscribed,
 				func(a *ActionRunner, pr PullRequest) error {
 					owner, repo := prOwnerRepo(pr)
-					return a.removeReviewRequest(owner, repo, pr.Number, login)
-				},
-			)
+					return a.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID)
+				})
+		}
+
+	case "ctrl+r":
+		targets := m.targetPRs()
+		if len(targets) == 0 {
+			return m, nil
+		}
+		actions := m.actions
+		if len(targets) == 1 {
+			t := targets[0]
+			return m, func() tea.Msg {
+				owner, repo := prOwnerRepo(t.pr)
+				err := actions.requestReview(
+					owner,
+					repo,
+					t.pr.Number,
+					"copilot-pull-request-reviewer[bot]",
+				)
+				return actionMsg{
+					index:  t.index,
+					key:    makePRKey(t.pr),
+					action: tuiActionReviewRequested,
+					err:    err,
+				}
+			}
+		}
+		batch := make([]targetPR, len(targets))
+		copy(batch, targets)
+		return m, func() tea.Msg {
+			return runBatchAction(actions, batch, tuiActionReviewRequested,
+				func(a *ActionRunner, pr PullRequest) error {
+					owner, repo := prOwnerRepo(pr)
+					return a.requestReview(
+						owner,
+						repo,
+						pr.Number,
+						"copilot-pull-request-reviewer[bot]",
+					)
+				})
 		}
 
 	case "?":
@@ -1084,7 +1397,14 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		enabled := m.autoRefresh
 		_ = saveConfigKey(keyTUIAutoRefresh, enabled)
 		if m.autoRefresh {
-			return m, scheduleRefresh(len(m.prs))
+			return m, m.rescheduleRefresh()
+		}
+		m.refreshID++
+		return m, nil
+
+	case tuiKeyTab:
+		if m.sortColumn != "" {
+			return m.toggleSort(m.sortColumn)
 		}
 		return m, nil
 
@@ -1105,7 +1425,7 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.jumpDigit = digit
 		m.jumpID++
 		id := m.jumpID
-		return m, tea.Tick(browseJumpTimeout, func(time.Time) tea.Msg {
+		return m, tea.Tick(tuiJumpTimeout, func(time.Time) tea.Msg {
 			return jumpTimeoutMsg{id: id}
 		})
 	}
@@ -1113,21 +1433,22 @@ func (m browseModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m browseModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	viewport := m.diffViewport()
+func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	maxScroll := m.diffMaxScroll()
 	switch msg.String() {
-	case "q", browseKeyEsc, "d":
+	case "q", tuiKeyEsc, "d":
 		m.diffQueue = nil
 		m.diffHistory = nil
 		m.diffQueueTotal = 0
 		m.diffAdvanced = false
 		m.diffExpected = false
-		m.view = browseViewList
-		return m, m.resumeRefresh()
+		m.diffKey = ""
+		m.view = tuiViewList
+		return m, m.rescheduleRefresh()
 	case "n":
 		// Skip to next in queue without approving.
 		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-			m.diffHistory = append(m.diffHistory, m.diffIndex)
+			m.diffHistory = append(m.diffHistory, m.diffKey)
 			return m, nextCmd
 		}
 		return m, nil
@@ -1139,69 +1460,85 @@ func (m browseModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		prev := m.diffHistory[len(m.diffHistory)-1]
 		m.diffHistory = m.diffHistory[:len(m.diffHistory)-1]
 		// Push current back onto front of queue.
-		m.diffQueue = append([]int{m.diffIndex}, m.diffQueue...)
+		m.diffQueue = append([]prKey{m.diffKey}, m.diffQueue...)
 		m.diffExpected = true
-		pr := m.prs[prev]
+		idx := m.resolveIndex(prev, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			diff, err := actions.fetchDiff(owner, repo, pr.Number)
-			return diffFetchedMsg{index: prev, key: prKey(pr), diff: diff, err: err}
+			return diffFetchedMsg{index: idx, key: makePRKey(pr), diff: diff, err: err}
 		}
-	case "j", browseKeyDown:
-		if m.diffScroll < len(m.diffLines)-viewport {
+	case "j", tuiKeyDown:
+		if m.diffScroll < maxScroll {
 			m.diffScroll++
 		}
 		return m, nil
-	case "k", browseKeyUp:
+	case "k", tuiKeyUp:
 		if m.diffScroll > 0 {
 			m.diffScroll--
 		}
 		return m, nil
-	case "g", browseKeyLeft:
+	case "g", tuiKeyLeft:
 		m.diffScroll = 0
 		return m, nil
-	case "G", browseKeyRight:
-		if end := len(m.diffLines) - viewport; end > 0 {
-			m.diffScroll = end
-		}
+	case "G", tuiKeyRight:
+		m.diffScroll = maxScroll
 		return m, nil
-	case "a", "y", browseKeyAltA:
-		idx := m.diffIndex
-		pr := m.prs[idx]
+	case "a", "y", tuiKeyAltA:
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		approveCmd := func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.approve(owner, repo, pr.Number)
-			return actionMsg{index: idx, key: prKey(pr), action: browseActionApproved, err: err}
+			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
 		// If there's a next item in queue, prefetch it in parallel with the approve.
 		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-			m.diffHistory = append(m.diffHistory, idx)
+			m.diffHistory = append(m.diffHistory, m.diffKey)
 			m.diffAdvanced = true
 			return m, tea.Batch(approveCmd, nextCmd)
 		}
 		// Last item - approve and let actionMsg handler return to list.
 		return m, approveCmd
 	case "C":
-		idx := m.diffIndex
-		pr := m.prs[idx]
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		if strings.ToLower(pr.State) == valueClosed {
 			return m, func() tea.Msg {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.reopenPR(owner, repo, pr.Number)
-				return actionMsg{index: idx, key: prKey(pr), action: browseActionReopened, err: err}
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(pr),
+					action: tuiActionReopened,
+					err:    err,
+				}
 			}
 		}
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.closePR(owner, repo, pr.Number, "", false)
-			return actionMsg{index: idx, key: prKey(pr), action: browseActionClosed, err: err}
+			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionClosed, err: err}
 		}
-	case "U":
-		idx := m.diffIndex
-		pr := m.prs[idx]
+	case "u":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		rest := m.rest
 		return m, func() tea.Msg {
@@ -1209,141 +1546,192 @@ func (m browseModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				return actionMsg{
 					index:  idx,
-					key:    prKey(pr),
-					action: browseActionUnassigned,
+					key:    makePRKey(pr),
+					action: tuiActionUnsubscribed,
 					err:    err,
 				}
 			}
 			owner, repo := prOwnerRepo(pr)
-			err = actions.removeReviewRequest(owner, repo, pr.Number, login)
-			return actionMsg{index: idx, key: prKey(pr), action: browseActionUnassigned, err: err}
+			err = actions.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: tuiActionUnsubscribed,
+				err:    err,
+			}
+		}
+	case "ctrl+r":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		actions := m.actions
+		return m, func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			err := actions.requestReview(
+				owner,
+				repo,
+				pr.Number,
+				"copilot-pull-request-reviewer[bot]",
+			)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: tuiActionReviewRequested,
+				err:    err,
+			}
 		}
 	}
 	return m, nil
 }
 
-func (m browseModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	viewport := m.detailViewport()
 	switch msg.String() {
-	case "q", browseKeyEsc, browseKeyEnter:
-		m.view = browseViewList
-		return m, m.resumeRefresh()
-	case "j", browseKeyDown:
+	case "q", tuiKeyEsc, tuiKeyEnter:
+		m.detailKey = ""
+		m.view = tuiViewList
+		return m, m.rescheduleRefresh()
+	case "j", tuiKeyDown:
 		if m.detailScroll < len(m.detailLines)-viewport {
 			m.detailScroll++
 		}
 		return m, nil
-	case "k", browseKeyUp:
+	case "k", tuiKeyUp:
 		if m.detailScroll > 0 {
 			m.detailScroll--
 		}
 		return m, nil
-	case "g", browseKeyLeft:
+	case "g", tuiKeyLeft:
 		m.detailScroll = 0
 		return m, nil
-	case "G", browseKeyRight:
+	case "G", tuiKeyRight:
 		if end := len(m.detailLines) - viewport; end > 0 {
 			m.detailScroll = end
 		}
 		return m, nil
 	case "d":
 		// Jump to diff from detail view.
-		idx := m.detailIndex
-		pr := m.prs[idx]
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		prCopy := pr
 		m.diffExpected = true
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
 			diff, err := actions.fetchDiff(owner, repo, prCopy.Number)
-			return diffFetchedMsg{index: idx, key: prKey(prCopy), diff: diff, err: err}
+			return diffFetchedMsg{index: idx, key: makePRKey(prCopy), diff: diff, err: err}
 		}
 	case "a", "y":
-		idx := m.detailIndex
-		pr := m.prs[idx]
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		actions := m.actions
-		m.view = browseViewList
-		m.confirmAction = browseActionApprove
+		m.view = tuiViewList
+		m.confirmAction = tuiActionApprove
 		m.confirmYes = true
 		m.confirmPrompt = "Approve " + styledRef(&pr) + "?"
 		m.confirmCmd = func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.approve(owner, repo, pr.Number)
-			return actionMsg{index: idx, key: prKey(pr), action: browseActionApproved, err: err}
+			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
 		return m, nil
-	case browseKeyAltA:
-		idx := m.detailIndex
-		pr := m.prs[idx]
+	case tuiKeyAltA:
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		actions := m.actions
-		m.view = browseViewList
+		m.view = tuiViewList
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.approve(owner, repo, pr.Number)
-			return actionMsg{index: idx, key: prKey(pr), action: browseActionApproved, err: err}
+			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
 	case "o":
-		pr := m.prs[m.detailIndex]
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
 		_ = openBrowser(pr.URL)
 		return m, nil
 	case "r":
 		if !hasClaudeReviewLauncher() {
-			m.view = browseViewList
-			m.confirmAction = browseActionInfo
+			m.view = tuiViewList
+			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
-			m.confirmPrompt = browseClaudeReviewUnsupported
+			m.confirmPrompt = tuiClaudeReviewUnsupported
+			m.confirmCmd = nil
 			return m, nil
 		}
-		idx := m.detailIndex
-		pr := m.prs[idx]
-		m.view = browseViewList
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		m.view = tuiViewList
 		m = m.prepareClaudeReviewConfirm(pr, idx)
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m browseModel) View() tea.View {
+func (m tuiModel) View() tea.View {
 	switch m.view {
-	case browseViewDiff:
+	case tuiViewDiff:
 		return m.viewDiff()
-	case browseViewDetail:
+	case tuiViewDetail:
 		return m.viewDetail()
-	case browseViewList:
+	case tuiViewList:
 	}
 	v := m.viewList()
-	if m.showHelp {
+	switch {
+	case m.showHelp:
 		v.Content = overlayCenter(v.Content, m.renderHelpOverlay(), m.width, m.height)
-	} else if m.confirmAction != "" {
+	case m.confirmAction != "":
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
+	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.statusMsg == "":
+		v.Content = overlayCenter(v.Content, m.renderEmptyOverlay(), m.width, m.height)
 	}
 	return v
 }
 
-func (m browseModel) viewList() tea.View {
+func (m tuiModel) viewList() tea.View {
 	var b strings.Builder
 	visible := m.visibleIndices()
 	viewport := m.listViewport()
+	indexPad := strings.Repeat(" ", tuiIndexWidth(len(m.rows)))
+
+	// Column header line.
+	if m.header != "" {
+		prefix := tuiNonCursorPrefix + indexPad + tuiNonCursorPrefix
+		if m.refreshing && len(m.spinner.frames) > 0 {
+			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
+			prefix = frame + " " + indexPad + tuiNonCursorPrefix
+		}
+		b.WriteString(prefix + m.header + "\n")
+	}
 
 	// Determine visible slice based on offset.
 	end := min(m.offset+viewport, len(visible))
 	start := min(m.offset, len(visible))
 
 	filterVal := m.filterInput.Value()
-	if len(visible) == 0 && filterVal != "" {
-		b.WriteString(
-			"\n" + lg.NewStyle().Foreground(lg.Color("210")).Render("  no results") + "\n",
-		)
-	}
 
-	for _, idx := range visible[start:end] {
-		sel := browseNonCursorPrefix
-		if m.selected[idx] {
-			sel = m.styles.selectedPrefix.Render("● ")
-		}
-		display := m.rows[idx].Display
+	for pos, idx := range visible[start:end] {
+		index := m.renderTuiIndex(start+pos+1, m.selected[m.rowKeyAt(idx)])
+		display := index + tuiNonCursorPrefix + m.rows[idx].Display
 		if idx == m.cursor {
-			line := m.styles.cursor.Render(browseCursorPrefix) + sel + display
+			line := m.styles.cursor.Render(tuiCursorPrefix) + display
 			// Inject background color throughout the line so it persists
 			// through existing ANSI codes in the display string.
 			// Skip highlight when there's only one visible result.
@@ -1353,7 +1741,7 @@ func (m browseModel) viewList() tea.View {
 				b.WriteString(line)
 			}
 		} else {
-			b.WriteString(browseNonCursorPrefix + sel)
+			b.WriteString(tuiNonCursorPrefix)
 			b.WriteString(display)
 		}
 		b.WriteString("\n")
@@ -1361,9 +1749,6 @@ func (m browseModel) viewList() tea.View {
 
 	// Pad to fill viewport.
 	rendered := end - start
-	if len(visible) == 0 && filterVal != "" {
-		rendered = 1 // "no results" line
-	}
 	for range viewport - rendered {
 		b.WriteString("\n")
 	}
@@ -1396,40 +1781,47 @@ func (m browseModel) viewList() tea.View {
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
-func (m browseModel) viewDiff() tea.View {
+func (m tuiModel) viewDiff() tea.View {
 	var b strings.Builder
-	viewport := m.diffViewport()
+	viewport := m.diffContentViewport()
 
 	// PR title header.
-	titleStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("218"))
-	repoStyle := lg.NewStyle().Foreground(lg.Color("118"))
-	if m.diffIndex >= 0 && m.diffIndex < len(m.prs) {
-		pr := m.prs[m.diffIndex]
-		var repoLine string
+	headerStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("212"))
+	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
+		pr := m.rows[idx].Item.PR
+		var headerLine string
 		if m.diffQueueTotal > 0 {
 			pos := m.diffQueueTotal - len(m.diffQueue)
-			repoLine = repoStyle.Bold(true).
-				Render(fmt.Sprintf("[%d/%d]", pos, m.diffQueueTotal)) +
+			headerLine = headerStyle.Render(fmt.Sprintf("[%d/%d]", pos, m.diffQueueTotal)) +
 				" "
 		}
-		repoLine += repoStyle.Render(pr.Repository.NameWithOwner)
-		b.WriteString(repoLine)
+		ref := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
+		titleStyle := lg.NewStyle().Foreground(lg.Color("218"))
+		headerLine += xansi.SetHyperlink(pr.URL) +
+			headerStyle.Render(
+				ref,
+			) + lg.NewStyle().Foreground(lg.Color("255")).Render(" » ") +
+			titleStyle.Render(normalizeTUIDisplayText(pr.Title)) +
+			xansi.ResetHyperlink()
+		if m.width > 0 && lg.Width(headerLine) > m.width {
+			headerLine = xansi.Truncate(headerLine, m.width-1, "…")
+		}
+		b.WriteString(headerLine)
 		b.WriteString("\n")
-		b.WriteString(titleStyle.Render(pr.Title))
+		if m.width > 0 {
+			b.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
+		}
 		b.WriteString("\n")
-		viewport -= 2 // account for repo + title lines
 	}
 
 	// Diff content.
 	end := min(m.diffScroll+viewport, len(m.diffLines))
 	for _, line := range m.diffLines[m.diffScroll:end] {
-		if m.width > 0 && len(line) > m.width {
-			line = line[:m.width]
-		}
-		b.WriteString(line)
+		b.WriteString(truncateDisplayLine(line, m.width))
 		b.WriteString("\n")
 	}
 
@@ -1447,35 +1839,21 @@ func (m browseModel) viewDiff() tea.View {
 
 	// Help line with scroll percentage on RHS.
 	help := m.renderDiffHelp()
-	if m.width > 0 && len(m.diffLines) > viewport {
-		const percent = 100
-		pct := min(percent*(m.diffScroll+viewport)/len(m.diffLines), percent)
-		status := m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
-		lastNL := strings.LastIndex(help, "\n")
-		lastLine := help
-		if lastNL >= 0 {
-			lastLine = help[lastNL+1:]
-		}
-		pad := m.width - lg.Width(lastLine) - lg.Width(status)
-		if pad > 0 {
-			b.WriteString(help)
-			b.WriteString(strings.Repeat(" ", pad))
-			b.WriteString(status)
-		} else {
-			b.WriteString(help)
-		}
-	} else {
-		b.WriteString(help)
+	status := ""
+	if maxScroll := m.diffMaxScroll(); maxScroll > 0 {
+		pct := scrollPercent(m.diffScroll, maxScroll)
+		status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
 	}
+	b.WriteString(m.appendRightStatus(help, status))
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
 	return v
 }
 
-func (m browseModel) listViewport() int {
-	// 1 for separator + help lines (variable).
-	h := 1 + m.helpLines(m.listHelpPairs())
+func (m tuiModel) listViewport() int {
+	//nolint:mnd // 1 for header + 1 for separator + help lines (variable).
+	h := 2 + m.helpLines(m.listHelpPairs())
 	if m.filterInput.Value() != "" || m.filterInput.Focused() {
 		h++
 	}
@@ -1485,17 +1863,14 @@ func (m browseModel) listViewport() int {
 	return m.height - h
 }
 
-func (m browseModel) viewDetail() tea.View {
+func (m tuiModel) viewDetail() tea.View {
 	var b strings.Builder
 	viewport := m.detailViewport()
 
 	// Content.
 	end := min(m.detailScroll+viewport, len(m.detailLines))
 	for _, line := range m.detailLines[m.detailScroll:end] {
-		if m.width > 0 && lg.Width(line) > m.width {
-			line = line[:m.width]
-		}
-		b.WriteString(line)
+		b.WriteString(truncateDisplayLine(line, m.width))
 		b.WriteString("\n")
 	}
 
@@ -1513,33 +1888,19 @@ func (m browseModel) viewDetail() tea.View {
 
 	// Help line with scroll percentage on RHS.
 	help := m.renderDetailHelp()
-	if m.width > 0 && len(m.detailLines) > viewport {
-		const percent = 100
-		pct := min(percent*(m.detailScroll+viewport)/len(m.detailLines), percent)
-		status := m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
-		lastNL := strings.LastIndex(help, "\n")
-		lastLine := help
-		if lastNL >= 0 {
-			lastLine = help[lastNL+1:]
-		}
-		pad := m.width - lg.Width(lastLine) - lg.Width(status)
-		if pad > 0 {
-			b.WriteString(help)
-			b.WriteString(strings.Repeat(" ", pad))
-			b.WriteString(status)
-		} else {
-			b.WriteString(help)
-		}
-	} else {
-		b.WriteString(help)
+	status := ""
+	if maxScroll := max(0, len(m.detailLines)-viewport); maxScroll > 0 {
+		pct := scrollPercent(m.detailScroll, maxScroll)
+		status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
 	}
+	b.WriteString(m.appendRightStatus(help, status))
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
 	return v
 }
 
-func (m browseModel) detailViewport() int {
+func (m tuiModel) detailViewport() int {
 	h := 1 + m.helpLines(m.detailHelpPairs())
 	if m.height <= h {
 		return 1
@@ -1548,8 +1909,14 @@ func (m browseModel) detailViewport() int {
 }
 
 // renderDetailContent builds the detail view lines from the PR and its detail data.
-func (m browseModel) renderDetailContent() []string {
-	pr := m.prs[m.detailIndex]
+func (m tuiModel) renderDetailContent() []string {
+	idx := m.resolveIndex(m.detailKey, -1)
+	if idx < 0 {
+		return []string{
+			lg.NewStyle().Foreground(lg.Color("240")).Render("Pull request no longer available."),
+		}
+	}
+	pr := m.rows[idx].Item.PR
 
 	titleStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("218"))
 	headerStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("175"))
@@ -1560,7 +1927,7 @@ func (m browseModel) renderDetailContent() []string {
 
 	author := m.resolver.Resolve(pr.Author.Login)
 	var lines []string
-	lines = append(lines, titleStyle.Render(pr.Title))
+	lines = append(lines, titleStyle.Render(normalizeTUIDisplayText(pr.Title)))
 	lines = append(lines, "")
 	authorValue := pr.Author.Login
 	if author != pr.Author.Login {
@@ -1630,7 +1997,7 @@ func (m browseModel) renderDetailContent() []string {
 	return lines
 }
 
-func (m browseModel) renderDetailStatus(pr PullRequest) string {
+func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 	if pr.IsDraft {
 		return lg.NewStyle().Foreground(lg.Color("240")).Render("Draft")
 	}
@@ -1661,7 +2028,7 @@ const (
 	defaultTermWidth = 80
 )
 
-func (m browseModel) renderMarkdown(body string) []string {
+func (m tuiModel) renderMarkdown(body string) []string {
 	width := m.width
 	if width <= 0 {
 		width = defaultTermWidth
@@ -1684,7 +2051,7 @@ func (m browseModel) renderMarkdown(body string) []string {
 	return lines
 }
 
-func (m browseModel) plainBodyLines(body string) []string {
+func (m tuiModel) plainBodyLines(body string) []string {
 	var lines []string
 	for line := range strings.SplitSeq(body, "\n") {
 		lines = append(lines, detailIndent+line)
@@ -1692,7 +2059,7 @@ func (m browseModel) plainBodyLines(body string) []string {
 	return lines
 }
 
-func (m browseModel) diffViewport() int {
+func (m tuiModel) diffViewport() int {
 	// 1 for separator + help lines (variable).
 	h := 1 + m.helpLines(m.diffHelpPairs())
 	if m.height <= h {
@@ -1701,31 +2068,56 @@ func (m browseModel) diffViewport() int {
 	return m.height - h
 }
 
-// advanceDiffQueue pops the next PR from the diff queue and returns a command
-// to fetch its diff. Returns nil if the queue is empty.
-func advanceDiffQueue(m *browseModel) tea.Cmd {
-	if len(m.diffQueue) == 0 {
-		m.diffQueueTotal = 0
-		return nil
+func (m tuiModel) diffContentViewport() int {
+	viewport := m.diffViewport()
+	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
+		viewport -= 2 // title + separator above the diff body
 	}
-	idx := m.diffQueue[0]
-	m.diffQueue = m.diffQueue[1:]
-	m.diffExpected = true
-	pr := m.prs[idx]
-	actions := m.actions
-	return func() tea.Msg {
-		owner, repo := prOwnerRepo(pr)
-		diff, err := actions.fetchDiff(owner, repo, pr.Number)
-		return diffFetchedMsg{index: idx, key: prKey(pr), diff: diff, err: err}
-	}
+	return max(0, viewport)
 }
 
-func (m browseModel) visibleIndices() []int {
+func (m tuiModel) diffMaxScroll() int {
+	return max(0, len(m.diffLines)-m.diffContentViewport())
+}
+
+func scrollPercent(offset, maxScroll int) int {
+	const percentMax = 100
+	if maxScroll <= 0 {
+		return percentMax
+	}
+	return min(percentMax*offset/maxScroll, percentMax)
+}
+
+// advanceDiffQueue pops the next PR from the diff queue and returns a command
+// to fetch its diff. Returns nil if the queue is empty.
+func advanceDiffQueue(m *tuiModel) tea.Cmd {
+	for len(m.diffQueue) > 0 {
+		key := m.diffQueue[0]
+		m.diffQueue = m.diffQueue[1:]
+		idx := m.resolveIndex(key, -1)
+		if idx < 0 {
+			continue
+		}
+		m.diffExpected = true
+		pr := m.rows[idx].Item.PR
+		actions := m.actions
+		return func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			diff, err := actions.fetchDiff(owner, repo, pr.Number)
+			return diffFetchedMsg{index: idx, key: makePRKey(pr), diff: diff, err: err}
+		}
+	}
+	m.diffQueueTotal = 0
+	m.diffKey = ""
+	return nil
+}
+
+func (m tuiModel) visibleIndices() []int {
 	indices := make([]int, 0, len(m.rows))
 	f := strings.TrimSpace(m.filterInput.Value())
 	if f == "" {
 		for i := range m.rows {
-			if !m.removed[i] {
+			if !m.removed[m.rowKeyAt(i)] {
 				indices = append(indices, i)
 			}
 		}
@@ -1743,17 +2135,17 @@ func (m browseModel) visibleIndices() []int {
 		re = regexp.MustCompile(flags + regexp.QuoteMeta(f))
 	}
 	for i := range m.rows {
-		if m.removed[i] {
+		if m.removed[m.rowKeyAt(i)] {
 			continue
 		}
-		if re.MatchString(xansi.Strip(m.rows[i].Display)) {
+		if re.MatchString(rowFilterText(m.rows[i])) {
 			indices = append(indices, i)
 		}
 	}
 	return indices
 }
 
-func (m browseModel) nextVisible(dir int) (int, bool) {
+func (m tuiModel) nextVisible(dir int) (int, bool) {
 	visible := m.visibleIndices()
 	visibleSet := make(map[int]bool, len(visible))
 	for _, idx := range visible {
@@ -1767,7 +2159,7 @@ func (m browseModel) nextVisible(dir int) (int, bool) {
 	return m.cursor, false
 }
 
-func (m browseModel) adjustedCursor() int {
+func (m tuiModel) adjustedCursor() int {
 	if next, ok := m.nextVisible(1); ok {
 		return next
 	}
@@ -1777,7 +2169,7 @@ func (m browseModel) adjustedCursor() int {
 	return m.cursor
 }
 
-func (m browseModel) scrolledOffset() int {
+func (m tuiModel) scrolledOffset() int {
 	viewport := m.listViewport()
 	visible := m.visibleIndices()
 	pos := 0
@@ -1799,27 +2191,35 @@ func (m browseModel) scrolledOffset() int {
 func runBatchAction(
 	actions *ActionRunner,
 	targets []targetPR,
-	action browseAction,
+	action tuiAction,
 	fn func(*ActionRunner, PullRequest) error,
 ) batchActionMsg {
-	var succeeded []int
+	var succeeded []prKey
+	var failures []batchFailure
 	failed := 0
 	for _, t := range targets {
 		if err := fn(actions, t.pr); err != nil {
 			failed++
+			failures = append(failures, batchFailure{
+				key: makePRKey(t.pr),
+				ref: t.pr.Ref(),
+				url: t.pr.URL,
+				err: err,
+			})
 		} else {
-			succeeded = append(succeeded, t.index)
+			succeeded = append(succeeded, makePRKey(t.pr))
 		}
 	}
 	return batchActionMsg{
-		action:  action,
-		count:   len(targets),
-		failed:  failed,
-		indices: succeeded,
+		action:   action,
+		count:    len(targets),
+		failed:   failed,
+		keys:     succeeded,
+		failures: failures,
 	}
 }
 
-func browseFlashStatus(m *browseModel, action, ref, url string, isErr bool) tea.Cmd {
+func tuiFlashStatus(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
 	m.statusID++
 	m.statusErr = isErr
 	if isErr {
@@ -1832,9 +2232,36 @@ func browseFlashStatus(m *browseModel, action, ref, url string, isErr bool) tea.
 		m.statusMsg = m.styles.statusAction.Render(action) + " " + styledRef
 	}
 	id := m.statusID
-	return tea.Tick(browseStatusFlash, func(time.Time) tea.Msg {
+	return tea.Tick(tuiStatusFlash, func(time.Time) tea.Msg {
 		return clearStatusMsg{id: id}
 	})
+}
+
+func renderBatchFailurePrompt(msg batchActionMsg) string {
+	if len(msg.failures) == 0 {
+		return "Some batch actions failed."
+	}
+
+	const maxFailures = 5
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s had failures:\n\n", msg.action.String())
+	limit := min(len(msg.failures), maxFailures)
+	for i := range limit {
+		failure := msg.failures[i]
+		if failure.ref != "" {
+			ref := lg.NewStyle().Bold(true).Foreground(lg.Color("117")).Render(failure.ref)
+			if failure.url != "" {
+				ref = xansi.SetHyperlink(failure.url) + ref + xansi.ResetHyperlink()
+			}
+			fmt.Fprintf(&b, "%s: %v\n", ref, failure.err)
+			continue
+		}
+		fmt.Fprintf(&b, "%v\n", failure.err)
+	}
+	if remaining := len(msg.failures) - limit; remaining > 0 {
+		fmt.Fprintf(&b, "\n…and %d more.", remaining)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 type targetPR struct {
@@ -1842,12 +2269,25 @@ type targetPR struct {
 	pr    PullRequest
 }
 
-func (m browseModel) targetPRs() []targetPR {
+func batchFailuresForTargets(targets []targetPR, err error) []batchFailure {
+	failures := make([]batchFailure, 0, len(targets))
+	for _, t := range targets {
+		failures = append(failures, batchFailure{
+			key: makePRKey(t.pr),
+			ref: t.pr.Ref(),
+			url: t.pr.URL,
+			err: err,
+		})
+	}
+	return failures
+}
+
+func (m tuiModel) targetPRs() []targetPR {
 	if len(m.selected) > 0 {
 		var targets []targetPR
 		for _, idx := range m.visibleIndices() {
-			if m.selected[idx] {
-				targets = append(targets, targetPR{idx, m.prs[idx]})
+			if m.selected[m.rowKeyAt(idx)] {
+				targets = append(targets, targetPR{idx, m.rows[idx].Item.PR})
 			}
 		}
 		return targets
@@ -1858,31 +2298,163 @@ func (m browseModel) targetPRs() []targetPR {
 	return nil
 }
 
-func (m browseModel) tableWidth() int {
-	// Subtract cursor prefix + selection marker widths.
-	return m.width - 2*lg.Width(browseNonCursorPrefix)
+func (m tuiModel) tableRendererFor(totalRows int) *table.Renderer[PRRowModel] {
+	opts := make([]table.Option, 0, 1)
+	opts = append(opts, table.WithShowIndex(false))
+	if m.sortColumn != "" {
+		sortColumn := m.sortColumn
+		sortAsc := m.sortAsc
+		opts = append(opts, table.WithHeaderRenderer(
+			func(name, header string, ctx *table.RenderContext) string {
+				rendered := ctx.Theme.RenderBold(header)
+				if name != sortColumn || header == "" {
+					return rendered
+				}
+				indicator := " ▼"
+				if sortAsc {
+					indicator = " ▲"
+				}
+				return rendered + ctx.Theme.RenderDim(indicator)
+			},
+		))
+	}
+	width := max(0, m.width-tuiListPrefixWidth(totalRows))
+	return m.p.newTableRenderer(m.cli, m.tty, width, opts...)
 }
 
-func (m browseModel) rerenderedRows() []TableRow {
-	renderer := m.p.newTableRenderer(m.cli, m.tty, m.resolver, m.tableWidth())
-	_, rows := renderer.Render(m.prs)
-	return rows
+func (m tuiModel) tableRenderer() *table.Renderer[PRRowModel] {
+	return m.tableRendererFor(len(m.rows))
 }
 
-func (m browseModel) currentPR() *PullRequest {
-	if m.cursor < 0 || m.cursor >= len(m.prs) || m.removed[m.cursor] {
+func estimateHeaderWidth(name string, compact bool) int {
+	if compact {
+		if w, ok := columnWidthEstimateCompact[name]; ok {
+			return w
+		}
+	}
+	if w, ok := columnWidthEstimate[name]; ok {
+		return w
+	}
+	return 0
+}
+
+func renderEstimatedHeader(
+	p *prl,
+	renderer *table.Renderer[PRRowModel],
+	sortColumn string,
+	sortAsc bool,
+	termWidth int,
+) (string, []int) {
+	cols := renderer.Columns()
+	if len(cols) == 0 {
+		return "", nil
+	}
+
+	colNames := make([]string, len(cols))
+	for i, col := range cols {
+		colNames[i] = col.Name
+	}
+	compact := termWidth > 0 && termWidth < compactTimeThreshold && hasTimeColumns(colNames)
+
+	header := make([]string, len(cols))
+	samples := make([]string, len(cols))
+	flexCol := -1
+	for i, col := range cols {
+		cell := p.RenderBold(col.Header)
+		if sortColumn != "" && col.Name == sortColumn && col.Header != "" {
+			indicator := " ▼"
+			if sortAsc {
+				indicator = " ▲"
+			}
+			cell += p.RenderDim(indicator)
+		}
+		header[i] = cell
+
+		width := max(estimateHeaderWidth(col.Name, compact), lg.Width(cell))
+		samples[i] = strings.Repeat(" ", width)
+		if col.Flex {
+			flexCol = i
+		}
+	}
+
+	g := table.NewGrid([][]string{header, samples})
+	if flexCol >= 0 && termWidth > 0 {
+		g.FlexCol = flexCol
+		g.MaxWidth = termWidth
+	}
+	aligned, colWidths := g.AlignColumns()
+	return aligned[0], colWidths
+}
+
+func renderTUITable(
+	p *prl,
+	renderer *table.Renderer[PRRowModel],
+	items []PRRowModel,
+	sortColumn string,
+	sortAsc bool,
+	termWidth int,
+) (string, []TableRow, []int) {
+	if len(items) == 0 {
+		header, colWidths := renderEstimatedHeader(p, renderer, sortColumn, sortAsc, termWidth)
+		return header, nil, colWidths
+	}
+
+	rt := renderer.Render(items)
+	rows := rt.Rows
+	if sortColumn != "" {
+		rows = table.SortRows(rows, renderer.Columns(), sortColumn, sortAsc)
+	}
+	return rt.Header, rows, rt.ColWidths
+}
+
+func (m tuiModel) rerender() (string, []TableRow, []int) {
+	termWidth := max(0, m.width-tuiListPrefixWidth(len(m.items)))
+	renderer := m.tableRendererFor(len(m.items))
+	return renderTUITable(m.p, renderer, m.items, m.sortColumn, m.sortAsc, termWidth)
+}
+
+func (m tuiModel) currentPR() *PullRequest {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.removed[m.rowKeyAt(m.cursor)] {
 		return nil
 	}
-	return &m.prs[m.cursor]
+	pr := m.rows[m.cursor].Item.PR
+	return &pr
 }
 
-func (m browseModel) listHelpPairs() []struct{ key, desc string } {
+func (m *tuiModel) toggleCurrentSelection() bool {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.removed[m.rowKeyAt(m.cursor)] {
+		return false
+	}
+	key := m.rowKeyAt(m.cursor)
+	if m.selected[key] {
+		delete(m.selected, key)
+	} else {
+		m.selected[key] = true
+	}
+	return true
+}
+
+func (m *tuiModel) extendSelectionAndMove(dir int) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.removed[m.rowKeyAt(m.cursor)] {
+		return
+	}
+	m.selected[m.rowKeyAt(m.cursor)] = true
+	next, ok := m.nextVisible(dir)
+	if !ok {
+		return
+	}
+	m.cursor = next
+	m.offset = m.scrolledOffset()
+	m.selected[m.rowKeyAt(m.cursor)] = true
+}
+
+func (m tuiModel) listHelpPairs() []struct{ key, desc string } {
 	pairs := []struct{ key, desc string }{
-		{browseKeyEnter, "show"},
+		{tuiKeyEnter, "show"},
 		{"←/→", "first/last"},
 		{"space", "select"},
 		{"/", "filter"},
-		{"a/y", "approve"},
+		{"a", "approve"},
 		{"d", "diff"},
 		{"m", "merge"},
 		{"C", "close"},
@@ -1901,27 +2473,27 @@ func (m browseModel) listHelpPairs() []struct{ key, desc string } {
 	return pairs
 }
 
-func (m browseModel) renderListHelp() string {
+func (m tuiModel) renderListHelp() string {
 	return m.renderHelp(m.listHelpPairs())
 }
 
-func (m browseModel) renderFilterHelp() string {
+func (m tuiModel) renderFilterHelp() string {
 	pairs := []struct{ key, desc string }{
 		{"↑/↓", "prev/next"},
-		{browseKeyEnter, "apply"},
-		{browseKeyEsc, "exit"},
+		{tuiKeyEnter, "apply"},
+		{tuiKeyEsc, "exit"},
 	}
 	return m.renderHelp(pairs)
 }
 
-func (m browseModel) diffHelpPairs() []struct{ key, desc string } {
+func (m tuiModel) diffHelpPairs() []struct{ key, desc string } {
 	pairs := []struct{ key, desc string }{
 		{"↑/↓", "scroll"},
 		{"←/→", "top/bottom"},
 		{"a/y", "approve"},
 	}
-	if m.diffIndex >= 0 && m.diffIndex < len(m.prs) {
-		if strings.ToLower(m.prs[m.diffIndex].State) == valueClosed {
+	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
+		if strings.ToLower(m.rows[idx].Item.State) == valueClosed {
 			pairs = append(pairs, struct{ key, desc string }{"C", "reopen"})
 		} else {
 			pairs = append(pairs, struct{ key, desc string }{"C", "close"})
@@ -1939,11 +2511,11 @@ func (m browseModel) diffHelpPairs() []struct{ key, desc string } {
 	return pairs
 }
 
-func (m browseModel) renderDiffHelp() string {
+func (m tuiModel) renderDiffHelp() string {
 	return m.renderHelp(m.diffHelpPairs())
 }
 
-func (m browseModel) detailHelpPairs() []struct{ key, desc string } {
+func (m tuiModel) detailHelpPairs() []struct{ key, desc string } {
 	pairs := []struct{ key, desc string }{
 		{"↑/↓", "scroll"},
 		{"←/→", "top/bottom"},
@@ -1958,32 +2530,36 @@ func (m browseModel) detailHelpPairs() []struct{ key, desc string } {
 	return pairs
 }
 
-func (m browseModel) renderDetailHelp() string {
+func (m tuiModel) renderDetailHelp() string {
 	return m.renderHelp(m.detailHelpPairs())
 }
 
-func (m browseModel) renderHelpOverlay() string {
+func (m tuiModel) renderHelpOverlay() string {
 	pairs := []struct{ key, desc string }{
 		{"↑/↓ j/k", "Navigate up/down"},
 		{"←/→ g/G", "Jump to first/last"},
 		{"enter", "Show PR detail"},
 		{"space", "Toggle selection"},
+		{"shift+↑/↓", "Extend selection"},
 		{"ctrl+a", "Select all/none"},
 		{"i", "Invert selection"},
 		{"/", "Filter"},
-		{"a/y", "Approve PRs"},
-		{browseKeyAltA, "Approve PRs (no confirm)"},
+		{"a", "Approve PRs"},
+		{"A", "Approve/Merge PRs"},
+		{tuiKeyAltA, "Approve PRs (no confirm)"},
 		{"d", "View diff"},
 		{"m", "Merge PRs"},
 		{"M", "Force-merge PRs"},
 		{"C", "Close PRs"},
 		{"O", "Reopen PRs"},
-		{"U", "Unassign as reviewer"},
+		{"u", "Unassign/unsubscribe"},
+		{"alt+u", "Unassign (no confirm)"},
 		{"o", "Open in browser"},
 		{"s", "Send to Slack"},
 		{"alt+s", "Send to Slack (no confirm)"},
+		{tuiKeyTab, "Cycle sort order"},
 		{"R", "Toggle auto-refresh"},
-		{"?", "This help"},
+		{"?", "Toggle this help"},
 		{"q", "Quit"},
 	}
 	if hasClaudeReviewLauncher() {
@@ -1994,18 +2570,21 @@ func (m browseModel) renderHelpOverlay() string {
 				[]struct{ key, desc string }{
 					{"r", "Launch Claude review"},
 					{"alt+r", "Launch Claude review (no confirm)"},
+					{"ctrl+r", "Request Copilot review"},
 				},
 				pairs[len(pairs)-2:]...)...)
 	}
 
 	// Render in two columns.
 	rows := (len(pairs) + 1) / 2 //nolint:mnd // ceil division
+	keyWidth := 0
+	for _, p := range pairs {
+		keyWidth = max(keyWidth, lg.Width(p.key))
+	}
 	renderPair := func(p struct{ key, desc string }) string {
-		return m.styles.helpKey.Render(
-			fmt.Sprintf("%8s", p.key),
-		) + "  " + m.styles.helpText.Render(
-			p.desc,
-		)
+		pad := max(0, keyWidth-lg.Width(p.key))
+		key := strings.Repeat(" ", pad) + p.key
+		return m.styles.helpKey.Render(key) + "  " + m.styles.helpText.Render(p.desc)
 	}
 
 	// Measure column widths for alignment.
@@ -2046,20 +2625,26 @@ func (m browseModel) renderHelpOverlay() string {
 		b.WriteString("\n" + dismiss)
 	}
 
-	return m.styles.confirmBox.Render(b.String())
+	return m.styles.overlayBox.Render(b.String())
 }
 
 // appendStatus appends the status message to the right of the last line of help,
 // or returns help unchanged if there's no status or not enough room.
-func (m browseModel) appendStatus(help string) string {
-	if m.statusMsg == "" || m.width <= 0 {
+func (m tuiModel) appendStatus(help string) string {
+	if m.statusMsg == "" {
 		return help
 	}
 	style := m.styles.statusOK
 	if m.statusErr {
 		style = m.styles.statusErr
 	}
-	status := style.Render(m.statusMsg)
+	return m.appendRightStatus(help, style.Render(m.statusMsg))
+}
+
+func (m tuiModel) appendRightStatus(help, status string) string {
+	if status == "" || m.width <= 0 {
+		return help
+	}
 	lastNL := strings.LastIndex(help, "\n")
 	lastLine := help
 	if lastNL >= 0 {
@@ -2072,7 +2657,7 @@ func (m browseModel) appendStatus(help string) string {
 	return help
 }
 
-func (m browseModel) renderHelp(pairs []struct{ key, desc string }) string {
+func (m tuiModel) renderHelp(pairs []struct{ key, desc string }) string {
 	const gap = "  "
 	var parts []string
 	helpText := m.styles.helpText
@@ -2122,22 +2707,22 @@ func (m browseModel) renderHelp(pairs []struct{ key, desc string }) string {
 }
 
 // helpLines returns the number of lines the help bar occupies at the current width.
-func (m browseModel) helpLines(pairs []struct{ key, desc string }) int {
+func (m tuiModel) helpLines(pairs []struct{ key, desc string }) int {
 	return strings.Count(m.renderHelp(pairs), "\n") + 1
 }
 
-func (m browseModel) confirmAccept() (tea.Model, tea.Cmd) {
+func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 	cmd := m.confirmCmd
 	m = m.clearConfirm()
 	return m, cmd
 }
 
-func (m browseModel) confirmDismiss() (tea.Model, tea.Cmd) {
+func (m tuiModel) confirmDismiss() (tea.Model, tea.Cmd) {
 	m = m.clearConfirm()
 	return m, nil
 }
 
-func (m browseModel) renderConfirmModal() string {
+func (m tuiModel) renderConfirmModal() string {
 	var buttons string
 	if m.confirmCmd == nil {
 		// Info-only modal - single OK button.
@@ -2164,17 +2749,51 @@ func (m browseModel) renderConfirmModal() string {
 	if pad := (promptWidth - buttonsWidth) / 2; pad > 0 { //nolint:mnd // center
 		centered = strings.Repeat(" ", pad) + buttons
 	}
-	return m.styles.confirmBox.Render(m.confirmPrompt + "\n\n" + centered)
+	return m.styles.overlayBox.Render(m.confirmPrompt + "\n\n" + centered)
 }
 
-func (m browseModel) clearConfirm() browseModel {
+func (m tuiModel) renderEmptyOverlay() string {
+	dim := m.styles.helpText
+	key := m.styles.helpKey
+	box := lg.NewStyle().
+		Border(lg.RoundedBorder()).
+		BorderForeground(lg.Color("198")).
+		Padding(1, tuiConfirmPadX)
+	if m.filterInput.Value() != "" {
+		filter := lg.NewStyle().Foreground(lg.Color("216"))
+		// Truncate the filter value so the overlay doesn't overflow.
+		prefix := "No pull requests match \""
+		suffix := "\""
+		maxQuery := max(1, m.width*4/5-len(prefix)-len(suffix))
+		query := m.filterInput.Value()
+		if len(query) > maxQuery {
+			query = query[:maxQuery-1] + "…"
+		}
+		line1 := dim.Render(prefix) +
+			filter.Render(query) + dim.Render(suffix)
+		line2 := dim.Render("Refine your search, or press ") +
+			key.Render("esc") + dim.Render(" to clear the filter")
+		return box.Render(line1 + "\n\n" + line2)
+	}
+	var line1 string
+	if len(m.removed) > 0 {
+		line1 = dim.Render("All pull requests have been processed")
+	} else {
+		line1 = dim.Render("No pull requests found for the current query")
+	}
+	line2 := dim.Render("Press ") + key.Render("q") + dim.Render(" to quit, or ") +
+		key.Render("esc") + dim.Render(" to dismiss and wait for new results")
+	return box.Render(line1 + "\n\n" + line2)
+}
+
+func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmAction = ""
 	m.confirmPrompt = ""
 	m.confirmCmd = nil
 	return m
 }
 
-func (m browseModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) browseModel {
+func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
 	prCopy := pr
 	m.confirmAction = "review"
 	m.confirmYes = true
@@ -2183,7 +2802,7 @@ func (m browseModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) browseM
 	) + "?\n\nThis will clone the repo and open a new terminal tab."
 	m.confirmCmd = func() tea.Msg {
 		err := launchClaudeReview(prCopy)
-		return claudeReviewMsg{index: idx, key: prKey(prCopy), err: err}
+		return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 	}
 	return m
 }
@@ -2247,8 +2866,7 @@ func overlayCenter(bg, fg string, width, height int) string {
 }
 
 // cursorLineBG is the ANSI escape to set the cursor line background color.
-// Dim version of cursor color 208 (orange #ff8700).
-const cursorLineBG = "\x1b[48;2;20;3;14m"
+const cursorLineBG = "\x1b[48;2;40;10;30m"
 
 // injectLineBackground wraps a line with a background color that persists
 // through any embedded ANSI SGR codes. It re-applies the background after
@@ -2284,6 +2902,13 @@ func injectLineBackground(line string, width int) string {
 	}
 	b.WriteString("\x1b[0m")
 	return b.String()
+}
+
+func truncateDisplayLine(line string, width int) string {
+	if width <= 0 || xansi.WcWidth.StringWidth(line) <= width {
+		return line
+	}
+	return xansi.WcWidth.Truncate(line, width, "")
 }
 
 // highlightDiff applies Chroma syntax highlighting to a unified diff.
@@ -2389,7 +3014,7 @@ end tell`, shellCmd), nil
 }
 
 // backgroundRefresh re-executes the search and returns a refreshResultMsg.
-func (m browseModel) backgroundRefresh() refreshResultMsg {
+func (m tuiModel) backgroundRefresh() refreshResultMsg {
 	prs, err := executeSearch(m.rest, m.params)
 	if err != nil {
 		return refreshResultMsg{err: err}
@@ -2398,15 +3023,11 @@ func (m browseModel) backgroundRefresh() refreshResultMsg {
 	if err != nil {
 		return refreshResultMsg{err: err}
 	}
-	if len(prs) == 0 {
-		return refreshResultMsg{}
-	}
-
-	if !m.cli.Quick {
+	if len(prs) > 0 && !m.cli.Quick {
 		if gql, gqlErr := newGraphQLClient(withDebug(m.cli.Debug)); gqlErr == nil {
 			enrichMergeStatus(gql, prs)
 		}
-	} else {
+	} else if len(prs) > 0 {
 		for i := range prs {
 			if prs[i].State == valueOpen {
 				prs[i].MergeStatus = MergeStatusBlocked
@@ -2414,120 +3035,190 @@ func (m browseModel) backgroundRefresh() refreshResultMsg {
 		}
 	}
 
-	renderer := m.p.newTableRenderer(m.cli, m.tty, m.resolver, m.tableWidth())
-	_, rows := renderer.Render(prs)
-	return refreshResultMsg{rows: rows, prs: prs}
+	orgFilter := singleOrg(m.cli.Organization.Values)
+	items := buildPRRowModels(prs, orgFilter, m.resolver)
+	termWidth := max(0, m.width-tuiListPrefixWidth(len(items)))
+	renderer := m.tableRendererFor(len(items))
+	_, rows, _ := renderTUITable(m.p, renderer, items, "", false, termWidth)
+	return refreshResultMsg{rows: rows, items: items}
 }
 
-// prKey returns a unique identifier for a PR (repo + number).
-func prKey(pr PullRequest) string {
-	return fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
+type (
+	prKey  string
+	prKeys map[prKey]bool
+)
+
+// makePRKey returns a unique identifier for a PR (repo + number).
+func makePRKey(pr PullRequest) prKey {
+	return prKey(fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number))
 }
 
-// resolveIndex resolves a PR key to its current index in the model's PR list.
+// resolveIndex resolves a PR key to its current index in the model's row list.
 // If the key matches the hint index, it returns the hint directly (fast path).
 // Returns -1 if the PR is no longer in the list.
-func (m browseModel) resolveIndex(key string, hint int) int {
-	if hint >= 0 && hint < len(m.prs) && prKey(m.prs[hint]) == key {
+func (m tuiModel) resolveIndex(key prKey, hint int) int {
+	if key == "" {
+		return -1
+	}
+	if hint >= 0 && hint < len(m.rows) && makePRKey(m.rows[hint].Item.PR) == key {
 		return hint
 	}
-	for i, pr := range m.prs {
-		if prKey(pr) == key {
+	for i, row := range m.rows {
+		if makePRKey(row.Item.PR) == key {
 			return i
 		}
 	}
 	return -1
 }
 
+func (m tuiModel) rowKeyAt(idx int) prKey {
+	if idx < 0 || idx >= len(m.rows) {
+		return ""
+	}
+	return makePRKey(m.rows[idx].Item.PR)
+}
+
 // mergeRefresh replaces the model's data with fresh results while preserving
 // cursor position, selections, and removed state by matching on PR identity.
-func (m browseModel) mergeRefresh(rows []TableRow, prs []PullRequest) browseModel {
-	// Build lookup: old index -> PR key.
-	oldKeys := make(map[string]int, len(m.prs))
-	for i, pr := range m.prs {
-		oldKeys[prKey(pr)] = i
-	}
-
-	// Transfer removed/selected state to new indices.
-	newRemoved := make(map[int]bool)
-	newSelected := make(map[int]bool)
-	for i, pr := range prs {
-		if oldIdx, ok := oldKeys[prKey(pr)]; ok {
-			if m.removed[oldIdx] {
-				newRemoved[i] = true
-			}
-			if m.selected[oldIdx] {
-				newSelected[i] = true
-			}
-		}
-	}
+func (m tuiModel) mergeRefresh(newRows []TableRow, newItems []PRRowModel) tuiModel {
+	oldRows := m.rows
 
 	// Try to keep cursor on the same PR.
-	cursorKey := ""
-	if m.cursor >= 0 && m.cursor < len(m.prs) {
-		cursorKey = prKey(m.prs[m.cursor])
+	cursorKey := prKey("")
+	if m.cursor >= 0 && m.cursor < len(oldRows) {
+		cursorKey = makePRKey(oldRows[m.cursor].Item.PR)
 	}
 	newCursor := 0
-	for i, pr := range prs {
-		if prKey(pr) == cursorKey {
+	for i, row := range newRows {
+		if makePRKey(row.Item.PR) == cursorKey {
 			newCursor = i
 			break
 		}
 	}
 
-	// Build new-index lookup for remapping diff/detail/queue indices.
-	newKeyIdx := make(map[string]int, len(prs))
-	for i, pr := range prs {
-		newKeyIdx[prKey(pr)] = i
-	}
-	oldPRs := m.prs // capture before overwrite
-
-	m.rows = rows
-	m.prs = prs
-	m.removed = newRemoved
-	m.selected = newSelected
+	m.items = newItems
+	m.rows = newRows
 	m.cursor = newCursor
 	m.offset = m.scrolledOffset()
-
-	// Remap diff/detail indices so in-progress views stay correct.
-	m.diffIndex = remapIndex(m.diffIndex, oldPRs, newKeyIdx)
-	m.detailIndex = remapIndex(m.detailIndex, oldPRs, newKeyIdx)
-	m.diffQueue = remapIndices(m.diffQueue, oldPRs, newKeyIdx)
-	m.diffHistory = remapIndices(m.diffHistory, oldPRs, newKeyIdx)
 	return m
 }
 
-// remapIndex maps an old PR index to its new position after a refresh.
-func remapIndex(oldIdx int, oldPRs []PullRequest, newKeyIdx map[string]int) int {
-	if oldIdx < 0 || oldIdx >= len(oldPRs) {
-		return oldIdx
+// reindexRows remaps the cursor from oldRows order to newRows order using PR identity.
+func (m tuiModel) reindexRows(oldRows, newRows []TableRow) tuiModel {
+	if m.cursor >= 0 && m.cursor < len(oldRows) {
+		key := makePRKey(oldRows[m.cursor].Item.PR)
+		for i, row := range newRows {
+			if makePRKey(row.Item.PR) == key {
+				m.cursor = i
+				break
+			}
+		}
 	}
-	if newIdx, ok := newKeyIdx[prKey(oldPRs[oldIdx])]; ok {
-		return newIdx
-	}
-	return oldIdx
+	m.offset = m.scrolledOffset()
+	return m
 }
 
-// remapIndices maps a slice of old PR indices to their new positions,
-// dropping any that no longer exist in the refreshed list.
-func remapIndices(oldIndices []int, oldPRs []PullRequest, newKeyIdx map[string]int) []int {
-	if len(oldIndices) == 0 {
-		return oldIndices
-	}
-	result := make([]int, 0, len(oldIndices))
-	for _, oldIdx := range oldIndices {
-		if oldIdx < 0 || oldIdx >= len(oldPRs) {
-			continue
+// rowFilterText returns the semantic text for a row, used for filtering.
+func rowFilterText(row TableRow) string {
+	parts := make([]string, 0, len(row.Cells))
+	for _, cell := range row.Cells {
+		if cell.Plain != "" {
+			parts = append(parts, cell.Plain)
 		}
-		if newIdx, ok := newKeyIdx[prKey(oldPRs[oldIdx])]; ok {
-			result = append(result, newIdx)
+	}
+	return strings.Join(parts, " ")
+}
+
+// headerColumnAt maps a click X coordinate to a column name by walking colWidths.
+func (m tuiModel) headerColumnAt(x int) string {
+	x -= m.listPrefixWidth()
+	if x < 0 {
+		return ""
+	}
+	renderer := m.tableRenderer()
+	cols := renderer.Columns()
+	const colGap = 2 // matches grid.defaultColumnPadding
+	pos := 0
+	for i, w := range m.colWidths {
+		end := pos + w
+		if x >= pos && x < end+colGap {
+			if i >= 0 && i < len(cols) {
+				return cols[i].Name
+			}
+		}
+		pos = end + colGap
+	}
+	return ""
+}
+
+// toggleSort cycles a column through: default direction → reverse → off.
+// Clicking a different column activates it with its default direction.
+func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
+	sortable := m.sortableColumns()
+	if !slices.Contains(sortable, col) {
+		return m, nil
+	}
+
+	oldRows := m.rows
+	if m.sortColumn == col {
+		// Already sorted by this column: cycle direction → off.
+		if m.sortAsc == defaultSortAsc(col) {
+			// Currently default direction → reverse.
+			m.sortAsc = !m.sortAsc
+		} else {
+			// Currently reversed → turn off.
+			m.sortColumn = ""
+			m.sortAsc = false
+		}
+	} else {
+		m.sortColumn = col
+		m.sortAsc = defaultSortAsc(col)
+	}
+	header, newRows, colWidths := m.rerender()
+	m = m.reindexRows(oldRows, newRows)
+	m.header = header
+	m.rows = newRows
+	m.colWidths = colWidths
+
+	// Persist sort settings to config file in the background.
+	_ = saveConfigKey(keyTUISortKey, m.sortColumn)
+	order := ""
+	if m.sortColumn != "" {
+		order = "desc"
+		if m.sortAsc {
+			order = "asc"
+		}
+	}
+	_ = saveConfigKey(keyTUISortOrder, order)
+
+	return m, nil
+}
+
+// sortableColumns returns visible column names that have sortable cells.
+func (m tuiModel) sortableColumns() []string {
+	renderer := m.tableRenderer()
+	var result []string
+	for _, col := range renderer.Columns() {
+		if col.Name != "" {
+			result = append(result, col.Name)
 		}
 	}
 	return result
 }
 
-// runBrowse launches the interactive browse TUI.
-func runBrowse(
+// defaultSortAsc returns the natural sort direction for a column.
+// Time columns default to descending (newest first); strings to ascending (A-Z).
+func defaultSortAsc(column string) bool {
+	switch column {
+	case "updated", "created":
+		return false
+	default:
+		return true
+	}
+}
+
+// runTui launches the interactive TUI.
+func runTui(
 	p *prl,
 	rest *api.RESTClient,
 	cli *CLI,
@@ -2539,9 +3230,11 @@ func runBrowse(
 	resolver := NewAuthorResolver(cfg)
 
 	type fetchResult struct {
-		rows []TableRow
-		prs  []PullRequest
-		err  error
+		rows      []TableRow
+		items     []PRRowModel
+		header    string
+		colWidths []int
+		err       error
 	}
 	r := withSpinner(tty, s, func(func()) fetchResult {
 		prs, err := executeSearch(rest, params)
@@ -2552,16 +3245,12 @@ func runBrowse(
 		if err != nil {
 			return fetchResult{err: err}
 		}
-		if len(prs) == 0 {
-			return fetchResult{}
-		}
-
 		// Enrich merge status for table coloring.
-		if !cli.Quick {
+		if len(prs) > 0 && !cli.Quick {
 			if gql, gqlErr := newGraphQLClient(withDebug(cli.Debug)); gqlErr == nil {
 				enrichMergeStatus(gql, prs)
 			}
-		} else {
+		} else if len(prs) > 0 {
 			for i := range prs {
 				if prs[i].State == valueOpen {
 					prs[i].MergeStatus = MergeStatusBlocked
@@ -2569,22 +3258,17 @@ func runBrowse(
 			}
 		}
 
-		// Subtract cursor prefix + selection marker widths from terminal width.
-		initWidth := terminal.Width(
-			os.Stdout,
-		) - 2*lg.Width( //nolint:mnd // cursor + selection prefix
-			browseNonCursorPrefix,
-		)
-		renderer := p.newTableRenderer(cli, tty, resolver, initWidth)
-		_, rows := renderer.Render(prs)
-		return fetchResult{rows: rows, prs: prs}
+		orgFilter := singleOrg(cli.Organization.Values)
+		items := buildPRRowModels(prs, orgFilter, resolver)
+
+		initWidth := max(0, term.Width(os.Stdout)-tuiListPrefixWidth(len(items)))
+		renderer := p.newTableRenderer(cli, tty, initWidth, table.WithShowIndex(false))
+		header, rows, colWidths := renderTUITable(p, renderer, items, "", false, initWidth)
+		return fetchResult{rows: rows, items: items, header: header, colWidths: colWidths}
 	})
 
 	if r.err != nil {
 		return r.err
-	}
-	if len(r.prs) == 0 {
-		return nil
 	}
 
 	// Create ActionRunner with GraphQL (always needed for merge/automerge).
@@ -2600,16 +3284,20 @@ func runBrowse(
 	fiStyles := fi.Styles()
 	fiStyles.Focused.Text = filterStyle
 	fiStyles.Blurred.Text = filterStyle
+	fiStyles.Cursor.Color = lg.Color("216")
 	fi.SetStyles(fiStyles)
 
-	model := browseModel{
+	model := tuiModel{
+		items:       r.items,
 		rows:        r.rows,
-		prs:         r.prs,
+		header:      r.header,
+		colWidths:   r.colWidths,
 		actions:     actions,
 		autoRefresh: cfg.TUI.AutoRefresh.Enabled,
-		styles:      newBrowseStyles(),
-		removed:     make(map[int]bool),
-		selected:    make(map[int]bool),
+		spinner:     buildSpinner(cfg.Spinner),
+		styles:      newTuiStyles(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
 		filterInput: fi,
 		p:           p,
 		cli:         cli,
@@ -2620,9 +3308,16 @@ func runBrowse(
 		params:      params,
 	}
 
+	// Apply persisted sort settings.
+	if cfg.TUI.Sort.Key != "" {
+		model.sortColumn = cfg.TUI.Sort.Key
+		model.sortAsc = cfg.TUI.Sort.Order == "asc"
+		model.header, model.rows, model.colWidths = model.rerender()
+	}
+
 	_, err = tea.NewProgram(model).Run()
 	if err != nil {
-		return fmt.Errorf("browse TUI: %w", err)
+		return fmt.Errorf("interactive TUI: %w", err)
 	}
 	return nil
 }

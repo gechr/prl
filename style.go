@@ -1,6 +1,7 @@
 package main
 
 import (
+	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -20,6 +21,15 @@ func New() *prl {
 		),
 	}
 }
+
+// RenderBold renders text in bold using the theme.
+func (p *prl) RenderBold(s string) string { return p.theme.Bold.Render(s) }
+
+// RenderDim renders text in dim using the theme.
+func (p *prl) RenderDim(s string) string { return p.theme.Dim.Render(s) }
+
+// EntityColors returns the theme's entity color palette.
+func (p *prl) EntityColors() []color.Color { return p.theme.EntityColors }
 
 // prStateStyle returns the lipgloss style for a PR state.
 func (p *prl) prStateStyle(state string) lipgloss.Style {
@@ -73,27 +83,6 @@ func (p *prl) renderMergeStatus(pr PullRequest) string {
 		return valueBlocked
 	case MergeStatusBlocked:
 		return valueBlocked
-	case MergeStatusUnknown:
-		return valueUnknown
-	}
-	return ""
-}
-
-// renderMergeReason returns a human-readable reason for the PR's current status.
-// Used in non-TTY output where colors are unavailable.
-func (p *prl) renderMergeReason(pr PullRequest) string {
-	if strings.ToLower(pr.State) != valueOpen {
-		return valueUnknown
-	}
-	switch pr.MergeStatus {
-	case MergeStatusReady:
-		return "ready_to_merge"
-	case MergeStatusCIPending:
-		return "ci_pending"
-	case MergeStatusCIFailed:
-		return "ci_fail"
-	case MergeStatusBlocked:
-		return "needs_review"
 	case MergeStatusUnknown:
 		return valueUnknown
 	}

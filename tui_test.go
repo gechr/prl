@@ -1,9 +1,17 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/gechr/prl/internal/table"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,7 +58,7 @@ func TestBuildClaudeReviewAppleScriptUnsupported(t *testing.T) {
 }
 
 func TestPrepareClaudeReviewConfirmUsesYesNo(t *testing.T) {
-	var m browseModel
+	var m tuiModel
 	pr := testReviewPullRequest()
 
 	m = m.prepareClaudeReviewConfirm(pr, 0)
@@ -63,21 +71,23 @@ func TestPrepareClaudeReviewConfirmUsesYesNo(t *testing.T) {
 
 func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	m := browseModel{
-		prs:      []PullRequest{testReviewPullRequest()},
-		removed:  make(map[int]bool),
-		selected: make(map[int]bool),
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		items:    []PRRowModel{{PR: pr}},
+		rows:     []TableRow{{Item: PRRowModel{PR: pr}}},
+		removed:  make(prKeys),
+		selected: make(prKeys),
 	}
 
 	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	require.Nil(t, cmd)
-	bm, ok := model.(browseModel)
+	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, "review", bm.confirmAction)
 
 	model, cmd = m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModAlt})
 	require.NotNil(t, cmd)
-	altModel, ok := model.(browseModel)
+	altModel, ok := model.(tuiModel)
 	require.True(t, ok)
 
 	require.Empty(t, altModel.confirmAction)
@@ -87,13 +97,512 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 
 func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	m := browseModel{styles: newBrowseStyles()}
+	m := tuiModel{styles: newTuiStyles()}
 
 	overlay := m.renderHelpOverlay()
 
 	require.Contains(t, overlay, "Launch Claude review")
 	require.Contains(t, overlay, "alt+r")
 	require.Contains(t, overlay, "Launch Claude review (no confirm)")
+	require.Contains(t, overlay, "shift+↑/↓")
+}
+
+func TestRenderHelpOverlayAlignsExtendedSelectionKey(t *testing.T) {
+	m := tuiModel{styles: newTuiStyles()}
+
+	overlay := ansi.Strip(m.renderHelpOverlay())
+	lines := strings.Split(overlay, "\n")
+
+	spaceLine := ""
+	shiftLine := ""
+	for _, line := range lines {
+		if strings.Contains(line, "Toggle selection") {
+			spaceLine = line
+		}
+		if strings.Contains(line, "Extend selection") {
+			shiftLine = line
+		}
+	}
+
+	require.NotEmpty(t, spaceLine)
+	require.NotEmpty(t, shiftLine)
+	require.Equal(
+		t,
+		lg.Width(strings.SplitN(spaceLine, "Toggle selection", 2)[0]),
+		lg.Width(strings.SplitN(shiftLine, "Extend selection", 2)[0]),
+	)
+}
+
+func TestTuiTableRendererSuppressesIndexColumn(t *testing.T) {
+	models := testModels("org")
+	m := tuiModel{
+		p:     testPRL,
+		cli:   &CLI{Author: &CSVFlag{}},
+		width: 120,
+	}
+
+	rt := m.tableRendererFor(len(models)).Render(models)
+
+	require.NotEmpty(t, rt.Rows)
+	require.True(t, strings.HasPrefix(ansi.Strip(rt.Rows[0].Display), "newest PR"))
+}
+
+func TestRerenderShowsEstimatedHeaderWithoutRows(t *testing.T) {
+	m := tuiModel{
+		p:     testPRL,
+		cli:   testCLI(),
+		width: 120,
+	}
+
+	header, rows, colWidths := m.rerender()
+	renderer := m.tableRendererFor(len(m.items))
+
+	titleIdx := -1
+	for i, col := range renderer.Columns() {
+		if col.Name == colTitle {
+			titleIdx = i
+			break
+		}
+	}
+
+	require.Empty(t, rows)
+	require.NotEmpty(t, colWidths)
+	require.NotEqual(t, -1, titleIdx)
+	require.Contains(t, ansi.Strip(header), "TITLE")
+	require.GreaterOrEqual(t, colWidths[titleIdx], columnWidthEstimate[colTitle])
+}
+
+func TestRefreshResultClearsRowsButKeepsHeader(t *testing.T) {
+	items := testModels("org")[:1]
+	renderer := testPRL.newTableRenderer(testCLI(), true, 120, table.WithShowIndex(false))
+	rt := renderer.Render(items)
+
+	m := tuiModel{
+		items:       items,
+		rows:        rt.Rows,
+		header:      rt.Header,
+		colWidths:   rt.ColWidths,
+		width:       120,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+		cli:         testCLI(),
+	}
+
+	model, cmd := m.Update(refreshResultMsg{})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Empty(t, bm.items)
+	require.Empty(t, bm.rows)
+	require.Contains(t, ansi.Strip(bm.header), "TITLE")
+	require.NotEmpty(t, bm.colWidths)
+}
+
+func TestViewListShowsRefreshingHeaderWithoutRows(t *testing.T) {
+	m := tuiModel{
+		width:       120,
+		height:      12,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+		cli:         testCLI(),
+		spinner:     spinner{frames: []string{"*"}},
+		refreshing:  true,
+	}
+	m.header, m.rows, m.colWidths = m.rerender()
+
+	out := ansi.Strip(m.viewList().Content)
+	lines := strings.Split(out, "\n")
+
+	require.NotEmpty(t, lines)
+	require.Contains(t, lines[0], "*")
+	require.Contains(t, lines[0], "TITLE")
+}
+
+func TestViewListNumbersVisibleRows(t *testing.T) {
+	fi := textinput.New()
+	fi.SetValue("beta|gamma")
+	m := tuiModel{
+		rows: []TableRow{
+			{Cells: []table.Cell{{Plain: "alpha"}}, Display: "alpha"},
+			{Cells: []table.Cell{{Plain: "beta"}}, Display: "beta"},
+			{Cells: []table.Cell{{Plain: "gamma"}}, Display: "gamma"},
+		},
+		cursor:      -1,
+		height:      20,
+		width:       80,
+		styles:      newTuiStyles(),
+		filterInput: fi,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+	}
+
+	out := ansi.Strip(m.viewList().Content)
+
+	require.Contains(t, out, "  1  beta")
+	require.Contains(t, out, "  2  gamma")
+	require.NotContains(t, out, "  3  gamma")
+}
+
+func TestUpdateListViewShiftDownSelectsAndMovesNext(t *testing.T) {
+	m := tuiModel{
+		rows: []TableRow{
+			{Item: PRRowModel{PR: testReviewPullRequest()}},
+			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
+			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
+		},
+		cursor:      0,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterInput: textinput.New(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(0)])
+	require.True(t, bm.selected[bm.rowKeyAt(1)])
+	require.Equal(t, 1, bm.cursor)
+}
+
+func TestUpdateListViewShiftUpSelectsAndMovesPrevious(t *testing.T) {
+	m := tuiModel{
+		rows: []TableRow{
+			{Item: PRRowModel{PR: testReviewPullRequest()}},
+			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
+			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
+		},
+		cursor:      2,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterInput: textinput.New(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(1)])
+	require.True(t, bm.selected[bm.rowKeyAt(2)])
+	require.Equal(t, 1, bm.cursor)
+}
+
+func TestUpdateListViewShiftUpAtTopIsNoOp(t *testing.T) {
+	m := tuiModel{
+		rows: []TableRow{
+			{Item: PRRowModel{PR: testReviewPullRequest()}},
+			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
+		},
+		cursor:      0,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterInput: textinput.New(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(0)])
+	require.Equal(t, 0, bm.cursor)
+}
+
+func TestUpdateListViewShiftDownAtBottomIsNoOp(t *testing.T) {
+	m := tuiModel{
+		rows: []TableRow{
+			{Item: PRRowModel{PR: testReviewPullRequest()}},
+			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
+		},
+		cursor:      1,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterInput: textinput.New(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(1)])
+	require.Equal(t, 1, bm.cursor)
+}
+
+func TestUpdateListViewShiftDownAtBottomAfterRangeDoesNotFlicker(t *testing.T) {
+	m := tuiModel{
+		rows: []TableRow{
+			{Item: PRRowModel{PR: testReviewPullRequest()}},
+			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
+		},
+		cursor:      0,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterInput: textinput.New(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(0)])
+	require.True(t, bm.selected[bm.rowKeyAt(1)])
+	require.Equal(t, 1, bm.cursor)
+
+	model, cmd = bm.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(0)])
+	require.True(t, bm.selected[bm.rowKeyAt(1)])
+	require.Equal(t, 1, bm.cursor)
+}
+
+func TestUpdateListViewShiftDirectionChangeDoesNotDeselect(t *testing.T) {
+	m := tuiModel{
+		rows: []TableRow{
+			{Item: PRRowModel{PR: testReviewPullRequest()}},
+			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
+			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
+		},
+		cursor:      0,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterInput: textinput.New(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+
+	model, cmd = bm.updateListView(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(0)])
+	require.True(t, bm.selected[bm.rowKeyAt(1)])
+	require.Equal(t, 0, bm.cursor)
+}
+
+func TestUpdateListViewSpaceOnlySelectsCurrent(t *testing.T) {
+	m := tuiModel{
+		rows: []TableRow{
+			{Item: PRRowModel{PR: testReviewPullRequest()}},
+			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
+		},
+		cursor:      0,
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterInput: textinput.New(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeySpace})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.selected[bm.rowKeyAt(0)])
+	require.Equal(t, 0, bm.cursor)
+}
+
+func TestRefreshTickIgnoresStaleAndInFlight(t *testing.T) {
+	m := tuiModel{
+		autoRefresh: true,
+		refreshID:   1,
+		view:        tuiViewDetail,
+	}
+
+	model, cmd := m.updateDetailView(tea.KeyPressMsg{Code: tea.KeyEsc})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 2, bm.refreshID)
+
+	model, cmd = bm.Update(refreshTickMsg{id: 1})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.refreshing)
+
+	bm.refreshing = true
+	model, cmd = bm.Update(refreshTickMsg{id: bm.refreshID})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.refreshing)
+}
+
+func TestViewDiffHandlesTinyViewport(t *testing.T) {
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey:   makePRKey(pr),
+		diffLines: []string{"@@ -1 +1 @@", "+small"},
+		height:    2,
+		width:     20,
+		styles:    newTuiStyles(),
+	}
+
+	require.NotPanics(t, func() {
+		_ = m.viewDiff()
+	})
+}
+
+func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
+	pr := testReviewPullRequest()
+	diffLines := make([]string, 20)
+	for i := range diffLines {
+		diffLines[i] = fmt.Sprintf("line %d", i)
+	}
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey:   makePRKey(pr),
+		diffLines: diffLines,
+		view:      tuiViewDiff,
+		height:    12,
+		width:     120,
+		styles:    newTuiStyles(),
+	}
+
+	require.Contains(t, ansi.Strip(m.viewDiff().Content), "0%")
+
+	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: 'G', Text: "G"})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, len(diffLines)-bm.diffContentViewport(), bm.diffScroll)
+	require.Contains(t, ansi.Strip(bm.viewDiff().Content), "100%")
+}
+
+func TestTruncateDisplayLinePreservesUTF8(t *testing.T) {
+	line := lg.NewStyle().Foreground(lg.Color("196")).Render("ééé")
+
+	truncated := truncateDisplayLine(line, 1)
+
+	require.True(t, utf8.ValidString(ansi.Strip(truncated)))
+	require.Equal(t, 1, lg.Width(ansi.Strip(truncated)))
+}
+
+func TestActionMsgRemovalRecomputesOffset(t *testing.T) {
+	prs := []PullRequest{
+		testReviewPullRequest(),
+		{Number: 43, Repository: Repository{Name: "prl", NameWithOwner: "gechr/prl"}},
+		{Number: 44, Repository: Repository{Name: "prl", NameWithOwner: "gechr/prl"}},
+		{Number: 45, Repository: Repository{Name: "prl", NameWithOwner: "gechr/prl"}},
+		{Number: 46, Repository: Repository{Name: "prl", NameWithOwner: "gechr/prl"}},
+	}
+	rows := make([]TableRow, len(prs))
+	for i, pr := range prs {
+		rows[i] = TableRow{Item: PRRowModel{PR: pr}}
+	}
+	m := tuiModel{
+		rows:        rows,
+		cursor:      len(rows) - 1,
+		offset:      len(rows) - 1,
+		height:      6,
+		width:       80,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+	}
+
+	model, cmd := m.Update(actionMsg{
+		index:  len(rows) - 1,
+		key:    makePRKey(prs[len(prs)-1]),
+		action: tuiActionClosed,
+	})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Less(t, bm.offset, m.offset)
+	require.Equal(t, bm.scrolledOffset(), bm.offset)
+}
+
+func TestBatchActionFailuresSurfaceDetails(t *testing.T) {
+	pr := testReviewPullRequest()
+	msg := batchActionMsg{
+		action: tuiActionApproved,
+		count:  1,
+		failed: 1,
+		failures: []batchFailure{{
+			key: makePRKey(pr),
+			ref: pr.Ref(),
+			url: pr.URL,
+			err: errors.New("boom"),
+		}},
+	}
+	m := tuiModel{
+		styles:   newTuiStyles(),
+		removed:  make(prKeys),
+		selected: make(prKeys),
+	}
+
+	model, cmd := m.Update(msg)
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiActionInfo, bm.confirmAction)
+	require.Contains(t, bm.confirmPrompt, pr.Ref())
+	require.Contains(t, bm.confirmPrompt, "boom")
+}
+
+func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {
+	prA := testReviewPullRequest()
+	prB := PullRequest{
+		Number: 43,
+		Repository: Repository{
+			Name:          "prl",
+			NameWithOwner: "gechr/prl",
+		},
+	}
+	oldRows := []TableRow{
+		{Item: PRRowModel{PR: prA}},
+		{Item: PRRowModel{PR: prB}},
+	}
+	newRows := []TableRow{
+		{Item: PRRowModel{PR: prB}},
+		{Item: PRRowModel{PR: prA}},
+	}
+	m := tuiModel{
+		rows:        oldRows,
+		items:       []PRRowModel{{PR: prA}, {PR: prB}},
+		cursor:      1,
+		height:      8,
+		width:       80,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed: prKeys{
+			makePRKey(prA): true,
+		},
+		selected: prKeys{
+			makePRKey(prB): true,
+		},
+		diffQueue: []prKey{makePRKey(prB)},
+	}
+
+	bm := m.mergeRefresh(newRows, []PRRowModel{{PR: prB}, {PR: prA}})
+
+	require.True(t, bm.removed[makePRKey(prA)])
+	require.True(t, bm.selected[makePRKey(prB)])
+	require.Equal(t, 0, bm.cursor)
+	require.Equal(t, []int{0}, bm.visibleIndices())
+	require.Equal(t, []prKey{makePRKey(prB)}, bm.diffQueue)
 }
 
 func testReviewPullRequest() PullRequest {

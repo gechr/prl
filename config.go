@@ -6,11 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gechr/clib/shell"
 	"github.com/gechr/clog"
+	"github.com/gechr/prl/internal/shell"
 	goyaml "github.com/goccy/go-yaml"
+	goyamlast "github.com/goccy/go-yaml/ast"
 	goyamlparser "github.com/goccy/go-yaml/parser"
-	"github.com/knadh/koanf/parsers/yaml"
+	koanfyaml "github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
@@ -51,6 +52,8 @@ const (
 	keySpinnerStyle         = "spinner.style"
 	keySpinnerColors        = "spinner.colors"
 	keyTUIAutoRefresh       = "tui.refresh.enabled"
+	keyTUISortKey           = "tui.sort.key"
+	keyTUISortOrder         = "tui.sort.order"
 	keyVCS                  = "vcs"
 )
 
@@ -95,9 +98,16 @@ type TUIAutoRefreshConfig struct {
 	Enabled bool `koanf:"enabled"`
 }
 
+// TUISortConfig holds sort settings persisted between TUI runs.
+type TUISortConfig struct {
+	Key   string `koanf:"key"`
+	Order string `koanf:"order"`
+}
+
 // TUIConfig holds TUI-specific configuration.
 type TUIConfig struct {
 	AutoRefresh TUIAutoRefreshConfig `koanf:"refresh"`
+	Sort        TUISortConfig        `koanf:"sort"`
 }
 
 // Config holds all prl configuration.
@@ -155,6 +165,8 @@ func defaultConfig() map[string]any {
 		keyTerraformMemberDir:   "",
 		keySpinnerStyle:         defaultSpinner,
 		keyTUIAutoRefresh:       true,
+		keyTUISortKey:           "",
+		keyTUISortOrder:         "",
 		keySpinnerColors:        defaultSpinnerColors,
 		keyTerraformRepoDir:     "",
 	}
@@ -176,7 +188,7 @@ func loadConfig() (*Config, error) {
 	if cp, cpErr := configPath(); cpErr != nil {
 		clog.Debug().Err(cpErr).Msg("Failed to determine config path")
 	} else if _, statErr := os.Stat(cp); statErr == nil {
-		if err := k.Load(file.Provider(cp), yaml.Parser()); err != nil {
+		if err := k.Load(file.Provider(cp), koanfyaml.Parser()); err != nil {
 			return nil, fmt.Errorf("loading config file %s: %w", cp, err)
 		}
 	}
@@ -313,39 +325,125 @@ func saveConfigKey(key string, value any) error {
 	}
 	// Try to read the existing value - if it fails, the key doesn't exist yet.
 	_, readErr := path.ReadNode(f)
-	if readErr != nil {
-		// Key doesn't exist - append it as new YAML.
-		parts := strings.Split(key, ".")
-		nested := make(map[string]any)
-		cur := nested
-		for i, p := range parts {
-			if i == len(parts)-1 {
-				cur[p] = value
-			} else {
-				next := make(map[string]any)
-				cur[p] = next
-				cur = next
-			}
+	if readErr == nil {
+		// Key exists - replace in-place.
+		replacement, marshalErr := marshalYAMLValue(value)
+		if marshalErr != nil {
+			return fmt.Errorf("marshalling key %s: %w", key, marshalErr)
 		}
-		section, mErr := goyaml.Marshal(nested)
-		if mErr != nil {
-			return fmt.Errorf("marshalling new key: %w", mErr)
+		if replaceErr := path.ReplaceWithReader(
+			f,
+			strings.NewReader(replacement),
+		); replaceErr != nil {
+			return fmt.Errorf("replacing key %s: %w", key, replaceErr)
 		}
-		out := strings.TrimRight(f.String(), "\n") + "\n\n" + string(section)
+
 		//nolint:gosec // config file, not sensitive
-		return os.WriteFile(cp, []byte(out), 0o644)
+		return os.WriteFile(cp, []byte(withSingleTrailingNewline(f.String())), 0o644)
 	}
 
-	// Key exists - replace in-place.
-	if replaceErr := path.ReplaceWithReader(
-		f,
-		strings.NewReader(fmt.Sprintf("%v", value)),
-	); replaceErr != nil {
-		return fmt.Errorf("replacing key %s: %w", key, replaceErr)
+	if merged := mergeIntoAncestor(f, key, value); merged {
+		//nolint:gosec // config file, not sensitive
+		return os.WriteFile(cp, []byte(withSingleTrailingNewline(f.String())), 0o644)
+	}
+
+	// No ancestor found - append as a new top-level section.
+	parts := strings.Split(key, ".")
+	nested := make(map[string]any)
+	cur := nested
+	for i, p := range parts {
+		if i == len(parts)-1 {
+			cur[p] = value
+		} else {
+			next := make(map[string]any)
+			cur[p] = next
+			cur = next
+		}
+	}
+	section, mErr := goyaml.Marshal(nested)
+	if mErr != nil {
+		return fmt.Errorf("marshalling new key: %w", mErr)
+	}
+	base := strings.TrimRight(f.String(), "\n")
+	sectionBody := strings.TrimRight(string(section), "\n")
+	out := sectionBody
+	if base != "" {
+		out = base + "\n\n" + sectionBody
 	}
 
 	//nolint:gosec // config file, not sensitive
-	return os.WriteFile(cp, []byte(f.String()+"\n"), 0o644)
+	return os.WriteFile(cp, []byte(withSingleTrailingNewline(out)), 0o644)
+}
+
+func marshalYAMLValue(value any) (string, error) {
+	encoded, err := goyaml.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(encoded), "\n"), nil
+}
+
+func withSingleTrailingNewline(content string) string {
+	return strings.TrimRight(content, "\n") + "\n"
+}
+
+// mergeIntoAncestor finds the top-level ancestor of a dotted key in the YAML
+// AST, unmarshals it, deep-sets the missing suffix, re-marshals only that
+// top-level subtree, and splices it back via ReplaceWithReader. The rest of
+// the document's comments and formatting are left untouched.
+//
+// We only replace at depth=1 (top-level keys) because ReplaceWithReader does
+// not re-indent replacement content to match the column offset of the replaced
+// node — operating on nested nodes produces progressively wrong indentation.
+func mergeIntoAncestor(f *goyamlast.File, key string, value any) bool {
+	parts := strings.Split(key, ".")
+	for depth := len(parts) - 1; depth > 0; depth-- {
+		prefix := strings.Join(parts[:depth], ".")
+		ancestorPath, pErr := goyaml.PathString("$." + prefix)
+		if pErr != nil {
+			continue
+		}
+		node, aErr := ancestorPath.ReadNode(f)
+		if aErr != nil {
+			continue
+		}
+
+		// Ancestor exists. Unmarshal its content, set the missing key, replace.
+		var existing map[string]any
+		if uErr := goyaml.Unmarshal([]byte(node.String()), &existing); uErr != nil {
+			return false
+		}
+		if existing == nil {
+			existing = make(map[string]any)
+		}
+
+		// Deep-set the remaining path segments.
+		suffix := parts[depth:]
+		cur := existing
+		for i, seg := range suffix {
+			if i == len(suffix)-1 {
+				cur[seg] = value
+			} else {
+				next := make(map[string]any)
+				cur[seg] = next
+				cur = next
+			}
+		}
+
+		updated, mErr := goyaml.Marshal(existing)
+		if mErr != nil {
+			return false
+		}
+
+		trimmed := strings.TrimRight(string(updated), "\n")
+		if rErr := ancestorPath.ReplaceWithReader(
+			f, strings.NewReader(trimmed),
+		); rErr != nil {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 var defaultConfigYAML = fmt.Sprintf(`# prl configuration
@@ -401,6 +499,12 @@ tui:
   refresh:
     # Automatically refresh results in the background.
     enabled: true
+
+  sort:
+    # Persisted sort column and direction.
+    # Set by clicking column headers in the TUI.
+    # key: title
+    # order: asc
 
 # VCS used for --clone.
 # Options: git, jj
