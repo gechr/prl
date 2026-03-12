@@ -395,6 +395,39 @@ func TestUpdateListViewShiftDirectionChangeDoesNotDeselect(t *testing.T) {
 	require.Equal(t, 0, bm.cursor)
 }
 
+func TestUpdateListViewDigitJumpImmediateWhenUnambiguous(t *testing.T) {
+	m := testDigitJumpModel(15)
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: '2', Text: "2"})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 1, bm.cursor)
+	require.Zero(t, bm.offset)
+	require.Zero(t, bm.jumpDigit)
+}
+
+func TestUpdateListViewDigitJumpWaitsWhenTwoDigitRowsExist(t *testing.T) {
+	m := testDigitJumpModel(15)
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: '1', Text: "1"})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 0, bm.cursor)
+	require.Equal(t, 1, bm.jumpDigit)
+
+	model, cmd = bm.updateListView(tea.KeyPressMsg{Code: '5', Text: "5"})
+
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 14, bm.cursor)
+	require.Zero(t, bm.jumpDigit)
+}
+
 func TestUpdateListViewSpaceOnlySelectsCurrent(t *testing.T) {
 	m := tuiModel{
 		rows: []TableRow{
@@ -472,19 +505,23 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 		diffLines: diffLines,
 		view:      tuiViewDiff,
 		height:    12,
-		width:     140,
+		width:     180,
 		styles:    newTuiStyles(),
 	}
 
-	require.Contains(t, ansi.Strip(m.viewDiff().Content), "0%")
+	vp := m.diffContentViewport()
+	topPct := scrollPercent(0, len(diffLines), vp)
+	topStatus := fmt.Sprintf("1-%d/%d (%d%%)", vp, len(diffLines), topPct)
+	require.Equal(t, 1, strings.Count(ansi.Strip(m.viewDiff().Content), topStatus))
 
 	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: 'G', Text: "G"})
 
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, len(diffLines)-bm.diffContentViewport(), bm.diffScroll)
-	require.Contains(t, ansi.Strip(bm.viewDiff().Content), "100%")
+	require.Equal(t, len(diffLines)-vp, bm.diffScroll)
+	bottomStatus := fmt.Sprintf("%d-%d/%d (100%%)", bm.diffScroll+1, len(diffLines), len(diffLines))
+	require.Equal(t, 1, strings.Count(ansi.Strip(bm.viewDiff().Content), bottomStatus))
 }
 
 func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
@@ -667,6 +704,33 @@ func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {
 	require.Equal(t, 0, bm.cursor)
 	require.Equal(t, []int{0}, bm.visibleIndices())
 	require.Equal(t, []prKey{makePRKey(prB)}, bm.diffQueue)
+}
+
+func testDigitJumpModel(total int) tuiModel {
+	rows := make([]TableRow, total)
+	for i := range total {
+		rows[i] = TableRow{
+			Item: PRRowModel{
+				PR: PullRequest{
+					Number: i + 1,
+					Repository: Repository{
+						Name:          "prl",
+						NameWithOwner: "gechr/prl",
+					},
+				},
+			},
+		}
+	}
+	return tuiModel{
+		rows:        rows,
+		cursor:      0,
+		height:      20,
+		width:       120,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+	}
 }
 
 func testReviewPullRequest() PullRequest {

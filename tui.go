@@ -287,39 +287,40 @@ type refreshResultMsg struct {
 //
 //nolint:recvcheck // selection helpers use pointer receivers to mutate maps/fields in-place
 type tuiModel struct {
-	items        []PRRowModel // canonical data for rerender on resize/refresh
-	rows         []TableRow   // current rendered order; row.Item is the action target
-	header       string
-	colWidths    []int // visible column widths for header click hit-testing
-	sortColumn   string
-	sortAsc      bool
-	cursor       int
-	offset       int
-	view         tuiView
-	diff         string
-	diffLines    []string
-	diffKey      prKey
-	diffScroll   int
-	detail       PRDetail
-	detailLines  []string
-	detailKey    prKey
-	detailScroll int
-	statusMsg    string
-	statusErr    bool
-	statusID     int
-	actions      *ActionRunner
-	width        int
-	height       int
-	styles       tuiStyles
-	removed      prKeys
-	selected     prKeys
+	items         []PRRowModel // canonical data for rerender on resize/refresh
+	rows          []TableRow   // current rendered order; row.Item is the action target
+	header        string
+	colWidths     []int // visible column widths for header click hit-testing
+	sortColumn    string
+	sortAsc       bool
+	cursor        int
+	offset        int
+	view          tuiView
+	diff          string
+	diffLines     []string
+	diffKey       prKey
+	diffScroll    int
+	detail        PRDetail
+	detailLines   []string
+	detailKey     prKey
+	detailScroll  int
+	detailLoading bool
+	statusMsg     string
+	statusErr     bool
+	statusID      int
+	actions       *ActionRunner
+	width         int
+	height        int
+	styles        tuiStyles
+	removed       prKeys
+	selected      prKeys
 
 	// Diff queue for sequential multi-PR review.
 	diffQueue      []prKey // remaining PR keys to diff through
 	diffHistory    []prKey // previously viewed PR keys (for going back)
 	diffQueueTotal int     // total PRs in the queue (for counter display)
 	diffAdvanced   bool    // true when queue was advanced from diff view (skip actionMsg view switch)
-	diffExpected   bool    // true when a diffFetchedMsg is expected (cleared on dismiss)
+	diffLoading    bool
 
 	// Empty overlay dismissed (esc to dismiss, then esc again to quit).
 	dismissedEmpty bool
@@ -573,10 +574,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case diffFetchedMsg:
-		if !m.diffExpected {
+		if !m.diffLoading {
 			return m, nil // stale fetch from a dismissed diff view
 		}
-		m.diffExpected = false
+		m.diffLoading = false
 		if msg.err != nil {
 			flashCmd := tuiFlashStatus(&m, "Diff failed:", fmt.Sprintf("%v", msg.err), "", true)
 			// Skip to next in queue if available.
@@ -595,9 +596,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffLines = wrapDiffLines(m.diff, m.width)
 		m.diffScroll = 0
 		m.view = tuiViewDiff
+		m.statusMsg = ""
 		return m, nil
 
 	case detailFetchedMsg:
+		m.detailLoading = false
 		if msg.err != nil {
 			return m, tuiFlashStatus(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
@@ -647,7 +650,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id == m.jumpID && m.jumpDigit > 0 {
 			visible := m.visibleIndices()
 			target := m.jumpDigit - 1
-			if target < len(visible) {
+			if target >= 0 && target < len(visible) {
 				m.cursor = visible[target]
 				m.offset = m.scrolledOffset()
 			}
@@ -770,6 +773,16 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Freeze interactions while a view is loading in the background.
+	if m.detailLoading || m.diffLoading {
+		switch msg.String() {
+		case tuiKeyEsc, "q":
+			return m, tea.Quit
+		default:
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case tuiKeyEsc:
 		if m.filterInput.Value() != "" {
@@ -801,6 +814,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = m.styles.statusAction.Render("Fetching") + " " +
 			lg.NewStyle().Foreground(lg.Color("117")).Render(prCopy.Ref())
 		m.statusErr = false
+		m.detailLoading = true
 		key := makePRKey(prCopy)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
@@ -822,7 +836,27 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tuiKeyLeft:
+	case tuiKeyPgDown, tuiKeyCtrlF:
+		viewport := m.listViewport()
+		for range viewport {
+			if next, ok := m.nextVisible(1); ok {
+				m.cursor = next
+			}
+		}
+		m.offset = m.scrolledOffset()
+		return m, nil
+
+	case tuiKeyPgUp, tuiKeyCtrlB:
+		viewport := m.listViewport()
+		for range viewport {
+			if next, ok := m.nextVisible(-1); ok {
+				m.cursor = next
+			}
+		}
+		m.offset = m.scrolledOffset()
+		return m, nil
+
+	case "g":
 		visible := m.visibleIndices()
 		if len(visible) > 0 {
 			m.cursor = visible[0]
@@ -830,7 +864,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tuiKeyRight:
+	case "G":
 		visible := m.visibleIndices()
 		if len(visible) > 0 {
 			m.cursor = visible[len(visible)-1]
@@ -838,7 +872,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "space":
+	case tuiKeySpace:
 		m.toggleCurrentSelection()
 		return m, nil
 
@@ -970,7 +1004,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		first := targets[0]
 		actions := m.actions
-		m.diffExpected = true
+		m.diffLoading = true
+		flashStatus(&m, "Diffing", &first.pr)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(first.pr)
 			diff, headSHA, err := actions.fetchDiff(owner, repo, first.pr.Number)
@@ -1453,6 +1488,15 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		visible := m.visibleIndices()
+		if digit*10 > len(visible) {
+			target := digit - 1
+			if target >= 0 && target < len(visible) {
+				m.cursor = visible[target]
+				m.offset = m.scrolledOffset()
+			}
+			return m, nil
+		}
 		// First digit: wait for possible second digit.
 		m.jumpDigit = digit
 		m.jumpID++
@@ -1473,7 +1517,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffHistory = nil
 		m.diffQueueTotal = 0
 		m.diffAdvanced = false
-		m.diffExpected = false
+		m.diffLoading = false
 		m.diffKey = ""
 		m.view = tuiViewList
 		return m, m.rescheduleRefresh()
@@ -1493,7 +1537,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffHistory = m.diffHistory[:len(m.diffHistory)-1]
 		// Push current back onto front of queue.
 		m.diffQueue = append([]prKey{m.diffKey}, m.diffQueue...)
-		m.diffExpected = true
+		m.diffLoading = true
 		idx := m.resolveIndex(prev, -1)
 		if idx < 0 {
 			return m, nil
@@ -1521,10 +1565,16 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.diffScroll--
 		}
 		return m, nil
-	case "g", tuiKeyLeft:
+	case tuiKeyPgDown, tuiKeyCtrlF, tuiKeySpace:
+		m.diffScroll = min(m.diffScroll+m.diffContentViewport(), maxScroll)
+		return m, nil
+	case tuiKeyPgUp, tuiKeyCtrlB:
+		m.diffScroll = max(m.diffScroll-m.diffContentViewport(), 0)
+		return m, nil
+	case "g":
 		m.diffScroll = 0
 		return m, nil
-	case "G", tuiKeyRight:
+	case "G":
 		m.diffScroll = maxScroll
 		return m, nil
 	case "a", "y", tuiKeyAltA:
@@ -1536,7 +1586,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) {
 			return m, nil
 		}
-		setInflightStatus(&m, "Approving", &pr)
+		flashStatus(&m, "Approving", &pr)
 		actions := m.actions
 		approveCmd := func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -1559,7 +1609,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		if strings.ToLower(pr.State) == valueClosed {
-			setInflightStatus(&m, "Reopening", &pr)
+			flashStatus(&m, "Reopening", &pr)
 			return m, func() tea.Msg {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.reopenPR(owner, repo, pr.Number)
@@ -1571,7 +1621,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		setInflightStatus(&m, "Closing", &pr)
+		flashStatus(&m, "Closing", &pr)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.closePR(owner, repo, pr.Number, "", false)
@@ -1586,7 +1636,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) {
 			return m, nil
 		}
-		setInflightStatus(&m, "Unsubscribing", &pr)
+		flashStatus(&m, "Unsubscribing", &pr)
 		actions := m.actions
 		login := m.login
 		return m, func() tea.Msg {
@@ -1605,7 +1655,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		setInflightStatus(&m, "Merging", &pr)
+		flashStatus(&m, "Merging", &pr)
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -1626,7 +1676,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) {
 			return m, nil
 		}
-		setInflightStatus(&m, "Approving/merging", &pr)
+		flashStatus(&m, "Approving/merging", &pr)
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -1709,10 +1759,17 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailScroll--
 		}
 		return m, nil
-	case "g", tuiKeyLeft:
+	case tuiKeyPgDown, tuiKeyCtrlF, tuiKeySpace:
+		maxScroll := max(0, len(m.detailLines)-viewport)
+		m.detailScroll = min(m.detailScroll+viewport, maxScroll)
+		return m, nil
+	case tuiKeyPgUp, tuiKeyCtrlB:
+		m.detailScroll = max(m.detailScroll-viewport, 0)
+		return m, nil
+	case "g":
 		m.detailScroll = 0
 		return m, nil
-	case "G", tuiKeyRight:
+	case "G":
 		if end := len(m.detailLines) - viewport; end > 0 {
 			m.detailScroll = end
 		}
@@ -1726,7 +1783,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		prCopy := pr
-		m.diffExpected = true
+		m.diffLoading = true
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
 			diff, headSHA, err := actions.fetchDiff(owner, repo, prCopy.Number)
@@ -1768,7 +1825,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) {
 			return m, nil
 		}
-		setInflightStatus(&m, "Approving", &pr)
+		flashStatus(&m, "Approving", &pr)
 		actions := m.actions
 		m.view = tuiViewList
 		m.rescheduleRefresh()
@@ -1903,14 +1960,26 @@ func (m tuiModel) viewList() tea.View {
 	}
 	b.WriteString("\n")
 
-	// Help line with status on RHS.
+	// Help line with status on RHS: in-flight action status takes priority over scroll position.
 	var help string
 	if m.filterInput.Focused() {
 		help = m.renderFilterHelp()
 	} else {
 		help = m.renderListHelp()
 	}
-	b.WriteString(m.appendStatus(help))
+	if m.statusMsg != "" {
+		b.WriteString(m.appendStatus(help))
+	} else {
+		status := ""
+		total := len(visible)
+		if total > viewport {
+			pct := scrollPercent(start, total, end-start)
+			status = m.styles.statusOK.Render(
+				fmt.Sprintf("%d-%d/%d (%d%%)", start+1, end, total, pct),
+			)
+		}
+		b.WriteString(m.appendRightStatus(help, status))
+	}
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
@@ -1976,9 +2045,13 @@ func (m tuiModel) viewDiff() tea.View {
 		b.WriteString(m.appendStatus(help))
 	} else {
 		status := ""
-		if maxScroll := m.diffMaxScroll(); maxScroll > 0 {
-			pct := scrollPercent(m.diffScroll, maxScroll)
-			status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
+		if total := len(m.diffLines); m.diffMaxScroll() > 0 {
+			vp := m.diffContentViewport()
+			end := min(m.diffScroll+vp, total)
+			pct := scrollPercent(m.diffScroll, total, vp)
+			status = m.styles.statusOK.Render(
+				fmt.Sprintf("%d-%d/%d (%d%%)", m.diffScroll+1, end, total, pct),
+			)
 		}
 		b.WriteString(m.appendRightStatus(help, status))
 	}
@@ -2029,9 +2102,12 @@ func (m tuiModel) viewDetail() tea.View {
 		b.WriteString(m.appendStatus(help))
 	} else {
 		status := ""
-		if maxScroll := max(0, len(m.detailLines)-viewport); maxScroll > 0 {
-			pct := scrollPercent(m.detailScroll, maxScroll)
-			status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
+		if total := len(m.detailLines); total > viewport {
+			end := min(m.detailScroll+viewport, total)
+			pct := scrollPercent(m.detailScroll, total, viewport)
+			status = m.styles.statusOK.Render(
+				fmt.Sprintf("%d-%d/%d (%d%%)", m.detailScroll+1, end, total, pct),
+			)
 		}
 		b.WriteString(m.appendRightStatus(help, status))
 	}
@@ -2121,15 +2197,21 @@ func (m tuiModel) renderDetailContent() []string {
 		lines = append(lines, "")
 		addStyle := lg.NewStyle().Foreground(lg.Color("118"))
 		delStyle := lg.NewStyle().Foreground(lg.Color("197"))
+		modPrefixStyle := lg.NewStyle().Foreground(lg.Color("3")).Bold(true)
+		addPrefixStyle := lg.NewStyle().Foreground(lg.Color("2")).Bold(true)
+		delPrefixStyle := lg.NewStyle().Foreground(lg.Color("1")).Bold(true)
+		renPrefixStyle := lg.NewStyle().Foreground(lg.Color("5")).Bold(true)
 		for _, f := range m.detail.Files {
-			prefix := "M"
+			var prefix string
 			switch f.Status {
 			case "added":
-				prefix = "A"
+				prefix = addPrefixStyle.Render("A")
 			case "removed":
-				prefix = "D"
+				prefix = delPrefixStyle.Render("D")
 			case "renamed":
-				prefix = "R"
+				prefix = renPrefixStyle.Render("R")
+			default:
+				prefix = modPrefixStyle.Render("M")
 			}
 			stat := addStyle.Render(fmt.Sprintf("+%d", f.Additions)) +
 				" " + delStyle.Render(fmt.Sprintf("-%d", f.Deletions))
@@ -2227,12 +2309,15 @@ func (m tuiModel) diffMaxScroll() int {
 	return max(0, len(m.diffLines)-m.diffContentViewport())
 }
 
-func scrollPercent(offset, maxScroll int) int {
+// scrollPercent returns the scroll position as a percentage in the style of
+// less(1): the percentage of the file above and including the bottom of the
+// viewport. This means it never shows 0% and reaches 100% at the end.
+func scrollPercent(offset, total, viewport int) int {
 	const percentMax = 100
-	if maxScroll <= 0 {
+	if total <= 0 {
 		return percentMax
 	}
-	return min(percentMax*offset/maxScroll, percentMax)
+	return min(percentMax*(offset+viewport)/total, percentMax)
 }
 
 // advanceDiffQueue pops the next PR from the diff queue and returns a command
@@ -2245,7 +2330,7 @@ func advanceDiffQueue(m *tuiModel) tea.Cmd {
 		if idx < 0 {
 			continue
 		}
-		m.diffExpected = true
+		m.diffLoading = true
 		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		return func() tea.Msg {
@@ -2372,9 +2457,9 @@ func runBatchAction(
 	}
 }
 
-// setInflightStatus sets an in-progress status message (e.g. "Merging foo/bar#421")
+// flashStatus sets an in-progress status message (e.g. "Merging foo/bar#421")
 // that remains visible until replaced by the action result or cleared.
-func setInflightStatus(m *tuiModel, verb string, pr *PullRequest) {
+func flashStatus(m *tuiModel, verb string, pr *PullRequest) {
 	m.statusMsg = m.styles.statusAction.Render(verb) + " " +
 		lg.NewStyle().Foreground(lg.Color("117")).Render(pr.Ref())
 	m.statusErr = false
@@ -2649,8 +2734,7 @@ func (m tuiModel) isCurrentUserCursor() bool {
 func (m tuiModel) listHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{tuiKeyEnter, "show"},
-		{"←/→", "first/last"},
-		{"space", "select"},
+		{tuiKeySpace, "select"},
 		{"/", "filter"},
 	}
 	if !m.isCurrentUserCursor() {
@@ -2691,7 +2775,7 @@ func (m tuiModel) renderFilterHelp() string {
 func (m tuiModel) diffHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{"↑/↓", "scroll"},
-		{"←/→", "top/bottom"},
+		{"PgUp/PgDn", "page"},
 	}
 	if m.isCurrentUserDiff() {
 		pairs = append(pairs, helpPair{"m", "merge"})
@@ -2734,7 +2818,7 @@ func (m tuiModel) renderDiffHelp() string {
 func (m tuiModel) detailHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{"↑/↓", "scroll"},
-		{"←/→", "top/bottom"},
+		{"PgUp/PgDn", "page"},
 		{"d", "diff"},
 	}
 	if !m.isCurrentUserDetail() {
@@ -2757,10 +2841,11 @@ func (m tuiModel) renderDetailHelp() string {
 
 func (m tuiModel) renderHelpOverlay() string {
 	pairs := []helpPair{
-		{"↑/↓ j/k", "Navigate up/down"},
-		{"←/→ g/G", "Jump to first/last"},
+		{"↑/↓ · j/k", "Navigate up/down"},
+		{"PgUp/PgDn", "Page up/down"},
+		{"g/G", "Jump to first/last"},
 		{"enter", "Show PR detail"},
-		{"space", "Toggle selection"},
+		{tuiKeySpace, "Toggle selection"},
 		{"shift+↑/↓", "Extend selection"},
 		{"ctrl+a", "Select all/none"},
 		{"i", "Invert selection"},
