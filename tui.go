@@ -143,6 +143,9 @@ func (m tuiModel) renderTuiIndex(num int, selected bool) string {
 	return lg.NewStyle().Foreground(lg.Color("240")).Render(text)
 }
 
+// helpPair is a key-description pair for rendering help text.
+type helpPair struct{ key, desc string }
+
 // tuiAction identifies the type of action performed on a PR.
 type tuiAction int
 
@@ -150,7 +153,7 @@ const (
 	tuiActionApproved tuiAction = iota
 	tuiActionClosed
 	tuiActionMerged
-	tuiActionAutoMerged
+	tuiActionAutomerged
 	tuiActionForceMerged
 	tuiActionOpened
 	tuiActionReopened
@@ -166,8 +169,8 @@ func (a tuiAction) String() string {
 		return "Closed"
 	case tuiActionMerged:
 		return "Merged"
-	case tuiActionAutoMerged:
-		return resultAutoMerged
+	case tuiActionAutomerged:
+		return resultAutomerged
 	case tuiActionForceMerged:
 		return "Force-merged"
 	case tuiActionOpened:
@@ -186,7 +189,7 @@ func (a tuiAction) String() string {
 // removes returns true if this action removes a PR from the list.
 func (a tuiAction) removes() bool {
 	switch a {
-	case tuiActionClosed, tuiActionMerged, tuiActionAutoMerged, tuiActionForceMerged,
+	case tuiActionClosed, tuiActionMerged, tuiActionAutomerged, tuiActionForceMerged,
 		tuiActionUnsubscribed:
 		return true
 	case tuiActionApproved,
@@ -198,10 +201,10 @@ func (a tuiAction) removes() bool {
 	return false
 }
 
-// parseMergeResult converts a mergeOrAutoMerge result string to a tuiAction.
+// parseMergeResult converts a mergeOrAutomerge result string to a tuiAction.
 func parseMergeResult(result string) tuiAction {
-	if result == resultAutoMerged {
-		return tuiActionAutoMerged
+	if result == resultAutomerged {
+		return tuiActionAutomerged
 	}
 	return tuiActionMerged
 }
@@ -224,10 +227,11 @@ type detailFetchedMsg struct {
 
 // diffFetchedMsg is sent when a diff has been fetched.
 type diffFetchedMsg struct {
-	index int
-	key   prKey // stable lookup after refresh
-	diff  string
-	err   error
+	index   int
+	key     prKey // stable lookup after refresh
+	diff    string
+	headSHA string
+	err     error
 }
 
 // batchActionMsg is sent when a batch action (multi-select) completes.
@@ -258,8 +262,9 @@ type claudeReviewMsg struct {
 
 // slackSentMsg is sent when a Slack send completes.
 type slackSentMsg struct {
-	count int
-	err   error
+	count  int
+	output string // first line of CLI output (e.g. "Message sent to #channel")
+	err    error
 }
 
 // jumpTimeoutMsg fires when the digit-input window expires.
@@ -341,6 +346,9 @@ type tuiModel struct {
 	spinnerID   int     // generation counter to discard stale ticks
 	showHelp    bool
 
+	// Cached GitHub login of the authenticated user (resolved lazily).
+	login string
+
 	// Retained for re-rendering the table on resize and background refresh.
 	p        *prl
 	cli      *CLI
@@ -349,6 +357,11 @@ type tuiModel struct {
 	resolver *AuthorResolver
 	rest     *api.RESTClient
 	params   *SearchParams
+}
+
+// isCurrentUserPR reports whether the given PR was authored by the authenticated user.
+func (m tuiModel) isCurrentUserPR(pr PullRequest) bool {
+	return m.login != "" && strings.EqualFold(pr.Author.Login, m.login)
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -400,6 +413,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.header, m.rows, m.colWidths = m.rerender()
+		if m.view == tuiViewDiff {
+			m.diffLines = wrapDiffLines(m.diff, m.width)
+			m.diffScroll = min(m.diffScroll, m.diffMaxScroll())
+		}
 		if m.view == tuiViewDetail && len(m.detailLines) > 0 {
 			m.detailLines = m.renderDetailContent()
 		}
@@ -489,6 +506,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.diffKey = ""
 				m.diffHistory = nil
 				m.diffQueueTotal = 0
+				return m, tea.Batch(flashCmd, m.rescheduleRefresh())
 			}
 			return m, flashCmd
 		}
@@ -518,6 +536,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.diffKey = ""
 			m.diffHistory = nil
 			m.diffQueueTotal = 0
+			return m, tea.Batch(flashCmd, m.rescheduleRefresh())
 		}
 		return m, flashCmd
 
@@ -571,8 +590,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // PR no longer in list
 		}
 		m.diffKey = msg.key
-		m.diff = highlightDiff(msg.diff)
-		m.diffLines = strings.Split(m.diff, "\n")
+		pr := m.rows[idx].Item.PR
+		m.diff = highlightDiff(msg.diff, pr.URL, msg.headSHA)
+		m.diffLines = wrapDiffLines(m.diff, m.width)
 		m.diffScroll = 0
 		m.view = tuiViewDiff
 		return m, nil
@@ -614,11 +634,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, tuiFlashStatus(&m, "Slack failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
-		status := fmt.Sprintf("%d PRs", msg.count)
-		if msg.count == 1 {
-			status = "1 PR"
+		status := msg.output
+		if status == "" {
+			status = fmt.Sprintf("%d PRs", msg.count)
+			if msg.count == 1 {
+				status = "1 PR"
+			}
 		}
-		return m, tuiFlashStatus(&m, "Sent to Slack", status, "", false)
+		return m, tuiFlashStatus(&m, "Sent to Slack:", status, "", false)
 
 	case jumpTimeoutMsg:
 		if msg.id == m.jumpID && m.jumpDigit > 0 {
@@ -828,10 +851,18 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+a":
-		if len(m.selected) > 0 {
+		visible := m.visibleIndices()
+		allSelected := len(visible) > 0
+		for _, idx := range visible {
+			if !m.selected[m.rowKeyAt(idx)] {
+				allSelected = false
+				break
+			}
+		}
+		if allSelected {
 			m.selected = make(prKeys)
 		} else {
-			for _, idx := range m.visibleIndices() {
+			for _, idx := range visible {
 				m.selected[m.rowKeyAt(idx)] = true
 			}
 		}
@@ -849,7 +880,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "a":
-		targets := m.targetPRs()
+		targets := m.targetApprovablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -888,7 +919,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiKeyAltA:
-		targets := m.targetPRs()
+		targets := m.targetApprovablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -942,12 +973,13 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffExpected = true
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(first.pr)
-			diff, err := actions.fetchDiff(owner, repo, first.pr.Number)
+			diff, headSHA, err := actions.fetchDiff(owner, repo, first.pr.Number)
 			return diffFetchedMsg{
-				index: first.index,
-				key:   makePRKey(first.pr),
-				diff:  diff,
-				err:   err,
+				index:   first.index,
+				key:     makePRKey(first.pr),
+				diff:    diff,
+				headSHA: headSHA,
+				err:     err,
 			}
 		}
 
@@ -966,7 +998,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
 				owner, repo := prOwnerRepo(t.pr)
-				result, err := actions.mergeOrAutoMerge(owner, repo, t.pr)
+				result, err := actions.mergeOrAutomerge(owner, repo, t.pr)
 				return actionMsg{
 					index:  t.index,
 					key:    makePRKey(t.pr),
@@ -983,7 +1015,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					tuiActionMerged,
 					func(a *ActionRunner, pr PullRequest) error {
 						owner, repo := prOwnerRepo(pr)
-						_, err := a.mergeOrAutoMerge(owner, repo, pr)
+						_, err := a.mergeOrAutomerge(owner, repo, pr)
 						return err
 					},
 				)
@@ -992,14 +1024,14 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "A":
-		targets := m.targetPRs()
+		targets := m.targetApprovablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
 		actions := m.actions
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		m.confirmAction = "approve+merge"
+		m.confirmAction = "approve/merge"
 		m.confirmYes = true
 		if len(targets) == 1 {
 			m.confirmPrompt = "Approve & merge " + styledRef(&targets[0].pr) + "?"
@@ -1014,7 +1046,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						err:    err,
 					}
 				}
-				result, err := actions.mergeOrAutoMerge(owner, repo, t.pr)
+				result, err := actions.mergeOrAutomerge(owner, repo, t.pr)
 				return actionMsg{
 					index:  t.index,
 					key:    makePRKey(t.pr),
@@ -1034,7 +1066,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						if err := a.approve(owner, repo, pr.Number); err != nil {
 							return err
 						}
-						_, err := a.mergeOrAutoMerge(owner, repo, pr)
+						_, err := a.mergeOrAutomerge(owner, repo, pr)
 						return err
 					},
 				)
@@ -1174,8 +1206,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmPrompt = fmt.Sprintf("Send %d PRs to Slack?", count)
 		}
 		m.confirmCmd = func() tea.Msg {
-			err := sendSlack(prs, cli, cfg)
-			return slackSentMsg{count: count, err: err}
+			out, err := sendSlack(prs, cli, cfg)
+			return slackSentMsg{count: count, output: out, err: err}
 		}
 		return m, nil
 
@@ -1192,8 +1224,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
-			err := sendSlack(prs, cli, cfg)
-			return slackSentMsg{count: count, err: err}
+			out, err := sendSlack(prs, cli, cfg)
+			return slackSentMsg{count: count, output: out, err: err}
 		}
 
 	case "o":
@@ -1470,8 +1502,14 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
-			diff, err := actions.fetchDiff(owner, repo, pr.Number)
-			return diffFetchedMsg{index: idx, key: makePRKey(pr), diff: diff, err: err}
+			diff, headSHA, err := actions.fetchDiff(owner, repo, pr.Number)
+			return diffFetchedMsg{
+				index:   idx,
+				key:     makePRKey(pr),
+				diff:    diff,
+				headSHA: headSHA,
+				err:     err,
+			}
 		}
 	case "j", tuiKeyDown:
 		if m.diffScroll < maxScroll {
@@ -1495,6 +1533,10 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		if m.isCurrentUserPR(pr) {
+			return m, nil
+		}
+		setInflightStatus(&m, "Approving", &pr)
 		actions := m.actions
 		approveCmd := func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -1517,6 +1559,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		if strings.ToLower(pr.State) == valueClosed {
+			setInflightStatus(&m, "Reopening", &pr)
 			return m, func() tea.Msg {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.reopenPR(owner, repo, pr.Number)
@@ -1528,6 +1571,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		setInflightStatus(&m, "Closing", &pr)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.closePR(owner, repo, pr.Number, "", false)
@@ -1539,20 +1583,15 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		if m.isCurrentUserPR(pr) {
+			return m, nil
+		}
+		setInflightStatus(&m, "Unsubscribing", &pr)
 		actions := m.actions
-		rest := m.rest
+		login := m.login
 		return m, func() tea.Msg {
-			login, err := getCurrentLogin(rest)
-			if err != nil {
-				return actionMsg{
-					index:  idx,
-					key:    makePRKey(pr),
-					action: tuiActionUnsubscribed,
-					err:    err,
-				}
-			}
 			owner, repo := prOwnerRepo(pr)
-			err = actions.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID)
+			err := actions.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID)
 			return actionMsg{
 				index:  idx,
 				key:    makePRKey(pr),
@@ -1560,6 +1599,73 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
+	case "m":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		setInflightStatus(&m, "Merging", &pr)
+		actions := m.actions
+		return m, func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			result, err := actions.mergeOrAutomerge(owner, repo, pr)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: parseMergeResult(result),
+				err:    err,
+			}
+		}
+	case "A":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		if m.isCurrentUserPR(pr) {
+			return m, nil
+		}
+		setInflightStatus(&m, "Approving/merging", &pr)
+		actions := m.actions
+		return m, func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			if err := actions.approve(owner, repo, pr.Number); err != nil {
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(pr),
+					action: tuiActionApproved,
+					err:    err,
+				}
+			}
+			result, err := actions.mergeOrAutomerge(owner, repo, pr)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: parseMergeResult(result),
+				err:    err,
+			}
+		}
+	case "s":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		cfg := m.cfg
+		cli := m.cli
+		return m, func() tea.Msg {
+			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			return slackSentMsg{count: 1, output: out, err: err}
+		}
+	case "o":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		_ = openBrowser(pr.URL)
+		return m, nil
 	case "ctrl+r":
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -1623,8 +1729,14 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffExpected = true
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
-			diff, err := actions.fetchDiff(owner, repo, prCopy.Number)
-			return diffFetchedMsg{index: idx, key: makePRKey(prCopy), diff: diff, err: err}
+			diff, headSHA, err := actions.fetchDiff(owner, repo, prCopy.Number)
+			return diffFetchedMsg{
+				index:   idx,
+				key:     makePRKey(prCopy),
+				diff:    diff,
+				headSHA: headSHA,
+				err:     err,
+			}
 		}
 	case "a", "y":
 		idx := m.resolveIndex(m.detailKey, -1)
@@ -1632,8 +1744,12 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		if m.isCurrentUserPR(pr) {
+			return m, nil
+		}
 		actions := m.actions
 		m.view = tuiViewList
+		m.rescheduleRefresh()
 		m.confirmAction = tuiActionApprove
 		m.confirmYes = true
 		m.confirmPrompt = "Approve " + styledRef(&pr) + "?"
@@ -1649,12 +1765,29 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		if m.isCurrentUserPR(pr) {
+			return m, nil
+		}
+		setInflightStatus(&m, "Approving", &pr)
 		actions := m.actions
 		m.view = tuiViewList
+		m.rescheduleRefresh()
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.approve(owner, repo, pr.Number)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
+		}
+	case "s":
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		cfg := m.cfg
+		cli := m.cli
+		return m, func() tea.Msg {
+			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			return slackSentMsg{count: 1, output: out, err: err}
 		}
 	case "o":
 		idx := m.resolveIndex(m.detailKey, -1)
@@ -1671,7 +1804,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmYes = true
 			m.confirmPrompt = tuiClaudeReviewUnsupported
 			m.confirmCmd = nil
-			return m, nil
+			return m, m.rescheduleRefresh()
 		}
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -1680,7 +1813,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		m.view = tuiViewList
 		m = m.prepareClaudeReviewConfirm(pr, idx)
-		return m, nil
+		return m, m.rescheduleRefresh()
 	}
 	return m, nil
 }
@@ -1821,7 +1954,7 @@ func (m tuiModel) viewDiff() tea.View {
 	// Diff content.
 	end := min(m.diffScroll+viewport, len(m.diffLines))
 	for _, line := range m.diffLines[m.diffScroll:end] {
-		b.WriteString(truncateDisplayLine(line, m.width))
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
@@ -1837,14 +1970,18 @@ func (m tuiModel) viewDiff() tea.View {
 	}
 	b.WriteString("\n")
 
-	// Help line with scroll percentage on RHS.
+	// Help line with status on RHS: in-flight action status takes priority over scroll %.
 	help := m.renderDiffHelp()
-	status := ""
-	if maxScroll := m.diffMaxScroll(); maxScroll > 0 {
-		pct := scrollPercent(m.diffScroll, maxScroll)
-		status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
+	if m.statusMsg != "" {
+		b.WriteString(m.appendStatus(help))
+	} else {
+		status := ""
+		if maxScroll := m.diffMaxScroll(); maxScroll > 0 {
+			pct := scrollPercent(m.diffScroll, maxScroll)
+			status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
+		}
+		b.WriteString(m.appendRightStatus(help, status))
 	}
-	b.WriteString(m.appendRightStatus(help, status))
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
@@ -1886,14 +2023,18 @@ func (m tuiModel) viewDetail() tea.View {
 	}
 	b.WriteString("\n")
 
-	// Help line with scroll percentage on RHS.
+	// Help line with status on RHS: in-flight action status takes priority over scroll %.
 	help := m.renderDetailHelp()
-	status := ""
-	if maxScroll := max(0, len(m.detailLines)-viewport); maxScroll > 0 {
-		pct := scrollPercent(m.detailScroll, maxScroll)
-		status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
+	if m.statusMsg != "" {
+		b.WriteString(m.appendStatus(help))
+	} else {
+		status := ""
+		if maxScroll := max(0, len(m.detailLines)-viewport); maxScroll > 0 {
+			pct := scrollPercent(m.detailScroll, maxScroll)
+			status = m.styles.statusOK.Render(fmt.Sprintf("%d%%", pct))
+		}
+		b.WriteString(m.appendRightStatus(help, status))
 	}
-	b.WriteString(m.appendRightStatus(help, status))
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
@@ -1929,11 +2070,17 @@ func (m tuiModel) renderDetailContent() []string {
 	var lines []string
 	lines = append(lines, titleStyle.Render(normalizeTUIDisplayText(pr.Title)))
 	lines = append(lines, "")
-	authorValue := pr.Author.Login
+	authorLink := "https://github.com/" + pr.Author.Login
+	authorDisplay := "@" + pr.Author.Login
 	if author != pr.Author.Login {
-		authorValue = "@" + pr.Author.Login + " (" + author + ")"
+		authorDisplay += " (" + author + ")"
 	}
-	lines = append(lines, detailIndent+labelStyle.Render("Author: ")+valueStyle.Render(authorValue))
+	styledAuthor := xansi.SetHyperlink(
+		authorLink,
+	) + valueStyle.Render(
+		authorDisplay,
+	) + xansi.ResetHyperlink()
+	lines = append(lines, detailIndent+labelStyle.Render("Author: ")+styledAuthor)
 	styledURL := xansi.SetHyperlink(pr.URL) + valueStyle.Render(pr.URL) + xansi.ResetHyperlink()
 	lines = append(lines, detailIndent+labelStyle.Render("   URL: ")+styledURL)
 	lines = append(lines, detailIndent+labelStyle.Render("Status: ")+m.renderDetailStatus(pr))
@@ -1946,11 +2093,11 @@ func (m tuiModel) renderDetailContent() []string {
 		for _, r := range m.detail.Reviews {
 			icon := "💬"
 			switch r.State {
-			case "APPROVED":
+			case valueReviewApproved:
 				icon = "✅"
-			case "CHANGES_REQUESTED":
+			case valueReviewChanges:
 				icon = "❌"
-			case "DISMISSED":
+			case valueReviewDismissed:
 				icon = "🚫"
 			}
 			name := m.resolver.Resolve(r.User)
@@ -2103,8 +2250,14 @@ func advanceDiffQueue(m *tuiModel) tea.Cmd {
 		actions := m.actions
 		return func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
-			diff, err := actions.fetchDiff(owner, repo, pr.Number)
-			return diffFetchedMsg{index: idx, key: makePRKey(pr), diff: diff, err: err}
+			diff, headSHA, err := actions.fetchDiff(owner, repo, pr.Number)
+			return diffFetchedMsg{
+				index:   idx,
+				key:     makePRKey(pr),
+				diff:    diff,
+				headSHA: headSHA,
+				err:     err,
+			}
 		}
 	}
 	m.diffQueueTotal = 0
@@ -2219,6 +2372,14 @@ func runBatchAction(
 	}
 }
 
+// setInflightStatus sets an in-progress status message (e.g. "Merging foo/bar#421")
+// that remains visible until replaced by the action result or cleared.
+func setInflightStatus(m *tuiModel, verb string, pr *PullRequest) {
+	m.statusMsg = m.styles.statusAction.Render(verb) + " " +
+		lg.NewStyle().Foreground(lg.Color("117")).Render(pr.Ref())
+	m.statusErr = false
+}
+
 func tuiFlashStatus(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
 	m.statusID++
 	m.statusErr = isErr
@@ -2296,6 +2457,35 @@ func (m tuiModel) targetPRs() []targetPR {
 		return []targetPR{{m.cursor, *pr}}
 	}
 	return nil
+}
+
+// isCurrentUserDiff reports whether the current diff PR was authored by the authenticated user.
+func (m tuiModel) isCurrentUserDiff() bool {
+	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
+		return m.isCurrentUserPR(m.rows[idx].Item.PR)
+	}
+	return false
+}
+
+// isCurrentUserDetail reports whether the current detail PR was authored by the authenticated user.
+func (m tuiModel) isCurrentUserDetail() bool {
+	if idx := m.resolveIndex(m.detailKey, -1); idx >= 0 && idx < len(m.rows) {
+		return m.isCurrentUserPR(m.rows[idx].Item.PR)
+	}
+	return false
+}
+
+// targetApprovablePRs returns targetPRs excluding PRs authored by the current user.
+func (m tuiModel) targetApprovablePRs() []targetPR {
+	targets := m.targetPRs()
+	n := 0
+	for _, t := range targets {
+		if !m.isCurrentUserPR(t.pr) {
+			targets[n] = t
+			n++
+		}
+	}
+	return targets[:n]
 }
 
 func (m tuiModel) tableRendererFor(totalRows int) *table.Renderer[PRRowModel] {
@@ -2448,28 +2638,40 @@ func (m *tuiModel) extendSelectionAndMove(dir int) {
 	m.selected[m.rowKeyAt(m.cursor)] = true
 }
 
-func (m tuiModel) listHelpPairs() []struct{ key, desc string } {
-	pairs := []struct{ key, desc string }{
+// isCurrentUserCursor reports whether the PR under the cursor was authored by the authenticated user.
+func (m tuiModel) isCurrentUserCursor() bool {
+	if pr := m.currentPR(); pr != nil {
+		return m.isCurrentUserPR(*pr)
+	}
+	return false
+}
+
+func (m tuiModel) listHelpPairs() []helpPair {
+	pairs := []helpPair{
 		{tuiKeyEnter, "show"},
 		{"←/→", "first/last"},
 		{"space", "select"},
 		{"/", "filter"},
-		{"a", "approve"},
-		{"d", "diff"},
-		{"m", "merge"},
-		{"C", "close"},
-		{"o", "open"},
 	}
+	if !m.isCurrentUserCursor() {
+		pairs = append(pairs, helpPair{"a", "approve"})
+	}
+	pairs = append(pairs,
+		helpPair{"d", "diff"},
+		helpPair{"m", "merge"},
+		helpPair{"C", "close"},
+		helpPair{"o", "open"},
+	)
 	if hasClaudeReviewLauncher() {
-		pairs = append(pairs, struct{ key, desc string }{"r", "review"})
+		pairs = append(pairs, helpPair{"r", "review"})
 	}
 	if m.autoRefresh {
-		pairs = append(pairs, struct{ key, desc string }{"R", "refresh " + styledOn})
+		pairs = append(pairs, helpPair{"R", "refresh " + styledOn})
 	} else {
-		pairs = append(pairs, struct{ key, desc string }{"R", "refresh " + styledOff})
+		pairs = append(pairs, helpPair{"R", "refresh " + styledOff})
 	}
-	pairs = append(pairs, struct{ key, desc string }{"?", "help"})
-	pairs = append(pairs, struct{ key, desc string }{"q", "quit"})
+	pairs = append(pairs, helpPair{"?", "help"})
+	pairs = append(pairs, helpPair{"q", "quit"})
 	return pairs
 }
 
@@ -2478,7 +2680,7 @@ func (m tuiModel) renderListHelp() string {
 }
 
 func (m tuiModel) renderFilterHelp() string {
-	pairs := []struct{ key, desc string }{
+	pairs := []helpPair{
 		{"↑/↓", "prev/next"},
 		{tuiKeyEnter, "apply"},
 		{tuiKeyEsc, "exit"},
@@ -2486,28 +2688,42 @@ func (m tuiModel) renderFilterHelp() string {
 	return m.renderHelp(pairs)
 }
 
-func (m tuiModel) diffHelpPairs() []struct{ key, desc string } {
-	pairs := []struct{ key, desc string }{
+func (m tuiModel) diffHelpPairs() []helpPair {
+	pairs := []helpPair{
 		{"↑/↓", "scroll"},
 		{"←/→", "top/bottom"},
-		{"a/y", "approve"},
+	}
+	if m.isCurrentUserDiff() {
+		pairs = append(pairs, helpPair{"m", "merge"})
+	} else {
+		pairs = append(pairs,
+			helpPair{"a/y", "approve"},
+			helpPair{"m", "merge"},
+			helpPair{"A", "approve/merge"},
+			helpPair{"u", "unsubscribe"},
+		)
 	}
 	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
 		if strings.ToLower(m.rows[idx].Item.State) == valueClosed {
-			pairs = append(pairs, struct{ key, desc string }{"C", "reopen"})
+			pairs = append(pairs, helpPair{"C", "reopen"})
 		} else {
-			pairs = append(pairs, struct{ key, desc string }{"C", "close"})
+			pairs = append(pairs, helpPair{"C", "close"})
 		}
 	}
+	pairs = append(pairs,
+		helpPair{"o", "open"},
+		helpPair{"s", "slack"},
+	)
+
 	if m.diffQueueTotal > 0 {
 		if len(m.diffHistory) > 0 {
-			pairs = append(pairs, struct{ key, desc string }{"p", "prev"})
+			pairs = append(pairs, helpPair{"p", "prev"})
 		}
 		if len(m.diffQueue) > 0 {
-			pairs = append(pairs, struct{ key, desc string }{"n", "next"})
+			pairs = append(pairs, helpPair{"n", "next"})
 		}
 	}
-	pairs = append(pairs, struct{ key, desc string }{"d/q", "dismiss"})
+	pairs = append(pairs, helpPair{"d/q", "dismiss"})
 	return pairs
 }
 
@@ -2515,18 +2731,23 @@ func (m tuiModel) renderDiffHelp() string {
 	return m.renderHelp(m.diffHelpPairs())
 }
 
-func (m tuiModel) detailHelpPairs() []struct{ key, desc string } {
-	pairs := []struct{ key, desc string }{
+func (m tuiModel) detailHelpPairs() []helpPair {
+	pairs := []helpPair{
 		{"↑/↓", "scroll"},
 		{"←/→", "top/bottom"},
 		{"d", "diff"},
-		{"a/y", "approve"},
-		{"o", "open"},
 	}
+	if !m.isCurrentUserDetail() {
+		pairs = append(pairs, helpPair{"a/y", "approve"})
+	}
+	pairs = append(pairs,
+		helpPair{"o", "open"},
+		helpPair{"s", "slack"},
+	)
 	if hasClaudeReviewLauncher() {
-		pairs = append(pairs, struct{ key, desc string }{"r", "review"})
+		pairs = append(pairs, helpPair{"r", "review"})
 	}
-	pairs = append(pairs, struct{ key, desc string }{"q", "dismiss"})
+	pairs = append(pairs, helpPair{"q", "dismiss"})
 	return pairs
 }
 
@@ -2535,7 +2756,7 @@ func (m tuiModel) renderDetailHelp() string {
 }
 
 func (m tuiModel) renderHelpOverlay() string {
-	pairs := []struct{ key, desc string }{
+	pairs := []helpPair{
 		{"↑/↓ j/k", "Navigate up/down"},
 		{"←/→ g/G", "Jump to first/last"},
 		{"enter", "Show PR detail"},
@@ -2567,7 +2788,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		pairs = append(
 			pairs[:len(pairs)-2],
 			append(
-				[]struct{ key, desc string }{
+				[]helpPair{
 					{"r", "Launch Claude review"},
 					{"alt+r", "Launch Claude review (no confirm)"},
 					{"ctrl+r", "Request Copilot review"},
@@ -2581,7 +2802,7 @@ func (m tuiModel) renderHelpOverlay() string {
 	for _, p := range pairs {
 		keyWidth = max(keyWidth, lg.Width(p.key))
 	}
-	renderPair := func(p struct{ key, desc string }) string {
+	renderPair := func(p helpPair) string {
 		pad := max(0, keyWidth-lg.Width(p.key))
 		key := strings.Repeat(" ", pad) + p.key
 		return m.styles.helpKey.Render(key) + "  " + m.styles.helpText.Render(p.desc)
@@ -2616,7 +2837,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		b.WriteString("\n")
 	}
 	dismiss := m.styles.helpText.Bold(true).
-		Foreground(lg.Color("198")).
+		Foreground(lg.Color("210")).
 		Render("Press any key to dismiss")
 	pad := (totalWidth - lg.Width(dismiss)) / 2 //nolint:mnd // center
 	if pad > 0 {
@@ -2657,7 +2878,7 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	return help
 }
 
-func (m tuiModel) renderHelp(pairs []struct{ key, desc string }) string {
+func (m tuiModel) renderHelp(pairs []helpPair) string {
 	const gap = "  "
 	var parts []string
 	helpText := m.styles.helpText
@@ -2707,7 +2928,7 @@ func (m tuiModel) renderHelp(pairs []struct{ key, desc string }) string {
 }
 
 // helpLines returns the number of lines the help bar occupies at the current width.
-func (m tuiModel) helpLines(pairs []struct{ key, desc string }) int {
+func (m tuiModel) helpLines(pairs []helpPair) int {
 	return strings.Count(m.renderHelp(pairs), "\n") + 1
 }
 
@@ -2911,8 +3132,75 @@ func truncateDisplayLine(line string, width int) string {
 	return xansi.WcWidth.Truncate(line, width, "")
 }
 
-// highlightDiff applies Chroma syntax highlighting to a unified diff.
-func highlightDiff(raw string) string {
+func wrapDiffLines(diff string, width int) []string {
+	logicalLines := strings.Split(diff, "\n")
+	if width <= 0 {
+		return logicalLines
+	}
+
+	rows := make([]string, 0, len(logicalLines))
+	for _, line := range logicalLines {
+		rows = append(rows, hardWrapDiffLine(line, width)...)
+	}
+	return rows
+}
+
+func hardWrapDiffLine(line string, width int) []string {
+	if width <= 0 {
+		return []string{line}
+	}
+
+	wrapped := xansi.Hardwrap(line, width, true)
+	if !strings.Contains(wrapped, "\n") {
+		return []string{line}
+	}
+
+	var buf bytes.Buffer
+	writer := lg.NewWrapWriter(&buf)
+	_, _ = writer.Write([]byte(wrapped))
+	_ = writer.Close()
+	return strings.Split(buf.String(), "\n")
+}
+
+// highlightDiff highlights a unified diff using delta if available,
+// falling back to Chroma syntax highlighting.
+func highlightDiff(raw, prURL, headSHA string) string {
+	if p, err := exec.LookPath("delta"); err == nil {
+		if out, err := highlightWithDelta(p, raw, prURL, headSHA); err == nil {
+			return out
+		}
+	}
+	return highlightWithChroma(raw)
+}
+
+// highlightWithDelta pipes a diff through delta for rich highlighting.
+// File hyperlinks point to the blob at the PR's head commit on GitHub.
+func highlightWithDelta(deltaBin, raw, prURL, headSHA string) (string, error) {
+	// prURL is e.g. "https://github.com/owner/repo/pull/123"
+	// Strip "/pull/123" to get the repo URL, then build blob links.
+	// Delta resolves {path} to an absolute path based on CWD, so we set
+	// CWD to "/" which gives us "/{relative_path}" - no extra slash needed.
+	repoURL := prURL[:strings.LastIndex(prURL, "/pull/")]
+	linkFmt := repoURL + "/blob/" + headSHA + "{path}?plain=1#L{line}"
+
+	cmd := exec.CommandContext(
+		context.Background(),
+		deltaBin,
+		"--true-color=always",
+		"--hyperlinks",
+		"--hyperlinks-file-link-format", linkFmt,
+	)
+	cmd.Dir = "/"
+	cmd.Stdin = strings.NewReader(raw)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// highlightWithChroma applies Chroma syntax highlighting to a unified diff.
+func highlightWithChroma(raw string) string {
 	lexer := lexers.Get("diff")
 	if lexer == nil {
 		return raw
@@ -3287,12 +3575,16 @@ func runTui(
 	fiStyles.Cursor.Color = lg.Color("216")
 	fi.SetStyles(fiStyles)
 
+	// Resolve current user login eagerly so it's cached for View calls.
+	login, _ := getCurrentLogin(rest)
+
 	model := tuiModel{
 		items:       r.items,
 		rows:        r.rows,
 		header:      r.header,
 		colWidths:   r.colWidths,
 		actions:     actions,
+		login:       login,
 		autoRefresh: cfg.TUI.AutoRefresh.Enabled,
 		spinner:     buildSpinner(cfg.Spinner),
 		styles:      newTuiStyles(),

@@ -153,7 +153,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 	}
 
 	if cli.Merge != nil && *cli.Merge {
-		msg, err := a.mergeOrAutoMerge(owner, repo, pr)
+		msg, err := a.mergeOrAutomerge(owner, repo, pr)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("merge %s: %v", pr.URL, err))
 		} else {
@@ -164,13 +164,27 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		}
 	}
 	if cli.Merge != nil && !*cli.Merge {
-		if err := a.disableAutoMerge(pr.NodeID); err != nil {
+		if err := a.disableAutomerge(pr.NodeID); err != nil {
 			errs = append(errs, fmt.Sprintf("disable-auto-merge %s: %v", pr.URL, err))
 		} else {
 			clog.Info().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Disabled automerge")
+		}
+	}
+
+	if cli.Unsubscribe {
+		login, err := getCurrentLogin(a.rest)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("unsubscribe %s: %v", pr.URL, err))
+		} else if err := a.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID); err != nil {
+			errs = append(errs, fmt.Sprintf("unsubscribe %s: %v", pr.URL, err))
+		} else {
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Unsubscribed")
 		}
 	}
 
@@ -233,6 +247,30 @@ func (a *ActionRunner) comment(owner, repo string, number int, body string) erro
 }
 
 func (a *ActionRunner) approve(owner, repo string, number int) error {
+	// Skip if the PR's overall review decision is already APPROVED.
+	if a.gql != nil {
+		var result struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewDecision string `json:"reviewDecision"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		}
+		query := `query($owner: String!, $repo: String!, $number: Int!) {
+			repository(owner: $owner, name: $repo) {
+				pullRequest(number: $number) {
+					reviewDecision
+				}
+			}
+		}`
+		vars := map[string]any{"owner": owner, "repo": repo, "number": number}
+		if err := a.gql.Do(query, vars, &result); err == nil {
+			if result.Repository.PullRequest.ReviewDecision == valueReviewApproved {
+				return nil
+			}
+		}
+	}
+
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)
 	return a.rest.Post(path, jsonBody(map[string]string{"event": "APPROVE"}), nil)
 }
@@ -279,17 +317,14 @@ func (a *ActionRunner) closePR(
 	return nil
 }
 
-// mergeOrAutoMerge enables automerge, or merges directly if the PR is already in clean status.
+// mergeOrAutomerge enables automerge, or merges directly if the PR is already in clean status.
 // Returns the log message on success.
-func (a *ActionRunner) mergeOrAutoMerge(owner, repo string, pr PullRequest) (string, error) {
-	err := a.enableAutoMerge(pr.NodeID)
+func (a *ActionRunner) mergeOrAutomerge(owner, repo string, pr PullRequest) (string, error) {
+	err := a.enableAutomerge(pr.NodeID)
 	if err == nil {
-		return resultAutoMerged, nil
+		return resultAutomerged, nil
 	}
-	if !strings.Contains(err.Error(), "clean status") {
-		return "", err
-	}
-	// PR is already mergeable - merge it directly.
+	// Automerge failed - always try direct merge as fallback.
 	if mergeErr := a.mergePR(owner, repo, pr.Number); mergeErr != nil {
 		return "", mergeErr
 	}
@@ -429,19 +464,19 @@ func (a *ActionRunner) markDraft(nodeID string) error {
 		}`, nodeID)
 }
 
-func (a *ActionRunner) enableAutoMerge(nodeID string) error {
+func (a *ActionRunner) enableAutomerge(nodeID string) error {
 	return a.doNodeMutation(
-		`mutation EnableAutoMerge($id: ID!) {
-			enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) {
+		`mutation EnableAutomerge($id: ID!) {
+			enablePullRequestAutomerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) {
 				clientMutationId
 			}
 		}`, nodeID)
 }
 
-func (a *ActionRunner) disableAutoMerge(nodeID string) error {
+func (a *ActionRunner) disableAutomerge(nodeID string) error {
 	return a.doNodeMutation(
-		`mutation DisableAutoMerge($id: ID!) {
-			disablePullRequestAutoMerge(input: {pullRequestId: $id}) {
+		`mutation DisableAutomerge($id: ID!) {
+			disablePullRequestAutomerge(input: {pullRequestId: $id}) {
 				clientMutationId
 			}
 		}`, nodeID)
@@ -481,21 +516,53 @@ func (a *ActionRunner) unsubscribe(nodeID string) error {
 		}`, nodeID)
 }
 
-func (a *ActionRunner) fetchDiff(owner, repo string, number int) (string, error) {
-	diffClient, err := api.NewRESTClient(api.ClientOptions{
-		Headers: map[string]string{"Accept": "application/vnd.github.diff"},
-	})
-	if err != nil {
-		return "", err
-	}
+func (a *ActionRunner) fetchDiff(owner, repo string, number int) (string, string, error) {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
-	resp, err := diffClient.Request(http.MethodGet, path, nil)
-	if err != nil {
-		return "", err
+
+	var (
+		diff    string
+		diffErr error
+		headSHA string
+		shaErr  error
+	)
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		diffClient, err := api.NewRESTClient(api.ClientOptions{
+			Headers: map[string]string{"Accept": "application/vnd.github.diff"},
+		})
+		if err != nil {
+			diffErr = err
+			return
+		}
+		resp, err := diffClient.Request(http.MethodGet, path, nil)
+		if err != nil {
+			diffErr = err
+			return
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		diff = string(b)
+		diffErr = err
+	})
+
+	wg.Go(func() {
+		var pr struct {
+			Head struct {
+				SHA string `json:"sha"`
+			} `json:"head"`
+		}
+		shaErr = a.rest.Get(path, &pr)
+		headSHA = pr.Head.SHA
+	})
+
+	wg.Wait()
+
+	if diffErr != nil {
+		return "", "", diffErr
 	}
-	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
-	return string(b), err
+	return diff, headSHA, shaErr
 }
 
 // Force-merge: poll for checks, then merge with bypass.
@@ -627,11 +694,11 @@ func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error
 	}
 
 	switch rollup.State {
-	case "SUCCESS":
+	case valueCISuccess:
 		return checksSuccess, prState, nil
-	case "FAILURE", "ERROR":
+	case valueCIFailure, valueCIError:
 		return checksFailed, prState, nil
-	case "PENDING", "EXPECTED":
+	case valueCIPending, valueCIExpected:
 		return checksPending, prState, nil
 	default:
 		return checksNone, prState, nil

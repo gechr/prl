@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 )
@@ -19,15 +18,15 @@ func renderSlack(prs []PullRequest, cfg *Config) (string, []string) {
 	twoApproverRepos := toSet(cfg.Output.Slack.TwoApproverRepos)
 
 	var oneApprover, twoApprover []string
-	hasAutoMerge := false
+	hasAutomerge := false
 
 	for _, pr := range prs {
 		repoFullName := strings.ToLower(pr.Repository.NameWithOwner)
 		if skipRepos[repoFullName] {
 			continue
 		}
-		if pr.AutoMerge {
-			hasAutoMerge = true
+		if pr.Automerge {
+			hasAutomerge = true
 		}
 		if twoApproverRepos[repoFullName] {
 			twoApprover = append(twoApprover, pr.URL)
@@ -48,10 +47,10 @@ func renderSlack(prs []PullRequest, cfg *Config) (string, []string) {
 		if len(twoApprover) > 0 {
 			reactions = append(reactions, ":two:")
 		}
-		if hasAutoMerge {
+		if hasAutomerge {
 			reactions = append(reactions, ":automerged:")
 		}
-	} else if hasAutoMerge {
+	} else if hasAutomerge {
 		// Multiple PRs: :two: is in the message body; only :automerged: as reaction.
 		reactions = append(reactions, ":automerged:")
 	}
@@ -119,7 +118,7 @@ func renderSlackDisplay(prs []PullRequest, cfg *Config) string {
 // slack CLI. recipient may be a #channel, @user, or email address.
 // When sendAt is non-empty it is passed as --at to schedule the message.
 // Reactions are added via --react flags.
-func sendToSlack(message, recipient, sendAt string, reactions []string) error {
+func sendToSlack(message, recipient, sendAt string, reactions []string) (string, error) {
 	args := []string{"send"}
 	if sendAt != "" {
 		args = append(args, "--at", sendAt)
@@ -131,11 +130,16 @@ func sendToSlack(message, recipient, sendAt string, reactions []string) error {
 
 	cmd := exec.CommandContext(context.Background(), "slack", args...)
 	cmd.Stdin = strings.NewReader(message)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("slack send: %w", err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return "", fmt.Errorf("slack send: %w: %s", err, detail)
+		}
+		return "", fmt.Errorf("slack send: %w", err)
 	}
-	return nil
+	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	return first, nil
 }
 
 // normalizeSlackChannel ensures a Slack recipient has a leading "#" when it
@@ -170,30 +174,33 @@ func slackRecipientForRepo(repo string, recipients slackRecipients) string {
 // sendSlack renders and sends PRs to Slack. If cli.SendTo is set it overrides
 // all routing and sends everything to that single recipient; otherwise PRs are
 // grouped by the recipients config and sent per recipient.
-func sendSlack(prs []PullRequest, cli *CLI, cfg *Config) error {
+func sendSlack(prs []PullRequest, cli *CLI, cfg *Config) (string, error) {
 	if cli.SendTo != "" {
 		msg, reactions := renderSlack(prs, cfg)
 		if msg == "" {
-			return nil
+			return "", nil
 		}
 		return sendToSlack(msg, cli.SendTo, cli.SendAt, reactions)
 	}
 	groups := groupBySlackRecipient(prs, cfg)
 	if len(groups) == 0 {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"--send: no Slack recipients configured (set output.slack.recipients in config or use --send-to)",
 		)
 	}
+	var lastOutput string
 	for recipient, recipientPRs := range groups {
 		msg, reactions := renderSlack(recipientPRs, cfg)
 		if msg == "" {
 			continue
 		}
-		if err := sendToSlack(msg, recipient, cli.SendAt, reactions); err != nil {
-			return fmt.Errorf("sending to Slack recipient %s: %w", recipient, err)
+		out, err := sendToSlack(msg, recipient, cli.SendAt, reactions)
+		if err != nil {
+			return "", fmt.Errorf("sending to Slack recipient %s: %w", recipient, err)
 		}
+		lastOutput = out
 	}
-	return nil
+	return lastOutput, nil
 }
 
 // groupBySlackRecipient groups PRs by their destination Slack recipient, skipping

@@ -5,13 +5,13 @@ import "time"
 // Filter/state string values.
 const (
 	valueAll     = "all"
-	valueAtMe    = "@me"
 	valueAny     = "any"
+	valueAtMe    = "@me"
+	valueBlocked = "blocked"
 	valueClosed  = "closed"
 	valueCreated = "created"
 	valueMerged  = "merged"
 	valueName    = "name"
-	valueBlocked = "blocked"
 	valueOpen    = "open"
 	valueReady   = "ready"
 	valueRepo    = "repo"
@@ -21,6 +21,18 @@ const (
 	valueURL     = "url"
 
 	colTitle = "title"
+)
+
+// GitHub API status values.
+const (
+	valueCIError         = "ERROR"
+	valueCIExpected      = "EXPECTED"
+	valueCIFailure       = "FAILURE"
+	valueCIPending       = "PENDING"
+	valueCISuccess       = "SUCCESS"
+	valueReviewApproved  = "APPROVED"
+	valueReviewChanges   = "CHANGES_REQUESTED"
+	valueReviewDismissed = "DISMISSED"
 )
 
 // Defaults.
@@ -54,8 +66,8 @@ const (
 	vcsJJ  = "jj"
 )
 
-// Action result strings returned by mergeOrAutoMerge.
-const resultAutoMerged = "Enabled automerge"
+// Action result strings returned by mergeOrAutomerge.
+const resultAutomerged = "Automerge"
 
 // Watch mode.
 const (

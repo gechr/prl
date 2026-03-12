@@ -32,7 +32,7 @@ type Label struct {
 
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
-	AutoMerge   bool        `json:"-"`
+	Automerge   bool        `json:"-"`
 	Author      Author      `json:"author"`
 	CreatedAt   time.Time   `json:"createdAt"`
 	IsDraft     bool        `json:"-"`

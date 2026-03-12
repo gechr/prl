@@ -60,6 +60,7 @@ type CLI struct {
 	MarkReady    bool   `name:"mark-ready"    help:"Mark each PR as ready for review (only targets draft PRs)"       clib:"terse='Mark as ready',group='Interactive/1'"`
 	Merge        *bool  `name:"merge"         help:"Toggle auto-merge (squash) on each PR"                           negatable:""                                          clib:"terse='Auto-merge',group='Interactive/1'"`
 	ForceMerge   bool   `name:"force-merge"   help:"Poll for checks, then force-merge (requires bypass permissions)" short:"M"                                             clib:"terse='Force-merge',group='Interactive/1'"`
+	Unsubscribe  bool   `name:"unsubscribe"   help:"Remove review request and unsubscribe from each PR"              clib:"terse='Unsubscribe',group='Interactive/1'"`
 	Update       bool   `name:"update"        help:"Update each PR branch from base branch"                          clib:"terse='Update branch',group='Interactive/1'"`
 	Yes          bool   `name:"yes"           help:"Skip interactive confirmation prompt"                            short:"y"                                             clib:"terse='Skip confirmation',group='Interactive/2'"`
 
@@ -347,6 +348,7 @@ func (c *CLI) HasAction() bool {
 	return c.Approve || c.Close || c.Comment != "" || c.Edit || c.ForceMerge || c.MarkDraft ||
 		c.MarkReady ||
 		c.Merge != nil ||
+		c.Unsubscribe ||
 		c.Update
 }
 
@@ -359,6 +361,7 @@ func (c *CLI) IsInteractive() bool {
 	return c.Approve || c.Close || c.Comment != "" || c.Edit || c.ForceMerge || c.MarkDraft ||
 		c.MarkReady ||
 		(c.Merge != nil && *c.Merge) ||
+		c.Unsubscribe ||
 		c.Update ||
 		c.Send
 }

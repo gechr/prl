@@ -369,13 +369,13 @@ func (m editModel) View() tea.View {
 }
 
 func (m editModel) renderHelp() string {
-	pairs := []struct{ key, desc string }{
+	pairs := []helpPair{
 		{"tab", "switch field"},
 		{"ctrl+s", "save all"},
 		{"esc", "cancel"},
 	}
 	if len(m.entries) > 1 {
-		pairs = append([]struct{ key, desc string }{
+		pairs = append([]helpPair{
 			{"ctrl+n", "next"},
 			{"ctrl+p", "prev"},
 		}, pairs...)

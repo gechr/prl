@@ -472,7 +472,7 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 		diffLines: diffLines,
 		view:      tuiViewDiff,
 		height:    12,
-		width:     120,
+		width:     140,
 		styles:    newTuiStyles(),
 	}
 
@@ -485,6 +485,70 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, len(diffLines)-bm.diffContentViewport(), bm.diffScroll)
 	require.Contains(t, ansi.Strip(bm.viewDiff().Content), "100%")
+}
+
+func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
+	line := lg.NewStyle().Foreground(lg.Color("196")).Render("+abcdef")
+
+	rows := wrapDiffLines(line, 4)
+
+	require.Len(t, rows, 2)
+	require.Equal(t, []string{"+abc", "def"}, []string{
+		ansi.Strip(rows[0]),
+		ansi.Strip(rows[1]),
+	})
+	require.LessOrEqual(t, lg.Width(rows[0]), 4)
+	require.LessOrEqual(t, lg.Width(rows[1]), 4)
+	require.True(t, strings.HasPrefix(rows[1], "\x1b["))
+}
+
+func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
+	pr := testReviewPullRequest()
+	diff := lg.NewStyle().Foreground(lg.Color("196")).Render("+abcdef")
+	m := tuiModel{
+		rows:       []TableRow{{Item: PRRowModel{PR: pr}}},
+		diff:       diff,
+		diffKey:    makePRKey(pr),
+		diffLines:  wrapDiffLines(diff, 4),
+		diffScroll: 1,
+		view:       tuiViewDiff,
+		height:     8,
+		width:      4,
+		styles:     newTuiStyles(),
+		p:          testPRL,
+		cli:        testCLI(),
+	}
+
+	model, cmd := m.Update(tea.WindowSizeMsg{Width: 8, Height: 8})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, []string{"+abcdef"}, []string{ansi.Strip(bm.diffLines[0])})
+	require.Len(t, bm.diffLines, 1)
+	require.Zero(t, bm.diffScroll)
+}
+
+func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
+	pr := testReviewPullRequest()
+	diff := lg.NewStyle().Foreground(lg.Color("196")).Render("+" + strings.Repeat("a", 85))
+	diffLines := wrapDiffLines(diff, 80)
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diff:      diff,
+		diffKey:   makePRKey(pr),
+		diffLines: diffLines,
+		height:    8,
+		width:     80,
+		styles:    newTuiStyles(),
+	}
+
+	out := ansi.Strip(m.viewDiff().Content)
+
+	require.Contains(t, out, strings.Join([]string{
+		ansi.Strip(diffLines[0]),
+		ansi.Strip(diffLines[1]),
+	}, "\n"))
 }
 
 func TestTruncateDisplayLinePreservesUTF8(t *testing.T) {

@@ -471,7 +471,7 @@ func buildOutput(
 		if gqlErr != nil {
 			return "", nil, gqlErr
 		}
-		prs, err = filterByAutoMerge(g, prs, !*cli.Merge)
+		prs, err = filterByAutomerge(g, prs, !*cli.Merge)
 		if err != nil {
 			return "", nil, err
 		}
@@ -522,7 +522,7 @@ func buildOutput(
 	// Enrich auto-merge status for Slack reactions (only when actually sending).
 	if !cli.Quick && cli.Send {
 		if g, gqlErr := getGQL(); gqlErr == nil {
-			if amErr := enrichAutoMerge(g, prs); amErr != nil {
+			if amErr := enrichAutomerge(g, prs); amErr != nil {
 				clog.Debug().Err(amErr).Msg("Failed to enrich auto-merge status")
 			}
 		} else {
@@ -620,7 +620,7 @@ func runOnce(
 		if gqlErr != nil {
 			return "", gqlErr
 		}
-		prs, err = filterByAutoMerge(g, prs, !*cli.Merge)
+		prs, err = filterByAutomerge(g, prs, !*cli.Merge)
 		if err != nil {
 			return "", err
 		}
@@ -676,7 +676,7 @@ func runOnce(
 	// Enrich auto-merge status for Slack reactions (only when actually sending).
 	if !cli.Quick && cli.Send {
 		if g, gqlErr := getGQL(); gqlErr == nil {
-			if amErr := enrichAutoMerge(g, prs); amErr != nil {
+			if amErr := enrichAutomerge(g, prs); amErr != nil {
 				clog.Debug().Err(amErr).Msg("Failed to enrich auto-merge status")
 			}
 		} else {
@@ -753,7 +753,7 @@ func runOnce(
 
 	// Send to Slack (after actions, if any)
 	if cli.Send {
-		if err := sendSlack(prs, cli, cfg); err != nil {
+		if _, err := sendSlack(prs, cli, cfg); err != nil {
 			return "", err
 		}
 	}
@@ -815,7 +815,7 @@ func runActions(cli *CLI, rest *api.RESTClient, prs []PullRequest) error {
 	// Reflect automerge state change so --send picks it up.
 	if cli.Merge != nil {
 		for i := range prs {
-			prs[i].AutoMerge = *cli.Merge
+			prs[i].Automerge = *cli.Merge
 		}
 	}
 	return nil
@@ -836,7 +836,8 @@ func runInteractiveSend(cli *CLI, cfg *Config, prs []PullRequest) error {
 		clog.Warn().Err(err).Msg("Clipboard copy failed")
 	}
 	fmt.Println(slackOutput)
-	return sendSlack(prs, cli, cfg)
+	_, err := sendSlack(prs, cli, cfg)
+	return err
 }
 
 // buildActionHeader creates the interactive selection header from active action flags.
@@ -865,6 +866,9 @@ func buildActionHeader(cli *CLI) string {
 	}
 	if cli.Merge != nil && *cli.Merge {
 		parts = append(parts, "Merge")
+	}
+	if cli.Unsubscribe {
+		parts = append(parts, "Unsubscribe")
 	}
 	if cli.Update {
 		parts = append(parts, "Update")

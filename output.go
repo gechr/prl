@@ -82,10 +82,10 @@ func filterByDrift(prs []PullRequest, op string, threshold int64) []PullRequest 
 	return result
 }
 
-// filterByAutoMerge queries automerge status via GraphQL and filters PRs.
+// filterByAutomerge queries automerge status via GraphQL and filters PRs.
 // When wantEnabled is true, only PRs WITH automerge are kept (for --no-merge).
 // When wantEnabled is false, only PRs WITHOUT automerge are kept (for --merge).
-func filterByAutoMerge(
+func filterByAutomerge(
 	gql *api.GraphQLClient,
 	prs []PullRequest,
 	wantEnabled bool,
@@ -102,14 +102,14 @@ func filterByAutoMerge(
 	var result struct {
 		Nodes []struct {
 			ID               string `json:"id"`
-			AutoMergeRequest *struct {
+			AutomergeRequest *struct {
 				EnabledAt string `json:"enabledAt"`
 			} `json:"autoMergeRequest"`
 		} `json:"nodes"`
 	}
 
 	if err := gql.Do(
-		`query AutoMergeStatus($ids: [ID!]!) {
+		`query AutomergeStatus($ids: [ID!]!) {
 			nodes(ids: $ids) {
 				... on PullRequest {
 					id
@@ -125,7 +125,7 @@ func filterByAutoMerge(
 
 	enabled := make(map[string]bool, len(result.Nodes))
 	for _, node := range result.Nodes {
-		enabled[node.ID] = node.AutoMergeRequest != nil
+		enabled[node.ID] = node.AutomergeRequest != nil
 	}
 
 	filtered := make([]PullRequest, 0, len(prs))
@@ -149,8 +149,8 @@ func filterByAutoMerge(
 	return filtered, nil
 }
 
-// enrichAutoMerge queries automerge status via GraphQL and sets AutoMerge on each PR.
-func enrichAutoMerge(gql *api.GraphQLClient, prs []PullRequest) error {
+// enrichAutomerge queries automerge status via GraphQL and sets Automerge on each PR.
+func enrichAutomerge(gql *api.GraphQLClient, prs []PullRequest) error {
 	if len(prs) == 0 {
 		return nil
 	}
@@ -163,14 +163,14 @@ func enrichAutoMerge(gql *api.GraphQLClient, prs []PullRequest) error {
 	var result struct {
 		Nodes []struct {
 			ID               string `json:"id"`
-			AutoMergeRequest *struct {
+			AutomergeRequest *struct {
 				EnabledAt string `json:"enabledAt"`
 			} `json:"autoMergeRequest"`
 		} `json:"nodes"`
 	}
 
 	if err := gql.Do(
-		`query AutoMergeStatus($ids: [ID!]!) {
+		`query AutomergeStatus($ids: [ID!]!) {
 			nodes(ids: $ids) {
 				... on PullRequest {
 					id
@@ -186,11 +186,11 @@ func enrichAutoMerge(gql *api.GraphQLClient, prs []PullRequest) error {
 
 	enabled := make(map[string]bool, len(result.Nodes))
 	for _, node := range result.Nodes {
-		enabled[node.ID] = node.AutoMergeRequest != nil
+		enabled[node.ID] = node.AutomergeRequest != nil
 	}
 
 	for i := range prs {
-		prs[i].AutoMerge = enabled[prs[i].NodeID]
+		prs[i].Automerge = enabled[prs[i].NodeID]
 	}
 
 	return nil
@@ -275,11 +275,11 @@ func enrichMergeStatus(gql *api.GraphQLClient, prs []PullRequest) {
 
 		var status MergeStatus
 		switch {
-		case ciState == "FAILURE" || ciState == "ERROR":
+		case ciState == valueCIFailure || ciState == valueCIError:
 			status = MergeStatusCIFailed
-		case ciState == "PENDING" || ciState == "EXPECTED":
+		case ciState == valueCIPending || ciState == valueCIExpected:
 			status = MergeStatusCIPending
-		case ciState == "SUCCESS" && node.ReviewDecision != nil && *node.ReviewDecision == "APPROVED":
+		case ciState == valueCISuccess && node.ReviewDecision != nil && *node.ReviewDecision == valueReviewApproved:
 			status = MergeStatusReady
 		default:
 			status = MergeStatusBlocked
