@@ -227,7 +227,7 @@ func TestViewListShowsRefreshingHeaderWithoutRows(t *testing.T) {
 
 func TestViewListNumbersVisibleRows(t *testing.T) {
 	fi := textinput.New()
-	fi.SetValue("beta|gamma")
+	fi.SetValue("eta")
 	m := tuiModel{
 		rows: []TableRow{
 			{Cells: []table.Cell{{Plain: "alpha"}}, Display: "alpha"},
@@ -247,8 +247,8 @@ func TestViewListNumbersVisibleRows(t *testing.T) {
 	out := ansi.Strip(m.viewList().Content)
 
 	require.Contains(t, out, "  1  beta")
-	require.Contains(t, out, "  2  gamma")
-	require.NotContains(t, out, "  3  gamma")
+	require.NotContains(t, out, "alpha")
+	require.NotContains(t, out, "gamma")
 }
 
 func TestUpdateListViewShiftDownSelectsAndMovesNext(t *testing.T) {
@@ -730,6 +730,79 @@ func testDigitJumpModel(total int) tuiModel {
 		filterInput: textinput.New(),
 		removed:     make(prKeys),
 		selected:    make(prKeys),
+	}
+}
+
+func TestParseFilterTerm(t *testing.T) {
+	tests := []struct {
+		input string
+		want  filterTerm
+	}{
+		{"foo", filterTerm{text: "foo"}},
+		{"^foo", filterTerm{text: "foo", prefix: true}},
+		{"foo$", filterTerm{text: "foo", suffix: true}},
+		{"^foo$", filterTerm{text: "foo", prefix: true, suffix: true}},
+		{"!foo", filterTerm{text: "foo", negate: true}},
+		{"!^foo", filterTerm{text: "foo", negate: true, prefix: true}},
+		{"!foo$", filterTerm{text: "foo", negate: true, suffix: true}},
+		{"!^foo$", filterTerm{text: "foo", negate: true, prefix: true, suffix: true}},
+		{"Foo", filterTerm{text: "Foo", caseSensitive: true}},
+		// Bare modifiers: flags set but empty text matches everything.
+		{"^", filterTerm{text: "", prefix: true}},
+		{"$", filterTerm{text: "", suffix: true}},
+		{"!", filterTerm{text: "", negate: true}},
+		{"!^", filterTerm{text: "", negate: true, prefix: true}},
+		{"!$", filterTerm{text: "", negate: true, suffix: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			require.Equal(t, tt.want, parseFilterTerm(tt.input))
+		})
+	}
+}
+
+func TestMatchesTerm(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		term filterTerm
+		want bool
+	}{
+		{"contains", "hello world", filterTerm{text: "world"}, true},
+		{"contains miss", "hello world", filterTerm{text: "xyz"}, false},
+		{"case insensitive", "Hello World", filterTerm{text: "hello"}, true},
+		{"case sensitive", "Hello World", filterTerm{text: "Hello", caseSensitive: true}, true},
+		{
+			"case sensitive miss",
+			"hello world",
+			filterTerm{text: "Hello", caseSensitive: true},
+			false,
+		},
+		{"prefix", "hello world", filterTerm{text: "hello", prefix: true}, true},
+		{"prefix miss", "hello world", filterTerm{text: "world", prefix: true}, false},
+		{"suffix", "hello world", filterTerm{text: "world", suffix: true}, true},
+		{"suffix miss", "hello world", filterTerm{text: "hello", suffix: true}, false},
+		{"exact", "hello", filterTerm{text: "hello", prefix: true, suffix: true}, true},
+		{"exact miss", "hello world", filterTerm{text: "hello", prefix: true, suffix: true}, false},
+		{"negate", "hello world", filterTerm{text: "xyz", negate: true}, true},
+		{"negate miss", "hello world", filterTerm{text: "hello", negate: true}, false},
+		{
+			"negate prefix",
+			"hello world",
+			filterTerm{text: "world", prefix: true, negate: true},
+			true,
+		},
+		{
+			"negate suffix",
+			"hello world",
+			filterTerm{text: "hello", suffix: true, negate: true},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, matchesTerm(tt.text, tt.term))
+		})
 	}
 }
 

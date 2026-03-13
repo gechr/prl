@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -736,10 +735,13 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			prev := m.filterInput.Value()
 			var cmd tea.Cmd
 			m.filterInput, cmd = m.filterInput.Update(msg)
-			if m.filterInput.Value() != prev {
-				m.cursor = m.adjustedCursor()
-				m.offset = m.scrolledOffset()
+			if m.filterInput.Value() == prev {
+				return m, cmd
 			}
+			if vis := m.visibleIndices(); len(vis) > 0 {
+				m.cursor = vis[0]
+			}
+			m.offset = 0
 			return m, cmd
 		}
 	}
@@ -801,6 +803,14 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "/":
+		// The filter bar takes one row from the viewport; bump offset so the
+		// cursor row doesn't get pushed off-screen.
+		visible := m.visibleIndices()
+		viewport := m.listViewport() - 1 // account for incoming filter bar
+		pos := slices.Index(visible, m.cursor)
+		if pos >= 0 && pos >= m.offset+viewport {
+			m.offset = pos - viewport + 1
+		}
 		return m, m.filterInput.Focus()
 
 	case tuiKeyEnter:
@@ -2135,7 +2145,6 @@ func (m tuiModel) renderDetailContent() []string {
 	}
 	pr := m.rows[idx].Item.PR
 
-	titleStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("218"))
 	headerStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("175"))
 	dimStyle := lg.NewStyle().Foreground(lg.Color("240"))
 
@@ -2144,7 +2153,7 @@ func (m tuiModel) renderDetailContent() []string {
 
 	author := m.resolver.Resolve(pr.Author.Login)
 	var lines []string
-	lines = append(lines, titleStyle.Render(normalizeTUIDisplayText(pr.Title)))
+	lines = append(lines, headerStyle.Render("Overview"))
 	lines = append(lines, "")
 	authorLink := "https://github.com/" + pr.Author.Login
 	authorDisplay := "@" + pr.Author.Login
@@ -2156,6 +2165,14 @@ func (m tuiModel) renderDetailContent() []string {
 	) + valueStyle.Render(
 		authorDisplay,
 	) + xansi.ResetHyperlink()
+	lines = append(
+		lines,
+		detailIndent+labelStyle.Render(
+			" Title: ",
+		)+valueStyle.Render(
+			normalizeTUIDisplayText(pr.Title),
+		),
+	)
 	lines = append(lines, detailIndent+labelStyle.Render("Author: ")+styledAuthor)
 	styledURL := xansi.SetHyperlink(pr.URL) + valueStyle.Render(pr.URL) + xansi.ResetHyperlink()
 	lines = append(lines, detailIndent+labelStyle.Render("   URL: ")+styledURL)
@@ -2362,25 +2379,82 @@ func (m tuiModel) visibleIndices() []int {
 		return indices
 	}
 
-	// Smart case: case-insensitive unless filter contains uppercase.
-	flags := "(?i)"
-	if f != strings.ToLower(f) {
-		flags = ""
-	}
-	re, err := regexp.Compile(flags + f)
-	if err != nil {
-		// Invalid regex - fall back to literal match.
-		re = regexp.MustCompile(flags + regexp.QuoteMeta(f))
-	}
+	term := parseFilterTerm(f)
 	for i := range m.rows {
 		if m.removed[m.rowKeyAt(i)] {
 			continue
 		}
-		if re.MatchString(rowFilterText(m.rows[i])) {
+		text := rowFilterText(m.rows[i])
+		if term.prefix || term.suffix {
+			text = m.rows[i].Item.PR.Title
+		}
+		if matchesTerm(text, term) {
 			indices = append(indices, i)
 		}
 	}
 	return indices
+}
+
+// filterTerm represents a parsed search term with optional modifiers.
+type filterTerm struct {
+	text          string
+	prefix        bool // ^
+	suffix        bool // $
+	negate        bool // !
+	caseSensitive bool
+}
+
+// parseFilterTerm parses a filter string into a term.
+// Supports: ! (negate), ^ (prefix), $ (suffix).
+// Smart case: case-insensitive unless the term contains uppercase.
+func parseFilterTerm(f string) filterTerm {
+	var t filterTerm
+
+	if rest, ok := strings.CutPrefix(f, "!"); ok {
+		t.negate = true
+		f = rest
+	}
+	if rest, ok := strings.CutPrefix(f, "^"); ok {
+		t.prefix = true
+		f = rest
+	}
+	if rest, ok := strings.CutSuffix(f, "$"); ok {
+		t.suffix = true
+		f = rest
+	}
+
+	t.caseSensitive = f != strings.ToLower(f)
+	t.text = f
+	return t
+}
+
+func matchesTerm(text string, t filterTerm) bool {
+	if t.text == "" {
+		return true
+	}
+
+	needle := t.text
+	if !t.caseSensitive {
+		text = strings.ToLower(text)
+		needle = strings.ToLower(needle)
+	}
+
+	var matched bool
+	switch {
+	case t.prefix && t.suffix:
+		matched = text == needle
+	case t.prefix:
+		matched = strings.HasPrefix(text, needle)
+	case t.suffix:
+		matched = strings.HasSuffix(text, needle)
+	default:
+		matched = strings.Contains(text, needle)
+	}
+
+	if t.negate {
+		return !matched
+	}
+	return matched
 }
 
 func (m tuiModel) nextVisible(dir int) (int, bool) {
@@ -2398,6 +2472,10 @@ func (m tuiModel) nextVisible(dir int) (int, bool) {
 }
 
 func (m tuiModel) adjustedCursor() int {
+	visible := m.visibleIndices()
+	if slices.Contains(visible, m.cursor) {
+		return m.cursor
+	}
 	if next, ok := m.nextVisible(1); ok {
 		return next
 	}
@@ -2422,6 +2500,10 @@ func (m tuiModel) scrolledOffset() int {
 		offset = pos
 	} else if pos >= offset+viewport {
 		offset = pos - viewport + 1
+	}
+	// Clamp so we don't leave blank space at the bottom.
+	if maxOffset := len(visible) - viewport; maxOffset > 0 && offset > maxOffset {
+		offset = maxOffset
 	}
 	return offset
 }
@@ -2766,6 +2848,9 @@ func (m tuiModel) renderListHelp() string {
 func (m tuiModel) renderFilterHelp() string {
 	pairs := []helpPair{
 		{"↑/↓", "prev/next"},
+		{"^", "title start"},
+		{"$", "title end"},
+		{"!", "negate"},
 		{tuiKeyEnter, "apply"},
 		{tuiKeyEsc, "exit"},
 	}
