@@ -35,6 +35,13 @@ const (
 	valueReviewDismissed = "DISMISSED"
 )
 
+const (
+	valueReviewFilterNone     = "none"
+	valueReviewFilterRequired = "required"
+	valueReviewFilterApproved = "approved"
+	valueReviewFilterChanges  = "changes_requested"
+)
+
 // Defaults.
 const (
 	defaultLimit   = 30
@@ -105,6 +112,8 @@ const (
 
 	tuiConfirmPadX = 4
 	tuiConfirmPadY = 2
+	tuiOptionsPadX = 2
+	tuiOptionsPadY = 1
 
 	tuiJumpTimeout = 500 * time.Millisecond
 	tuiStatusFlash = 5 * time.Second
@@ -118,12 +127,13 @@ const (
 	tuiKeyEnter        = "enter"
 	tuiKeyEsc          = "esc"
 	tuiKeyLeft         = "left"
+	tuiKeyOptions      = "*"
 	tuiKeyPgDown       = "pgdown"
 	tuiKeyPgUp         = "pgup"
 	tuiKeyRight        = "right"
 	tuiKeyShiftDown    = "shift+down"
-	tuiKeySpace        = "space"
 	tuiKeyShiftUp      = "shift+up"
+	tuiKeySpace        = "space"
 	tuiKeyTab          = "tab"
 	tuiKeyUp           = "up"
 	tuiNonCursorPrefix = "  "

@@ -52,6 +52,65 @@ var (
 	styledOff = lg.NewStyle().Foreground(lg.Color("197")).Render("off")
 )
 
+// filterChoiceTrue/False are canonical string values for bool filter choices.
+const (
+	filterChoiceTrue  = "true"
+	filterChoiceFalse = "false"
+)
+
+// filterRow identifies a row in the filter options overlay.
+type filterRow int
+
+// Filter row indices (correspond to filterOptionDefs entries).
+const (
+	filterRowState filterRow = iota
+	filterRowDraft
+	filterRowBots
+	filterRowArchived
+	filterRowCI
+	filterRowReview
+)
+
+// filterChoice represents a single choice for a filter option in the overlay.
+type filterChoice struct {
+	label string // display text in overlay
+	value string // canonical internal value
+}
+
+// filterOptionDef defines a filter option row in the overlay.
+type filterOptionDef struct {
+	label   string
+	choices []filterChoice
+}
+
+// filterOptionDefs defines the filter options available in the overlay.
+// Bots value represents NoBot (true=hide). Archived value represents Archived flag (true=show).
+var filterOptionDefs = [...]filterOptionDef{
+	{"State", []filterChoice{
+		{"open", "open"},
+		{"closed", "closed"},
+		{"merged", "merged"},
+		{"ready", "ready"},
+		{"all", "all"},
+	}},
+	{
+		"Drafts",
+		[]filterChoice{{"show", ""}, {"hide", filterChoiceFalse}},
+	},
+	{"Bots", []filterChoice{{"show", filterChoiceFalse}, {"hide", filterChoiceTrue}}},
+	{"Archived", []filterChoice{{"show", filterChoiceTrue}, {"hide", filterChoiceFalse}}},
+	{"CI", []filterChoice{
+		{"success", "success"}, {"failure", "failure"}, {"pending", "pending"}, {"all", ""},
+	}},
+	{"Review", []filterChoice{
+		{"required", valueReviewFilterRequired},
+		{"approved", valueReviewFilterApproved},
+		{"changes", valueReviewFilterChanges},
+		{"none", valueReviewFilterNone},
+		{"all", ""},
+	}},
+}
+
 // tuiView tracks which view is active in the interactive TUI.
 type tuiView int
 
@@ -68,6 +127,7 @@ type tuiStyles struct {
 	confirmYes    lg.Style
 	confirmYesDim lg.Style
 	cursor        lg.Style
+	defaultChoice lg.Style
 	diffHead      lg.Style
 	helpKey       lg.Style
 	helpText      lg.Style
@@ -82,6 +142,7 @@ type tuiStyles struct {
 func newTuiStyles() tuiStyles {
 	return tuiStyles{
 		cursor:        lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
+		defaultChoice: lg.NewStyle().Foreground(lg.Color("75")).Faint(true),
 		selectedIndex: lg.NewStyle().Foreground(lg.Color("118")).Bold(true),
 		statusOK:      lg.NewStyle().Foreground(lg.Color("48")),
 		statusErr:     lg.NewStyle().Foreground(lg.Color("196")),
@@ -277,9 +338,11 @@ type spinnerTickMsg struct{ id int }
 
 // refreshResultMsg carries the result of a background data refresh.
 type refreshResultMsg struct {
-	rows  []TableRow
-	items []PRRowModel
-	err   error
+	rows      []TableRow
+	items     []PRRowModel
+	err       error
+	filterGen int // generation at time of launch; stale results are discarded
+	spinnerID int // refresh request generation; stale completions are discarded
 }
 
 // tuiModel is the Bubble Tea model for the interactive TUI.
@@ -314,6 +377,15 @@ type tuiModel struct {
 	removed       prKeys
 	selected      prKeys
 
+	// Filter options overlay.
+	showOptions   bool
+	optionsCursor filterRow
+	optionsValues [6]int // index into choices for each filterOptionDef
+	optionsReset  [6]bool
+
+	// Generation counter for discarding stale refresh results after filter changes.
+	filterGen int
+
 	// Diff queue for sequential multi-PR review.
 	diffQueue      []prKey // remaining PR keys to diff through
 	diffHistory    []prKey // previously viewed PR keys (for going back)
@@ -339,12 +411,15 @@ type tuiModel struct {
 
 	// Background auto-refresh.
 	autoRefresh bool
-	refreshing  bool    // true while a background refresh is in-flight
-	refreshID   int     // generation counter to discard stale refresh ticks
-	spinner     spinner // spinner animation frames
-	spinnerTick int     // current spinner frame index
-	spinnerID   int     // generation counter to discard stale ticks
-	showHelp    bool
+	refreshing  bool // true while a background refresh is in-flight
+	// showRefreshStatus is true when the in-flight refresh was triggered by
+	// applying options and should show a temporary "Refreshing..." status.
+	showRefreshStatus bool
+	refreshID         int     // generation counter to discard stale refresh ticks
+	spinner           spinner // spinner animation frames
+	spinnerTick       int     // current spinner frame index
+	spinnerID         int     // generation counter to discard stale ticks
+	showHelp          bool
 
 	// Cached GitHub login of the authenticated user (resolved lazily).
 	login string
@@ -362,6 +437,324 @@ type tuiModel struct {
 // isCurrentUserPR reports whether the given PR was authored by the authenticated user.
 func (m tuiModel) isCurrentUserPR(pr PullRequest) bool {
 	return m.login != "" && strings.EqualFold(pr.Author.Login, m.login)
+}
+
+// currentFilterValues maps the current CLI filter state to choice indices
+// for the filter overlay.
+func (m tuiModel) currentFilterValues() [6]int {
+	var vals [6]int
+
+	// State - use canonical string from the parsed enum.
+	vals[0] = filterChoiceIndex(filterRowState, m.cli.PRState().String())
+
+	// Draft
+	switch {
+	case m.cli.Draft == nil:
+		vals[1] = filterChoiceIndex(filterRowDraft, "")
+	case *m.cli.Draft:
+		vals[1] = filterChoiceIndex(filterRowDraft, "")
+	default:
+		vals[1] = filterChoiceIndex(filterRowDraft, filterChoiceFalse)
+	}
+
+	// Bots (NoBot: true=hide=index 1, false=show=index 0)
+	if m.cli.NoBot {
+		vals[2] = filterChoiceIndex(filterRowBots, filterChoiceTrue)
+	} else {
+		vals[2] = filterChoiceIndex(filterRowBots, filterChoiceFalse)
+	}
+
+	// Archived (true=show=index 0, false=hide=index 1)
+	if m.cli.Archived {
+		vals[3] = filterChoiceIndex(filterRowArchived, filterChoiceTrue)
+	} else {
+		vals[3] = filterChoiceIndex(filterRowArchived, filterChoiceFalse)
+	}
+
+	// CI - normalize from canonical CIStatus
+	vals[4] = filterChoiceIndex(filterRowCI, "")
+	if ci := m.cli.CI; ci != "" {
+		if parsed, ok := parseCIStatus(ci); ok {
+			vals[4] = filterChoiceIndex(filterRowCI, parsed.String())
+		}
+	}
+
+	// Review
+	vals[5] = filterChoiceIndex(filterRowReview, m.cli.Review)
+
+	return vals
+}
+
+func cloneCSVFlag(src CSVFlag) CSVFlag {
+	return CSVFlag{Values: append([]string(nil), src.Values...)}
+}
+
+func cloneCSVFlagPtr(src *CSVFlag) *CSVFlag {
+	if src == nil {
+		return nil
+	}
+	cloned := cloneCSVFlag(*src)
+	return &cloned
+}
+
+func cloneSearchParams(src *SearchParams) *SearchParams {
+	if src == nil {
+		return nil
+	}
+	cloned := *src
+	return &cloned
+}
+
+func cloneCLI(src *CLI) *CLI {
+	if src == nil {
+		return nil
+	}
+
+	dst := *src
+	dst.Query = append([]string(nil), src.Query...)
+	dst.Organization = cloneCSVFlag(src.Organization)
+	dst.Filter = append([]string(nil), src.Filter...)
+	dst.Author = cloneCSVFlagPtr(src.Author)
+	dst.Commenter = cloneCSVFlag(src.Commenter)
+	dst.Team = cloneCSVFlag(src.Team)
+	dst.Involves = cloneCSVFlag(src.Involves)
+	dst.ReviewRequested = cloneCSVFlag(src.ReviewRequested)
+	dst.ReviewedBy = cloneCSVFlag(src.ReviewedBy)
+	dst.Columns = cloneCSVFlag(src.Columns)
+
+	if src.Limit != nil {
+		limit := *src.Limit
+		dst.Limit = &limit
+	}
+	if src.Output != nil {
+		output := *src.Output
+		dst.Output = &output
+	}
+	if src.Sort != nil {
+		sort := *src.Sort
+		dst.Sort = &sort
+	}
+	if src.Merge != nil {
+		merge := *src.Merge
+		dst.Merge = &merge
+	}
+	if src.Draft != nil {
+		draft := *src.Draft
+		dst.Draft = &draft
+	}
+
+	return &dst
+}
+
+type refreshSnapshot struct {
+	cli      *CLI
+	cfg      *Config
+	p        *prl
+	tty      bool
+	resolver *AuthorResolver
+	rest     *api.RESTClient
+	params   *SearchParams
+	width    int
+}
+
+func newRefreshSnapshot(m tuiModel) refreshSnapshot {
+	return refreshSnapshot{
+		cli:      cloneCLI(m.cli),
+		cfg:      m.cfg,
+		p:        m.p,
+		tty:      m.tty,
+		resolver: m.resolver,
+		rest:     m.rest,
+		params:   cloneSearchParams(m.params),
+		width:    m.width,
+	}
+}
+
+func (r refreshSnapshot) run() refreshResultMsg {
+	prs, err := executeSearch(r.rest, r.params)
+	if err != nil {
+		return refreshResultMsg{err: err}
+	}
+	prs, err = applyFilters(r.cli, prs)
+	if err != nil {
+		return refreshResultMsg{err: err}
+	}
+
+	// Determine if post-enrichment filters require GraphQL data.
+	needsEnrich := r.cli.PRState() == StateReady || r.cli.CIStatus() != CINone
+
+	if len(prs) > 0 && (!r.cli.Quick || needsEnrich) {
+		if gql, gqlErr := newGraphQLClient(withDebug(r.cli.Debug)); gqlErr == nil {
+			enrichMergeStatus(gql, prs)
+		}
+	} else if len(prs) > 0 {
+		for i := range prs {
+			if prs[i].State == valueOpen {
+				prs[i].MergeStatus = MergeStatusBlocked
+			}
+		}
+	}
+
+	// Post-enrichment filters.
+	if r.cli.PRState() == StateReady {
+		prs = filterReady(prs)
+	}
+	if ci := r.cli.CIStatus(); ci != CINone {
+		prs = filterByCI(prs, ci)
+	}
+
+	orgFilter := singleOrg(r.cli.Organization.Values)
+	items := buildPRRowModels(prs, orgFilter, r.resolver)
+	termWidth := max(0, r.width-tuiListPrefixWidth(len(items)))
+	renderer := r.p.newTableRenderer(r.cli, r.tty, termWidth, table.WithShowIndex(false))
+	_, rows, _ := renderTUITable(r.p, renderer, items, "", false, termWidth)
+	return refreshResultMsg{rows: rows, items: items}
+}
+
+// selectedFilterValue returns the canonical value string for the given filter row.
+func (m tuiModel) selectedFilterValue(row filterRow) string {
+	return filterOptionDefs[row].choices[m.optionsValues[row]].value
+}
+
+func filterChoiceIndex(row filterRow, value string) int {
+	for i, c := range filterOptionDefs[row].choices {
+		if c.value == value {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m tuiModel) defaultStateValue() string {
+	if m.cfg != nil {
+		if parsed, ok := parsePRState(m.cfg.Default.State); ok {
+			return parsed.String()
+		}
+	}
+	return valueOpen
+}
+
+func (m tuiModel) defaultNoBotValue() bool {
+	return m.cfg != nil && !m.cfg.Default.Bots
+}
+
+func (m tuiModel) defaultFilterChoice(row filterRow) int {
+	switch row {
+	case filterRowState:
+		return filterChoiceIndex(row, m.defaultStateValue())
+	case filterRowDraft:
+		return filterChoiceIndex(row, "")
+	case filterRowBots:
+		if m.defaultNoBotValue() {
+			return filterChoiceIndex(row, filterChoiceTrue)
+		}
+		return filterChoiceIndex(row, filterChoiceFalse)
+	case filterRowArchived:
+		return filterChoiceIndex(row, filterChoiceFalse)
+	case filterRowCI, filterRowReview:
+		return filterChoiceIndex(row, "")
+	}
+	return 0
+}
+
+func (m *tuiModel) resetFilterRow(row filterRow) {
+	m.optionsReset[row] = true
+	m.optionsValues[row] = m.defaultFilterChoice(row)
+}
+
+func (m *tuiModel) applyFilterRow(row filterRow) {
+	switch row {
+	case filterRowState:
+		if m.optionsReset[row] {
+			m.cli.State = m.defaultStateValue()
+			return
+		}
+		m.cli.State = m.selectedFilterValue(row)
+	case filterRowDraft:
+		switch m.selectedFilterValue(row) {
+		case "":
+			m.cli.Draft = nil
+		case filterChoiceFalse:
+			m.cli.Draft = new(false)
+		}
+	case filterRowBots:
+		if m.optionsReset[row] {
+			m.cli.NoBot = m.defaultNoBotValue()
+			return
+		}
+		m.cli.NoBot = m.selectedFilterValue(row) == filterChoiceTrue
+	case filterRowArchived:
+		if m.optionsReset[row] {
+			m.cli.Archived = false
+			return
+		}
+		m.cli.Archived = m.selectedFilterValue(row) == filterChoiceTrue
+	case filterRowCI:
+		if m.optionsReset[row] {
+			m.cli.CI = ""
+			return
+		}
+		m.cli.CI = m.selectedFilterValue(row)
+	case filterRowReview:
+		if m.optionsReset[row] {
+			m.cli.Review = ""
+			return
+		}
+		m.cli.Review = m.selectedFilterValue(row)
+	}
+}
+
+func (m tuiModel) persistedFilterValue(row filterRow) any {
+	switch row {
+	case filterRowState:
+		if m.optionsReset[row] {
+			return ""
+		}
+		return m.cli.State
+	case filterRowDraft:
+		return m.cli.Draft
+	case filterRowBots:
+		if m.optionsReset[row] {
+			return (*bool)(nil)
+		}
+		return new(m.cli.NoBot)
+	case filterRowArchived:
+		if m.optionsReset[row] {
+			return (*bool)(nil)
+		}
+		return new(m.cli.Archived)
+	case filterRowCI:
+		if m.optionsReset[row] {
+			return ""
+		}
+		return m.cli.CI
+	case filterRowReview:
+		if m.optionsReset[row] {
+			return ""
+		}
+		return m.cli.Review
+	default:
+		return nil
+	}
+}
+
+// isFilterRowLocked returns true if the given filter row was explicitly set on CLI.
+func (m tuiModel) isFilterRowLocked(row filterRow) bool {
+	switch row {
+	case filterRowState:
+		return m.cli.stateExplicit
+	case filterRowDraft:
+		return m.cli.draftExplicit
+	case filterRowBots:
+		return m.cli.noBotExplicit
+	case filterRowArchived:
+		return m.cli.archivedExplicit
+	case filterRowCI:
+		return m.cli.ciExplicit
+	case filterRowReview:
+		return m.cli.reviewExplicit
+	}
+	return false
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -406,6 +799,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(tea.KeyMsg); ok && m.showHelp {
 		m.showHelp = false
 		return m, nil
+	}
+
+	// Handle filter options overlay keys.
+	if key, ok := msg.(tea.KeyMsg); ok && m.showOptions {
+		return m.updateOptionsOverlay(key)
 	}
 
 	switch msg := msg.(type) {
@@ -664,10 +1062,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshing = true
 		m.spinnerTick = 0
 		m.spinnerID++
-		model := m
+		snapshot := newRefreshSnapshot(m)
+		filterGen := m.filterGen
+		spinnerID := m.spinnerID
 		return m, tea.Batch(
 			m.scheduleSpinnerTick(),
-			func() tea.Msg { return model.backgroundRefresh() },
+			func() tea.Msg {
+				result := snapshot.run()
+				result.filterGen = filterGen
+				result.spinnerID = spinnerID
+				return result
+			},
 		)
 
 	case spinnerTickMsg:
@@ -678,20 +1083,39 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.scheduleSpinnerTick()
 
 	case refreshResultMsg:
-		m.refreshing = false
-		if msg.err == nil {
-			m.dismissedEmpty = false
-			// Re-apply sort to fresh rows before merging state.
-			rows := msg.rows
-			if m.sortColumn != "" {
-				renderer := m.tableRendererFor(len(msg.items))
-				rows = table.SortRows(rows, renderer.Columns(), m.sortColumn, m.sortAsc)
-			}
-			m = m.mergeRefresh(rows, msg.items)
-			// Re-render header with current sort state; the background
-			// goroutine may have captured a stale sortColumn/sortAsc.
-			m.header, _, m.colWidths = m.rerender()
+		if msg.spinnerID != m.spinnerID {
+			return m, nil
 		}
+		// Discard stale results from pre-filter-change refreshes.
+		if msg.filterGen != m.filterGen {
+			m.refreshing = false
+			m.showRefreshStatus = false
+			m.statusMsg = ""
+			return m, m.rescheduleRefresh()
+		}
+		m.refreshing = false
+		if msg.err != nil {
+			m.showRefreshStatus = false
+			return m, tea.Batch(
+				tuiFlashMessage(&m, "Refresh failed: "+msg.err.Error(), true),
+				m.rescheduleRefresh(),
+			)
+		}
+		if m.showRefreshStatus {
+			m.showRefreshStatus = false
+			m.statusMsg = ""
+		}
+		m.dismissedEmpty = false
+		// Re-apply sort to fresh rows before merging state.
+		rows := msg.rows
+		if m.sortColumn != "" {
+			renderer := m.tableRendererFor(len(msg.items))
+			rows = table.SortRows(rows, renderer.Columns(), m.sortColumn, m.sortAsc)
+		}
+		m = m.mergeRefresh(rows, msg.items)
+		// Re-render header with current sort state; the background
+		// goroutine may have captured a stale sortColumn/sortAsc.
+		m.header, _, m.colWidths = m.rerender()
 		return m, m.rescheduleRefresh()
 
 	case tea.KeyMsg:
@@ -1029,7 +1453,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "m":
-		targets := m.targetPRs()
+		targets := m.targetMergeablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -1157,7 +1581,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "C":
-		targets := m.targetPRs()
+		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -1207,6 +1631,10 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if pr == nil {
 			return m, nil
 		}
+		state := strings.ToLower(pr.State)
+		if pr.IsDraft || state == valueMerged || state == valueClosed {
+			return m, nil
+		}
 		idx := m.cursor
 		prCopy := *pr
 		m = m.prepareClaudeReviewConfirm(prCopy, idx)
@@ -1224,6 +1652,10 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if pr == nil {
 			return m, nil
 		}
+		state := strings.ToLower(pr.State)
+		if pr.IsDraft || state == valueMerged || state == valueClosed {
+			return m, nil
+		}
 		idx := m.cursor
 		prCopy := *pr
 		return m, func() tea.Msg {
@@ -1232,7 +1664,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "s":
-		targets := m.targetPRs()
+		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -1257,7 +1689,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "alt+s":
-		targets := m.targetPRs()
+		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -1324,7 +1756,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "u":
-		targets := m.targetPRs()
+		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -1378,7 +1810,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "alt+u":
-		targets := m.targetPRs()
+		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -1463,6 +1895,13 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					)
 				})
 		}
+
+	case tuiKeyOptions:
+		m.showOptions = true
+		m.optionsCursor = 0
+		m.optionsValues = m.currentFilterValues()
+		m.optionsReset = [6]bool{}
+		return m, nil
 
 	case "?":
 		m.showHelp = true
@@ -1593,7 +2032,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		if m.isCurrentUserPR(pr) {
+		state := strings.ToLower(pr.State)
+		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
 		flashStatus(&m, "Approving", &pr)
@@ -1617,25 +2057,37 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		actions := m.actions
-		if strings.ToLower(pr.State) == valueClosed {
-			flashStatus(&m, "Reopening", &pr)
-			return m, func() tea.Msg {
-				owner, repo := prOwnerRepo(pr)
-				err := actions.reopenPR(owner, repo, pr.Number)
-				return actionMsg{
-					index:  idx,
-					key:    makePRKey(pr),
-					action: tuiActionReopened,
-					err:    err,
-				}
-			}
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
 		}
+		actions := m.actions
 		flashStatus(&m, "Closing", &pr)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.closePR(owner, repo, pr.Number, "", false)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionClosed, err: err}
+		}
+	case "O":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		if strings.ToLower(pr.State) != valueClosed {
+			return m, nil
+		}
+		actions := m.actions
+		flashStatus(&m, "Reopening", &pr)
+		return m, func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			err := actions.reopenPR(owner, repo, pr.Number)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: tuiActionReopened,
+				err:    err,
+			}
 		}
 	case "u":
 		idx := m.resolveIndex(m.diffKey, -1)
@@ -1643,7 +2095,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		if m.isCurrentUserPR(pr) {
+		state := strings.ToLower(pr.State)
+		if m.isCurrentUserPR(pr) || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
 		flashStatus(&m, "Unsubscribing", &pr)
@@ -1665,6 +2118,10 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if pr.IsDraft || state == valueMerged || state == valueClosed {
+			return m, nil
+		}
 		flashStatus(&m, "Merging", &pr)
 		actions := m.actions
 		return m, func() tea.Msg {
@@ -1683,7 +2140,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		if m.isCurrentUserPR(pr) {
+		state := strings.ToLower(pr.State)
+		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
 		flashStatus(&m, "Approving/merging", &pr)
@@ -1712,6 +2170,10 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
@@ -1811,7 +2273,8 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		if m.isCurrentUserPR(pr) {
+		state := strings.ToLower(pr.State)
+		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
 		actions := m.actions
@@ -1832,7 +2295,8 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		if m.isCurrentUserPR(pr) {
+		state := strings.ToLower(pr.State)
+		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
 		flashStatus(&m, "Approving", &pr)
@@ -1850,6 +2314,10 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
@@ -1878,6 +2346,10 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if pr.IsDraft || state == valueMerged || state == valueClosed {
+			return m, nil
+		}
 		m.view = tuiViewList
 		m = m.prepareClaudeReviewConfirm(pr, idx)
 		return m, m.rescheduleRefresh()
@@ -1897,6 +2369,8 @@ func (m tuiModel) View() tea.View {
 	switch {
 	case m.showHelp:
 		v.Content = overlayCenter(v.Content, m.renderHelpOverlay(), m.width, m.height)
+	case m.showOptions:
+		v.Content = overlayCenter(v.Content, m.renderOptionsOverlay(), m.width, m.height)
 	case m.confirmAction != "":
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
 	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.statusMsg == "":
@@ -1964,17 +2438,16 @@ func (m tuiModel) viewList() tea.View {
 		)
 	}
 
-	// Separator.
-	if m.width > 0 {
-		b.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
-	}
-	b.WriteString("\n")
-
-	// Help line with status on RHS: in-flight action status takes priority over scroll position.
+	// Separator line, with active tags embedded inline when present.
+	// When filter is focused, place a ┬ junction to connect with the │ in the help line.
 	var help string
 	if m.filterInput.Focused() {
+		b.WriteString(m.renderListSeparator(m.filterHelpPipeCol()))
+		b.WriteString("\n")
 		help = m.renderFilterHelp()
 	} else {
+		b.WriteString(m.renderListSeparator())
+		b.WriteString("\n")
 		help = m.renderListHelp()
 	}
 	if m.statusMsg != "" {
@@ -2025,7 +2498,7 @@ func (m tuiModel) viewDiff() tea.View {
 		b.WriteString(headerLine)
 		b.WriteString("\n")
 		if m.width > 0 {
-			b.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
+			b.WriteString(m.styles.separator.Render(strings.Repeat(sepHorizontal, m.width)))
 		}
 		b.WriteString("\n")
 	}
@@ -2045,7 +2518,7 @@ func (m tuiModel) viewDiff() tea.View {
 
 	// Separator.
 	if m.width > 0 {
-		b.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
+		b.WriteString(m.styles.separator.Render(strings.Repeat(sepHorizontal, m.width)))
 	}
 	b.WriteString("\n")
 
@@ -2083,6 +2556,81 @@ func (m tuiModel) listViewport() int {
 	return m.height - h
 }
 
+const (
+	sepHorizontal = "─"
+	sepJunction   = "┬"
+)
+
+// separatorPad builds a run of ─ characters with an optional ┬ junction at col.
+func separatorPad(width, col int) string {
+	if col >= 0 && col < width {
+		return strings.Repeat(
+			sepHorizontal,
+			col,
+		) + sepJunction + strings.Repeat(
+			sepHorizontal,
+			width-col-1,
+		)
+	}
+	return strings.Repeat(sepHorizontal, width)
+}
+
+// junctionFrom extracts the junction column from a variadic arg, defaulting to -1.
+func junctionFrom(junctionCol []int) int {
+	if len(junctionCol) > 0 {
+		return junctionCol[0]
+	}
+	return -1
+}
+
+// renderListSeparator renders the separator line with an optional scroll status
+// centered in the bar. If junctionCol >= 0, a ┬ is placed at that visual column.
+// renderListSeparator renders the separator line. If junctionCol >= 0, a ┬ is
+// placed at that visual column to connect with a │ in the line below.
+func (m tuiModel) renderListSeparator(junctionCol ...int) string {
+	if m.width <= 0 {
+		return ""
+	}
+	col := junctionFrom(junctionCol)
+	tags := m.activeFilterTags()
+	if len(tags) > 0 {
+		return m.renderTagSeparator(tags, col)
+	}
+	return m.styles.separator.Render(separatorPad(m.width, col))
+}
+
+func (m tuiModel) renderTagSeparator(tags []string, col int) string {
+	filterTagStyle := lg.NewStyle().Foreground(lg.Color("116")).Faint(true)
+	filterTagKeyStyle := filterTagStyle.Bold(true)
+	renderedTags := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if key, value, ok := strings.Cut(tag, ":"); ok {
+			renderedTags = append(
+				renderedTags,
+				filterTagKeyStyle.Render(key)+filterTagStyle.Render(":"+value),
+			)
+		} else {
+			renderedTags = append(renderedTags, filterTagKeyStyle.Render(tag))
+		}
+	}
+	indicator := strings.Join(renderedTags, " ")
+	suffixText := strings.Repeat(sepHorizontal, 2) //nolint:mnd // fixed suffix width
+	suffix := m.styles.separator.Render(" " + suffixText)
+	const indicatorPrefix = " "
+	available := m.width - lg.Width(indicatorPrefix) - lg.Width(suffix)
+	if available <= 0 {
+		return xansi.Truncate(suffix, m.width, "")
+	}
+	if lg.Width(indicator) > available {
+		indicator = xansi.Truncate(indicator, available, "…")
+	}
+	pad := max(m.width-lg.Width(indicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
+	return m.styles.separator.Render(separatorPad(pad, col)) +
+		indicatorPrefix +
+		indicator +
+		suffix
+}
+
 func (m tuiModel) viewDetail() tea.View {
 	var b strings.Builder
 	viewport := m.detailViewport()
@@ -2102,11 +2650,11 @@ func (m tuiModel) viewDetail() tea.View {
 
 	// Separator.
 	if m.width > 0 {
-		b.WriteString(m.styles.separator.Render(strings.Repeat("─", m.width)))
+		b.WriteString(m.styles.separator.Render(strings.Repeat(sepHorizontal, m.width)))
 	}
 	b.WriteString("\n")
 
-	// Help line with status on RHS: in-flight action status takes priority over scroll %.
+	// Help line with status on RHS.
 	help := m.renderDetailHelp()
 	if m.statusMsg != "" {
 		b.WriteString(m.appendStatus(help))
@@ -2248,7 +2796,7 @@ func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 		return lg.NewStyle().Foreground(lg.Color("240")).Render("Draft")
 	}
 	state := strings.ToLower(pr.State)
-	if state == "merged" {
+	if state == valueMerged {
 		return lg.NewStyle().Foreground(lg.Color("141")).Render("Merged")
 	}
 	if state == "closed" {
@@ -2565,6 +3113,16 @@ func tuiFlashStatus(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
 	})
 }
 
+func tuiFlashMessage(m *tuiModel, text string, isErr bool) tea.Cmd {
+	m.statusID++
+	m.statusErr = isErr
+	m.statusMsg = text
+	id := m.statusID
+	return tea.Tick(tuiStatusFlash, func(time.Time) tea.Msg {
+		return clearStatusMsg{id: id}
+	})
+}
+
 func renderBatchFailurePrompt(msg batchActionMsg) string {
 	if len(msg.failures) == 0 {
 		return "Some batch actions failed."
@@ -2627,6 +3185,22 @@ func (m tuiModel) targetPRs() []targetPR {
 }
 
 // isCurrentUserDiff reports whether the current diff PR was authored by the authenticated user.
+// prStateForKey returns the lowercase state of the PR identified by key, or "" if not found.
+func (m tuiModel) prStateForKey(key prKey) string {
+	if idx := m.resolveIndex(key, -1); idx >= 0 && idx < len(m.rows) {
+		return strings.ToLower(m.rows[idx].Item.State)
+	}
+	return ""
+}
+
+// prIsDraftForKey reports whether the PR identified by key is a draft.
+func (m tuiModel) prIsDraftForKey(key prKey) bool {
+	if idx := m.resolveIndex(key, -1); idx >= 0 && idx < len(m.rows) {
+		return m.rows[idx].Item.PR.IsDraft
+	}
+	return false
+}
+
 func (m tuiModel) isCurrentUserDiff() bool {
 	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
 		return m.isCurrentUserPR(m.rows[idx].Item.PR)
@@ -2642,15 +3216,47 @@ func (m tuiModel) isCurrentUserDetail() bool {
 	return false
 }
 
-// targetApprovablePRs returns targetPRs excluding PRs authored by the current user.
+// targetActionablePRs returns targetPRs excluding merged and closed PRs.
+func (m tuiModel) targetActionablePRs() []targetPR {
+	targets := m.targetPRs()
+	n := 0
+	for _, t := range targets {
+		state := strings.ToLower(t.pr.State)
+		if state == valueMerged || state == valueClosed {
+			continue
+		}
+		targets[n] = t
+		n++
+	}
+	return targets[:n]
+}
+
+// targetMergeablePRs returns targetActionablePRs excluding draft PRs.
+func (m tuiModel) targetMergeablePRs() []targetPR {
+	targets := m.targetActionablePRs()
+	n := 0
+	for _, t := range targets {
+		if t.pr.IsDraft {
+			continue
+		}
+		targets[n] = t
+		n++
+	}
+	return targets[:n]
+}
+
+// targetApprovablePRs returns targetPRs excluding PRs authored by the current user,
+// draft PRs, and PRs that are merged or closed.
 func (m tuiModel) targetApprovablePRs() []targetPR {
 	targets := m.targetPRs()
 	n := 0
 	for _, t := range targets {
-		if !m.isCurrentUserPR(t.pr) {
-			targets[n] = t
-			n++
+		state := strings.ToLower(t.pr.State)
+		if m.isCurrentUserPR(t.pr) || t.pr.IsDraft || state == valueMerged || state == valueClosed {
+			continue
 		}
+		targets[n] = t
+		n++
 	}
 	return targets[:n]
 }
@@ -2819,16 +3425,30 @@ func (m tuiModel) listHelpPairs() []helpPair {
 		{tuiKeySpace, "select"},
 		{"/", "filter"},
 	}
-	if !m.isCurrentUserCursor() {
+	pr := m.currentPR()
+	var state string
+	var draft, ownPR bool
+	if pr != nil {
+		state = strings.ToLower(pr.State)
+		draft = pr.IsDraft
+		ownPR = m.isCurrentUserCursor()
+	}
+	actionable := pr != nil && state != valueMerged && state != valueClosed
+	if actionable && !ownPR && !draft {
 		pairs = append(pairs, helpPair{"a", "approve"})
 	}
-	pairs = append(pairs,
-		helpPair{"d", "diff"},
-		helpPair{"m", "merge"},
-		helpPair{"C", "close"},
-		helpPair{"o", "open"},
-	)
-	if hasClaudeReviewLauncher() {
+	pairs = append(pairs, helpPair{"d", "diff"})
+	if actionable && !draft {
+		pairs = append(pairs, helpPair{"m", "merge"})
+	}
+	if actionable {
+		pairs = append(pairs, helpPair{"C", "close"})
+	}
+	if state == valueClosed {
+		pairs = append(pairs, helpPair{"O", "reopen"})
+	}
+	pairs = append(pairs, helpPair{"o", "open"})
+	if actionable && !draft && hasClaudeReviewLauncher() {
 		pairs = append(pairs, helpPair{"r", "review"})
 	}
 	if m.autoRefresh {
@@ -2836,8 +3456,11 @@ func (m tuiModel) listHelpPairs() []helpPair {
 	} else {
 		pairs = append(pairs, helpPair{"R", "refresh " + styledOff})
 	}
-	pairs = append(pairs, helpPair{"?", "help"})
-	pairs = append(pairs, helpPair{"q", "quit"})
+	pairs = append(pairs,
+		helpPair{tuiKeyOptions, "options"},
+		helpPair{"?", "help"},
+		helpPair{"q", "quit"},
+	)
 	return pairs
 }
 
@@ -2845,44 +3468,69 @@ func (m tuiModel) renderListHelp() string {
 	return m.renderHelp(m.listHelpPairs())
 }
 
+func (m tuiModel) renderFilterSyntaxHints() string {
+	syntaxKey := lg.NewStyle().Foreground(lg.Color("208")).Bold(true)
+	syntaxDesc := lg.NewStyle().Foreground(lg.Color("216"))
+	syntaxPairs := []struct{ key, desc string }{
+		{"^", "start"},
+		{"$", "end"},
+		{"!", "negate"},
+	}
+	var parts []string
+	for _, p := range syntaxPairs {
+		parts = append(parts, syntaxKey.Render(p.key)+" "+syntaxDesc.Render(p.desc))
+	}
+	return " " + strings.Join(parts, "  ")
+}
+
+const filterHelpGap = "  "
+
+// filterHelpPipeCol returns the visual column of the │ separator in the filter help line.
+func (m tuiModel) filterHelpPipeCol() int {
+	return lg.Width(m.renderFilterSyntaxHints()) + len(filterHelpGap)
+}
+
 func (m tuiModel) renderFilterHelp() string {
 	pairs := []helpPair{
 		{"↑/↓", "prev/next"},
-		{"^", "title start"},
-		{"$", "title end"},
-		{"!", "negate"},
 		{tuiKeyEnter, "apply"},
 		{tuiKeyEsc, "exit"},
 	}
-	return m.renderHelp(pairs)
+	base := m.renderHelp(pairs)
+	sep := m.styles.separator.Render("│")
+	return m.renderFilterSyntaxHints() + filterHelpGap + sep + filterHelpGap + base
 }
 
 func (m tuiModel) diffHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{"↑/↓", "scroll"},
-		{"PgUp/PgDn", "page"},
 	}
-	if m.isCurrentUserDiff() {
+	state := m.prStateForKey(m.diffKey)
+	draft := m.prIsDraftForKey(m.diffKey)
+	ownPR := m.isCurrentUserDiff()
+	actionable := state != valueMerged && state != valueClosed
+	if actionable && !ownPR && !draft {
+		pairs = append(pairs, helpPair{"a/y", "approve"})
+	}
+	if actionable && !draft {
 		pairs = append(pairs, helpPair{"m", "merge"})
-	} else {
-		pairs = append(pairs,
-			helpPair{"a/y", "approve"},
-			helpPair{"m", "merge"},
-			helpPair{"A", "approve/merge"},
-			helpPair{"u", "unsubscribe"},
-		)
 	}
-	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
-		if strings.ToLower(m.rows[idx].Item.State) == valueClosed {
-			pairs = append(pairs, helpPair{"C", "reopen"})
-		} else {
-			pairs = append(pairs, helpPair{"C", "close"})
-		}
+	if actionable && !ownPR && !draft {
+		pairs = append(pairs, helpPair{"A", "approve/merge"})
 	}
-	pairs = append(pairs,
-		helpPair{"o", "open"},
-		helpPair{"s", "slack"},
-	)
+	if actionable && !ownPR {
+		pairs = append(pairs, helpPair{"u", "unsubscribe"})
+	}
+	if actionable {
+		pairs = append(pairs, helpPair{"C", "close"})
+	}
+	if state == valueClosed {
+		pairs = append(pairs, helpPair{"O", "reopen"})
+	}
+	pairs = append(pairs, helpPair{"o", "open"})
+	if actionable {
+		pairs = append(pairs, helpPair{"s", "slack"})
+	}
 
 	if m.diffQueueTotal > 0 {
 		if len(m.diffHistory) > 0 {
@@ -2903,17 +3551,19 @@ func (m tuiModel) renderDiffHelp() string {
 func (m tuiModel) detailHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{"↑/↓", "scroll"},
-		{"PgUp/PgDn", "page"},
 		{"d", "diff"},
 	}
-	if !m.isCurrentUserDetail() {
+	state := m.prStateForKey(m.detailKey)
+	draft := m.prIsDraftForKey(m.detailKey)
+	actionable := state != valueMerged && state != valueClosed
+	if actionable && !draft && !m.isCurrentUserDetail() {
 		pairs = append(pairs, helpPair{"a/y", "approve"})
 	}
-	pairs = append(pairs,
-		helpPair{"o", "open"},
-		helpPair{"s", "slack"},
-	)
-	if hasClaudeReviewLauncher() {
+	pairs = append(pairs, helpPair{"o", "open"})
+	if actionable {
+		pairs = append(pairs, helpPair{"s", "slack"})
+	}
+	if actionable && !draft && hasClaudeReviewLauncher() {
 		pairs = append(pairs, helpPair{"r", "review"})
 	}
 	pairs = append(pairs, helpPair{"q", "dismiss"})
@@ -2949,6 +3599,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		{"s", "Send to Slack"},
 		{"alt+s", "Send to Slack (no confirm)"},
 		{tuiKeyTab, "Cycle sort order"},
+		{tuiKeyOptions, "Options"},
 		{"R", "Toggle auto-refresh"},
 		{"?", "Toggle this help"},
 		{"q", "Quit"},
@@ -3019,6 +3670,101 @@ func (m tuiModel) renderHelpOverlay() string {
 	return m.styles.overlayBox.Render(b.String())
 }
 
+// renderOptionsOverlay renders the filter options overlay.
+func (m tuiModel) renderOptionsOverlay() string {
+	var b strings.Builder
+
+	labelWidth := 0
+	for _, def := range filterOptionDefs {
+		if w := len(def.label); w > labelWidth {
+			labelWidth = w
+		}
+	}
+
+	lines := make([]string, 0, len(filterOptionDefs))
+	for i, def := range filterOptionDefs {
+		var line strings.Builder
+		row := filterRow(i)
+		locked := m.isFilterRowLocked(row)
+
+		// Cursor prefix.
+		if row == m.optionsCursor {
+			line.WriteString(m.styles.cursor.Render("❯ "))
+		} else {
+			line.WriteString("  ")
+		}
+
+		// Label.
+		pad := strings.Repeat(" ", labelWidth-len(def.label))
+		label := pad + def.label + "  "
+		if locked {
+			line.WriteString(lg.NewStyle().Faint(true).Render(label))
+		} else {
+			line.WriteString(m.styles.helpKey.Render(label))
+		}
+
+		// Choices.
+		for i, c := range def.choices {
+			if i > 0 {
+				line.WriteString("  ")
+			}
+			selected := m.optionsValues[row] == i
+			isDefault := i == m.defaultFilterChoice(row)
+			switch {
+			case selected:
+				line.WriteString(
+					lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(c.label),
+				)
+			case isDefault:
+				line.WriteString(m.styles.defaultChoice.Render(c.label))
+			case locked:
+				if selected {
+					line.WriteString(
+						lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(c.label),
+					)
+				} else {
+					line.WriteString(
+						lg.NewStyle().Faint(true).Foreground(lg.Color("240")).Render(c.label),
+					)
+				}
+			default:
+				line.WriteString(lg.NewStyle().Faint(true).Render(c.label))
+			}
+		}
+
+		if locked {
+			line.WriteString(lg.NewStyle().Faint(true).Render("  (CLI)"))
+		}
+		lines = append(lines, line.String())
+	}
+
+	// Footer.
+	footer := m.styles.helpKey.Render("←/→") + m.styles.helpText.Render(" select") +
+		"  " + m.styles.helpKey.Render("space") + m.styles.helpText.Render(" cycle") +
+		"  " + m.styles.helpKey.Render("⌫") + m.styles.helpText.Render(" reset") +
+		"  " + m.styles.helpKey.Render("enter") + m.styles.helpText.Render(" apply") +
+		"  " + m.styles.helpKey.Render("esc") + m.styles.helpText.Render(" cancel")
+
+	contentWidth := lg.Width(footer)
+	for _, line := range lines {
+		contentWidth = max(contentWidth, lg.Width(line))
+	}
+
+	for i, line := range lines {
+		if filterRow(i) == m.optionsCursor {
+			b.WriteString(injectLineBackground(line, contentWidth))
+		} else {
+			b.WriteString(line)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(footer)
+
+	return m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX).Render(b.String())
+}
+
 // appendStatus appends the status message to the right of the last line of help,
 // or returns help unchanged if there's no status or not enough room.
 func (m tuiModel) appendStatus(help string) string {
@@ -3041,9 +3787,9 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	if lastNL >= 0 {
 		lastLine = help[lastNL+1:]
 	}
-	pad := m.width - lg.Width(lastLine) - lg.Width(status)
+	pad := m.width - lg.Width(lastLine) - lg.Width(status) - 1
 	if pad > 0 {
-		return help + strings.Repeat(" ", pad) + status
+		return help + strings.Repeat(" ", pad) + status + " "
 	}
 	return help
 }
@@ -3068,20 +3814,21 @@ func (m tuiModel) renderHelp(pairs []helpPair) string {
 	}
 
 	if m.width <= 0 {
-		return strings.Join(parts, gap)
+		return " " + strings.Join(parts, gap)
 	}
 
 	// Wrap into multiple lines if needed.
+	const indent = " "
 	var lines []string
 	var line string
-	lineWidth := 0
+	lineWidth := len(indent)
 	gapWidth := lg.Width(gap)
 	for i, part := range parts {
 		partWidth := lg.Width(part)
 		switch {
 		case i == 0:
-			line = part
-			lineWidth = partWidth
+			line = indent + part
+			lineWidth = len(indent) + partWidth
 		case lineWidth+gapWidth+partWidth > m.width:
 			lines = append(lines, line)
 			line = part
@@ -3111,6 +3858,121 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 func (m tuiModel) confirmDismiss() (tea.Model, tea.Cmd) {
 	m = m.clearConfirm()
 	return m, nil
+}
+
+func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case tuiKeyEsc, "q":
+		m.showOptions = false
+		return m, nil
+	case tuiKeyEnter, tuiKeyOptions:
+		return m.applyFilterOptions()
+	case "j", tuiKeyDown:
+		m.optionsCursor = min(m.optionsCursor+1, filterRow(len(filterOptionDefs)-1))
+	case "k", tuiKeyUp:
+		m.optionsCursor = max(m.optionsCursor-1, 0)
+	case "l", tuiKeyRight:
+		if !m.isFilterRowLocked(m.optionsCursor) {
+			m.optionsReset[m.optionsCursor] = false
+			n := len(filterOptionDefs[m.optionsCursor].choices)
+			m.optionsValues[m.optionsCursor] = min(m.optionsValues[m.optionsCursor]+1, n-1)
+		}
+	case tuiKeySpace:
+		if !m.isFilterRowLocked(m.optionsCursor) {
+			m.optionsReset[m.optionsCursor] = false
+			n := len(filterOptionDefs[m.optionsCursor].choices)
+			if n > 0 {
+				m.optionsValues[m.optionsCursor] = (m.optionsValues[m.optionsCursor] + 1) % n
+			}
+		}
+	case "h", tuiKeyLeft:
+		if !m.isFilterRowLocked(m.optionsCursor) {
+			m.optionsReset[m.optionsCursor] = false
+			m.optionsValues[m.optionsCursor] = max(m.optionsValues[m.optionsCursor]-1, 0)
+		}
+	case "backspace", "delete":
+		if !m.isFilterRowLocked(m.optionsCursor) {
+			m.resetFilterRow(m.optionsCursor)
+		}
+	}
+	return m, nil
+}
+
+func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
+	m.showOptions = false
+
+	// Map overlay values back to CLI fields, skipping CLI-explicit ones.
+	if !m.cli.stateExplicit {
+		m.applyFilterRow(filterRowState)
+	}
+	if !m.cli.draftExplicit {
+		m.applyFilterRow(filterRowDraft)
+	}
+	if !m.cli.noBotExplicit {
+		m.applyFilterRow(filterRowBots)
+	}
+	if !m.cli.archivedExplicit {
+		m.applyFilterRow(filterRowArchived)
+	}
+	if !m.cli.ciExplicit {
+		m.applyFilterRow(filterRowCI)
+	}
+	if !m.cli.reviewExplicit {
+		m.applyFilterRow(filterRowReview)
+	}
+
+	// Rebuild search params.
+	params, err := buildSearchQuery(m.cli, m.cfg)
+	if err != nil {
+		return m, tuiFlashStatus(&m, err.Error(), "", "", true)
+	}
+	m.params = params
+
+	// Persist non-explicit values to config.
+	type persistItem struct {
+		explicit bool
+		key      string
+		value    any
+	}
+	for _, p := range []persistItem{
+		{m.cli.stateExplicit, keyTUIFilterState, m.persistedFilterValue(filterRowState)},
+		{m.cli.ciExplicit, keyTUIFilterCI, m.persistedFilterValue(filterRowCI)},
+		{m.cli.reviewExplicit, keyTUIFilterReview, m.persistedFilterValue(filterRowReview)},
+		{m.cli.draftExplicit, keyTUIFilterDraft, m.persistedFilterValue(filterRowDraft)},
+		{m.cli.noBotExplicit, keyTUIFilterBots, m.persistedFilterValue(filterRowBots)},
+		{m.cli.archivedExplicit, keyTUIFilterArchived, m.persistedFilterValue(filterRowArchived)},
+	} {
+		if !p.explicit {
+			_ = saveConfigKey(p.key, p.value)
+		}
+	}
+
+	// Bump filter generation to discard any in-flight stale refresh results.
+	m.filterGen++
+
+	// Trigger background refresh with spinner.
+	m.refreshing = true
+	m.showRefreshStatus = true
+	m.spinnerTick = 0
+	m.spinnerID++
+	m.statusMsg = "Applying…"
+	m.statusErr = false
+
+	// Recompute cursor/offset since viewport may change (filter indicator line).
+	m.cursor = m.adjustedCursor()
+	m.offset = m.scrolledOffset()
+
+	filterGen := m.filterGen
+	spinCmd := m.scheduleSpinnerTick()
+	spinnerID := m.spinnerID
+	snapshot := newRefreshSnapshot(m)
+	refreshCmd := func() tea.Msg {
+		result := snapshot.run()
+		result.filterGen = filterGen
+		result.spinnerID = spinnerID
+		return result
+	}
+	return m, tea.Batch(spinCmd, refreshCmd)
 }
 
 func (m tuiModel) renderConfirmModal() string {
@@ -3250,7 +4112,7 @@ func overlayCenter(bg, fg string, width, height int) string {
 		if bgVisible > rightStart {
 			right = xansi.TruncateLeft(bgLine, rightStart, "")
 		}
-		bgLines[row] = left + fgLine + right
+		bgLines[row] = left + "\033[0m" + fgLine + right
 	}
 
 	return strings.Join(bgLines, "\n")
@@ -3471,36 +4333,6 @@ end tell`, shellCmd), nil
 	return "", fmt.Errorf("unsupported terminal %q", launcher)
 }
 
-// backgroundRefresh re-executes the search and returns a refreshResultMsg.
-func (m tuiModel) backgroundRefresh() refreshResultMsg {
-	prs, err := executeSearch(m.rest, m.params)
-	if err != nil {
-		return refreshResultMsg{err: err}
-	}
-	prs, err = applyFilters(m.cli, prs)
-	if err != nil {
-		return refreshResultMsg{err: err}
-	}
-	if len(prs) > 0 && !m.cli.Quick {
-		if gql, gqlErr := newGraphQLClient(withDebug(m.cli.Debug)); gqlErr == nil {
-			enrichMergeStatus(gql, prs)
-		}
-	} else if len(prs) > 0 {
-		for i := range prs {
-			if prs[i].State == valueOpen {
-				prs[i].MergeStatus = MergeStatusBlocked
-			}
-		}
-	}
-
-	orgFilter := singleOrg(m.cli.Organization.Values)
-	items := buildPRRowModels(prs, orgFilter, m.resolver)
-	termWidth := max(0, m.width-tuiListPrefixWidth(len(items)))
-	renderer := m.tableRendererFor(len(items))
-	_, rows, _ := renderTUITable(m.p, renderer, items, "", false, termWidth)
-	return refreshResultMsg{rows: rows, items: items}
-}
-
 type (
 	prKey  string
 	prKeys map[prKey]bool
@@ -3675,6 +4507,77 @@ func defaultSortAsc(column string) bool {
 	}
 }
 
+// applyTUIFilterDefaults overrides non-explicit CLI filter fields with persisted
+// tui.filters.* config values. Returns true if any field was changed.
+func applyTUIFilterDefaults(cli *CLI, cfg *Config) bool {
+	f := cfg.TUI.Filters
+	changed := false
+	if !cli.stateExplicit && f.State != "" {
+		cli.State = f.State
+		changed = true
+	}
+	if !cli.draftExplicit && f.Draft != nil {
+		if !*f.Draft {
+			cli.Draft = f.Draft
+			changed = true
+		}
+	}
+	if !cli.noBotExplicit && f.Bots != nil {
+		cli.NoBot = *f.Bots
+		changed = true
+	}
+	if !cli.archivedExplicit && f.Archived != nil {
+		cli.Archived = *f.Archived
+		changed = true
+	}
+	if !cli.ciExplicit && f.CI != "" {
+		cli.CI = f.CI
+		changed = true
+	}
+	if !cli.reviewExplicit && f.Review != "" {
+		cli.Review = f.Review
+		changed = true
+	}
+	return changed
+}
+
+// activeFilterTags returns display tags for all active filters that differ
+// from the most permissive baseline (state:open, draft:any, bots:show,
+// archived:hide, ci:any, review:any).
+func (m tuiModel) activeFilterTags() []string {
+	if m.cli == nil {
+		return nil
+	}
+	var tags []string
+	if s := m.cli.PRState(); s != StateOpen {
+		tags = append(tags, "state:"+s.String())
+	}
+	if m.cli.Draft != nil {
+		if *m.cli.Draft {
+			tags = append(tags, "drafts:show")
+		} else {
+			tags = append(tags, "drafts:hide")
+		}
+	}
+	if m.cli.NoBot {
+		tags = append(tags, "bots:hide")
+	}
+	if m.cli.Archived {
+		tags = append(tags, "archived")
+	}
+	if ci := m.cli.CIStatus(); ci != CINone {
+		if ci == CIFailure {
+			tags = append(tags, "ci:fail")
+		} else {
+			tags = append(tags, "ci:"+ci.String())
+		}
+	}
+	if m.cli.Review != "" {
+		tags = append(tags, "review:"+m.cli.Review)
+	}
+	return tags
+}
+
 // runTui launches the interactive TUI.
 func runTui(
 	p *prl,
@@ -3685,6 +4588,15 @@ func runTui(
 	params *SearchParams,
 	s spinner,
 ) error {
+	// Apply persisted TUI filter defaults before the initial fetch.
+	if applyTUIFilterDefaults(cli, cfg) {
+		var err error
+		params, err = buildSearchQuery(cli, cfg)
+		if err != nil {
+			return err
+		}
+	}
+
 	resolver := NewAuthorResolver(cfg)
 
 	type fetchResult struct {
@@ -3703,8 +4615,10 @@ func runTui(
 		if err != nil {
 			return fetchResult{err: err}
 		}
-		// Enrich merge status for table coloring.
-		if len(prs) > 0 && !cli.Quick {
+		// Determine if post-enrichment filters require GraphQL data.
+		needsEnrich := cli.PRState() == StateReady || cli.CIStatus() != CINone
+
+		if len(prs) > 0 && (!cli.Quick || needsEnrich) {
 			if gql, gqlErr := newGraphQLClient(withDebug(cli.Debug)); gqlErr == nil {
 				enrichMergeStatus(gql, prs)
 			}
@@ -3714,6 +4628,14 @@ func runTui(
 					prs[i].MergeStatus = MergeStatusBlocked
 				}
 			}
+		}
+
+		// Post-enrichment filters.
+		if cli.PRState() == StateReady {
+			prs = filterReady(prs)
+		}
+		if ci := cli.CIStatus(); ci != CINone {
+			prs = filterByCI(prs, ci)
 		}
 
 		orgFilter := singleOrg(cli.Organization.Values)

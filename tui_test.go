@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -249,6 +251,33 @@ func TestViewListNumbersVisibleRows(t *testing.T) {
 	require.Contains(t, out, "  1  beta")
 	require.NotContains(t, out, "alpha")
 	require.NotContains(t, out, "gamma")
+}
+
+func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
+	m := tuiModel{
+		height:      12,
+		width:       80,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+		cli:         &CLI{State: valueClosed},
+	}
+
+	out := ansi.Strip(m.viewList().Content)
+	lines := strings.Split(out, "\n")
+
+	found := false
+	for _, line := range lines {
+		if strings.HasSuffix(line, " state:closed ──") {
+			found = true
+			require.True(t, strings.HasPrefix(line, "──"))
+			break
+		}
+	}
+	require.True(t, found)
+	require.NotContains(t, out, " · ")
 }
 
 func TestUpdateListViewShiftDownSelectsAndMovesNext(t *testing.T) {
@@ -804,6 +833,658 @@ func TestMatchesTerm(t *testing.T) {
 			require.Equal(t, tt.want, matchesTerm(tt.text, tt.term))
 		})
 	}
+}
+
+// --- Filter options overlay tests ---
+
+func TestCurrentFilterValuesDefaultCLI(t *testing.T) {
+	cli := testCLI()
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	// testCLI() Normalize sets NoBot=true (from Default.Bots=false),
+	// so Bots is "hide" (index 1). Draft defaults to "show" (index 0), CI/Review default to "all",
+	// and Archived defaults to "hide" (index 1).
+	require.Equal(t, [6]int{0, 0, 1, 1, 3, 4}, vals)
+}
+
+func TestCurrentFilterValuesMapsStateCorrectly(t *testing.T) {
+	cli := testCLI()
+	cli.State = "merged"
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	require.Equal(t, 2, vals[0]) // "merged" is index 2
+}
+
+func TestCurrentFilterValuesMapsCIFromAlias(t *testing.T) {
+	cli := testCLI()
+	cli.CI = "s" // alias for "success"
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	require.Equal(t, 0, vals[4]) // "success" is index 0
+}
+
+func TestCurrentFilterValuesDraft(t *testing.T) {
+	cli := testCLI()
+	cli.Draft = new(false)
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	require.Equal(t, 1, vals[1]) // "hide" is index 1
+}
+
+func TestCurrentFilterValuesDraftTrueMapsToShow(t *testing.T) {
+	cli := testCLI()
+	cli.Draft = new(true)
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	require.Equal(t, 0, vals[1]) // "show" is index 0
+}
+
+func TestCurrentFilterValuesNoBots(t *testing.T) {
+	cli := testCLI()
+	cli.NoBot = true
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	require.Equal(t, 1, vals[2]) // "hide" is index 1
+}
+
+func TestCurrentFilterValuesArchived(t *testing.T) {
+	cli := testCLI()
+	cli.Archived = true
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	require.Equal(t, 0, vals[3]) // "show" is index 0
+}
+
+func TestUpdateOptionsOverlayNavigation(t *testing.T) {
+	m := tuiModel{
+		showOptions: true,
+		cli:         testCLI(),
+	}
+
+	// Down from 0 → 1
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, filterRowDraft, bm.optionsCursor)
+
+	// Up from 1 → 0
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, filterRowState, bm.optionsCursor)
+
+	// Up from 0 → 0 (clamped)
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, filterRowState, bm.optionsCursor)
+}
+
+func TestUpdateOptionsOverlayChangeValue(t *testing.T) {
+	m := tuiModel{
+		showOptions: true,
+		cli:         testCLI(),
+	}
+
+	// Right on state: 0→1 (open→closed)
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 1, bm.optionsValues[0])
+
+	// Left back: 1→0 (closed→open)
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'h', Text: "h"})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 0, bm.optionsValues[0])
+}
+
+func TestUpdateOptionsOverlaySpaceCyclesAndWraps(t *testing.T) {
+	m := tuiModel{
+		showOptions: true,
+		cli:         testCLI(),
+	}
+
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 1, bm.optionsValues[0])
+
+	bm.optionsValues[0] = len(filterOptionDefs[filterRowState].choices) - 1
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 0, bm.optionsValues[0])
+}
+
+func TestUpdateOptionsOverlayEscCancels(t *testing.T) {
+	m := tuiModel{
+		showOptions:   true,
+		optionsValues: [6]int{2, 0, 0, 0, 0, 0},
+		cli:           testCLI(),
+	}
+
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.showOptions)
+	// CLI state should be unchanged (was "open" before overlay)
+	require.Equal(t, valueOpen, bm.cli.State)
+}
+
+func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
+	cfg := &Config{
+		Default: Defaults{
+			Limit:  defaultLimit,
+			State:  valueOpen,
+			Output: valueTable,
+			Sort:   valueName,
+			Match:  "title",
+		},
+	}
+	cli := &CLI{}
+	cli.Normalize(cfg)
+	cli.stateExplicit = true
+	cli.draftExplicit = true
+	cli.noBotExplicit = true
+	cli.archivedExplicit = true
+	cli.ciExplicit = true
+	cli.reviewExplicit = true
+
+	m := tuiModel{
+		showOptions: true,
+		cli:         cli,
+		cfg:         cfg,
+	}
+
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: '*', Text: "*"})
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.showOptions)
+	require.True(t, bm.refreshing)
+}
+
+func TestUpdateOptionsOverlayLockedRowsAreNoOps(t *testing.T) {
+	cli := testCLI()
+	cli.stateExplicit = true
+	m := tuiModel{
+		showOptions: true,
+		cli:         cli,
+	}
+
+	// Right on locked row 0 → no change
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'l', Text: "l"})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 0, bm.optionsValues[0])
+
+	// Backspace on locked row → no change
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 0, bm.optionsValues[0])
+}
+
+func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
+	cli := testCLI()
+	cli.State = valueMerged
+	cli.stateExplicit = true
+	m := tuiModel{
+		cli:           cli,
+		styles:        newTuiStyles(),
+		optionsCursor: filterRowDraft,
+		optionsValues: [6]int{filterChoiceIndex(filterRowState, valueMerged)},
+	}
+
+	overlay := m.renderOptionsOverlay()
+
+	require.Contains(
+		t,
+		overlay,
+		lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(valueMerged),
+	)
+	require.Contains(t, overlay, lg.NewStyle().Faint(true).Render("  (CLI)"))
+}
+
+func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
+	cli := testCLI()
+	m := tuiModel{
+		cli:           cli,
+		styles:        newTuiStyles(),
+		optionsCursor: filterRowDraft,
+		optionsValues: tuiModel{cli: cli}.currentFilterValues(),
+	}
+
+	overlay := m.renderOptionsOverlay()
+
+	require.Contains(t, overlay, cursorLineBG)
+}
+
+func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
+	cfg := &Config{
+		Default: Defaults{
+			State: valueOpen,
+			Bots:  true,
+		},
+	}
+	cli := &CLI{}
+	cli.Normalize(cfg)
+
+	m := tuiModel{
+		cli:    cli,
+		cfg:    cfg,
+		styles: newTuiStyles(),
+	}
+	m.optionsCursor = filterRowDraft
+	m.optionsValues = m.currentFilterValues()
+
+	overlay := m.renderOptionsOverlay()
+
+	require.Contains(
+		t,
+		overlay,
+		lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(valueOpen),
+	)
+
+	m.optionsReset[filterRowState] = true
+	overlay = m.renderOptionsOverlay()
+
+	require.Contains(
+		t,
+		overlay,
+		lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(valueOpen),
+	)
+
+	m.optionsValues[filterRowState] = filterChoiceIndex(filterRowState, valueClosed)
+	m.optionsReset[filterRowState] = false
+	overlay = m.renderOptionsOverlay()
+
+	require.Contains(t, overlay, m.styles.defaultChoice.Render(valueOpen))
+}
+
+func TestUpdateOptionsOverlayResetSetsFirstChoice(t *testing.T) {
+	m := tuiModel{
+		showOptions:   true,
+		optionsValues: [6]int{3, 0, 0, 0, 0, 0}, // state = "ready"
+		cli:           testCLI(),
+	}
+
+	// Backspace resets to 0
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 0, bm.optionsValues[0])
+}
+
+func TestUpdateOptionsOverlayResetUsesConfigDefaults(t *testing.T) {
+	m := tuiModel{
+		showOptions: true,
+		cli:         testCLI(),
+		cfg: &Config{
+			Default: Defaults{
+				State: valueMerged,
+				Bots:  false,
+			},
+		},
+	}
+
+	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.optionsReset[filterRowState])
+	require.Equal(
+		t,
+		filterChoiceIndex(filterRowState, valueMerged),
+		bm.optionsValues[filterRowState],
+	)
+
+	bm.optionsCursor = filterRowBots
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.optionsReset[filterRowBots])
+	require.Equal(t, 1, bm.optionsValues[filterRowBots])
+
+	bm.optionsCursor = filterRowDraft
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.optionsReset[filterRowDraft])
+	require.Equal(t, 0, bm.optionsValues[filterRowDraft])
+
+	bm.optionsCursor = filterRowArchived
+	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.optionsReset[filterRowArchived])
+	require.Equal(t, 1, bm.optionsValues[filterRowArchived])
+}
+
+func TestActiveFilterTagsNoBotsFromTestCLI(t *testing.T) {
+	// testCLI() Normalize sets NoBot=true from Default.Bots=false,
+	// so "bots:hide" is always present.
+	cli := testCLI()
+	m := tuiModel{cli: cli}
+
+	tags := m.activeFilterTags()
+
+	require.Equal(t, []string{"bots:hide"}, tags)
+}
+
+func TestActiveFilterTagsEmptyWhenAllDefaults(t *testing.T) {
+	cli := &CLI{State: valueOpen}
+	m := tuiModel{cli: cli}
+
+	tags := m.activeFilterTags()
+
+	require.Empty(t, tags)
+}
+
+func TestActiveFilterTagsVariousFilters(t *testing.T) {
+	cli := testCLI()
+	cli.State = "merged"
+	cli.Draft = new(false)
+	cli.NoBot = true
+	cli.CI = "success"
+	cli.Review = "approved"
+	m := tuiModel{cli: cli}
+
+	tags := m.activeFilterTags()
+
+	require.Contains(t, tags, "state:merged")
+	require.Contains(t, tags, "drafts:hide")
+	require.Contains(t, tags, "bots:hide")
+	require.Contains(t, tags, "ci:success")
+	require.Contains(t, tags, "review:approved")
+}
+
+func TestActiveFilterTagsAbbreviatesCIFailure(t *testing.T) {
+	cli := testCLI()
+	cli.CI = "failure"
+	m := tuiModel{cli: cli}
+
+	tags := m.activeFilterTags()
+
+	require.Contains(t, tags, "ci:fail")
+	require.NotContains(t, tags, "ci:failure")
+}
+
+func TestActiveFilterTagsNilCLI(t *testing.T) {
+	m := tuiModel{}
+	require.Nil(t, m.activeFilterTags())
+}
+
+func TestListViewportAccountsForFilterIndicator(t *testing.T) {
+	// CLI with no active filter tags → no indicator line.
+	cliClean := &CLI{State: valueOpen}
+	m := tuiModel{
+		height:      20,
+		width:       80,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		cli:         cliClean,
+		p:           testPRL,
+	}
+
+	vpNoIndicator := m.listViewport()
+
+	// Activate a filter → tags render inline on the separator, so viewport stays the same.
+	cliClean.State = "merged"
+	vpWithIndicator := m.listViewport()
+
+	require.Equal(t, vpNoIndicator, vpWithIndicator)
+}
+
+func TestFilterGenStaleResultDiscarded(t *testing.T) {
+	items := testModels("org")[:1]
+	renderer := testPRL.newTableRenderer(testCLI(), true, 120, table.WithShowIndex(false))
+	rt := renderer.Render(items)
+
+	m := tuiModel{
+		items:       items,
+		rows:        rt.Rows,
+		header:      rt.Header,
+		colWidths:   rt.ColWidths,
+		width:       120,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+		cli:         testCLI(),
+		filterGen:   2,
+		autoRefresh: true, // needed for rescheduleRefresh to return non-nil
+	}
+
+	// Stale result with old filterGen should be discarded.
+	model, cmd := m.Update(refreshResultMsg{
+		items:     nil,
+		rows:      nil,
+		filterGen: 1,
+	})
+
+	require.NotNil(t, cmd) // rescheduleRefresh
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	// Items should not be cleared since the result was stale.
+	require.Len(t, bm.items, len(items))
+}
+
+func TestStaleRefreshResultWithOldSpinnerIDKeepsRefreshing(t *testing.T) {
+	m := tuiModel{
+		refreshing: true,
+		spinnerID:  2,
+		filterGen:  2,
+	}
+
+	model, cmd := m.Update(refreshResultMsg{
+		filterGen: 1,
+		spinnerID: 1,
+	})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.refreshing)
+}
+
+func TestRefreshResultCompletesSilently(t *testing.T) {
+	items := testModels("org")[:1]
+	renderer := testPRL.newTableRenderer(testCLI(), true, 120, table.WithShowIndex(false))
+	rt := renderer.Render(items)
+
+	m := tuiModel{
+		width:       120,
+		height:      12,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+		cli:         testCLI(),
+		refreshing:  true,
+		spinnerID:   1,
+		filterGen:   1,
+	}
+
+	model, cmd := m.Update(refreshResultMsg{
+		items:     items,
+		rows:      rt.Rows,
+		filterGen: 1,
+		spinnerID: 1,
+	})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.refreshing)
+	require.Empty(t, bm.statusMsg)
+	require.Zero(t, bm.statusID)
+}
+
+func TestApplyTUIFilterDefaultsSetsNonExplicitFields(t *testing.T) {
+	cli := &CLI{}
+	cli.Normalize(&Config{
+		Default: Defaults{
+			Limit:  defaultLimit,
+			State:  valueOpen,
+			Output: valueTable,
+			Sort:   valueName,
+			Match:  "title",
+		},
+	})
+
+	cfg := &Config{
+		TUI: TUIConfig{
+			Filters: TUIFiltersConfig{
+				State: "merged",
+				CI:    "success",
+			},
+		},
+	}
+
+	changed := applyTUIFilterDefaults(cli, cfg)
+
+	require.True(t, changed)
+	require.Equal(t, "merged", cli.State)
+	require.Equal(t, "success", cli.CI)
+}
+
+func TestApplyTUIFilterDefaultsSkipsExplicitFields(t *testing.T) {
+	cli := &CLI{
+		State: "closed",
+	}
+	cli.stateExplicit = true
+	cli.Normalize(&Config{
+		Default: Defaults{
+			Limit:  defaultLimit,
+			State:  valueOpen,
+			Output: valueTable,
+			Sort:   valueName,
+			Match:  "title",
+		},
+	})
+
+	cfg := &Config{
+		TUI: TUIConfig{
+			Filters: TUIFiltersConfig{
+				State: "merged",
+			},
+		},
+	}
+
+	changed := applyTUIFilterDefaults(cli, cfg)
+
+	require.False(t, changed)
+	require.Equal(t, "closed", cli.State) // not overridden
+}
+
+func TestApplyTUIFilterDefaultsIgnoresLegacyDraftTrue(t *testing.T) {
+	cli := &CLI{}
+	cli.Normalize(&Config{
+		Default: Defaults{
+			Limit:  defaultLimit,
+			State:  valueOpen,
+			Output: valueTable,
+			Sort:   valueName,
+			Match:  "title",
+		},
+	})
+
+	cfg := &Config{
+		TUI: TUIConfig{
+			Filters: TUIFiltersConfig{
+				Draft: new(true),
+			},
+		},
+	}
+
+	changed := applyTUIFilterDefaults(cli, cfg)
+
+	require.False(t, changed)
+	require.Nil(t, cli.Draft)
+}
+
+func TestApplyFilterOptionsResetClearsOverridesAndRestoresDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(t, os.WriteFile(cp, []byte(defaultConfigYAML), 0o600))
+
+	cfg := &Config{
+		Default: Defaults{
+			Limit:  defaultLimit,
+			State:  valueMerged,
+			Output: valueTable,
+			Sort:   valueName,
+			Match:  "title",
+			Bots:   false,
+		},
+	}
+
+	cli := &CLI{}
+	cli.Normalize(cfg)
+	cli.State = valueClosed
+	cli.NoBot = false
+	cli.Archived = true
+
+	m := tuiModel{
+		cli:      cli,
+		cfg:      cfg,
+		styles:   newTuiStyles(),
+		removed:  make(prKeys),
+		selected: make(prKeys),
+		p:        testPRL,
+	}
+	m.optionsReset[filterRowState] = true
+	m.optionsReset[filterRowBots] = true
+	m.optionsReset[filterRowArchived] = true
+
+	model, cmd := m.applyFilterOptions()
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, valueMerged, bm.cli.State)
+	require.True(t, bm.cli.NoBot)
+	require.False(t, bm.cli.Archived)
+
+	loaded, err := loadConfig()
+	require.NoError(t, err)
+	require.Empty(t, loaded.TUI.Filters.State)
+	require.Nil(t, loaded.TUI.Filters.Bots)
+	require.Nil(t, loaded.TUI.Filters.Archived)
 }
 
 func testReviewPullRequest() PullRequest {

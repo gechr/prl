@@ -92,8 +92,14 @@ type CLI struct {
 	Quick   bool   `name:"quick"   help:"Skip enrichment (merge status, auto-merge)" clib:"terse='Skip enrichment',group='Miscellaneous/1'"                                                                                       short:"Q"`
 	Verbose bool   `name:"verbose" help:"Enable verbose logging"                     clib:"terse='Verbose',group='Miscellaneous/1'"                                                                                               short:"v"`
 
-	sortExplicit   bool `kong:"-"`
-	outputExplicit bool `kong:"-"`
+	stateExplicit    bool `kong:"-"`
+	draftExplicit    bool `kong:"-"`
+	noBotExplicit    bool `kong:"-"`
+	archivedExplicit bool `kong:"-"`
+	ciExplicit       bool `kong:"-"`
+	reviewExplicit   bool `kong:"-"`
+	sortExplicit     bool `kong:"-"`
+	outputExplicit   bool `kong:"-"`
 }
 
 // Validate checks for mutually exclusive options.

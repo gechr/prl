@@ -206,13 +206,19 @@ const (
 	CIPending
 )
 
+const (
+	ciStatusSuccess = "success"
+	ciStatusFailure = "failure"
+	ciStatusPending = "pending"
+)
+
 func parseCIStatus(s string) (CIStatus, bool) {
 	switch s {
-	case "success", "s", "pass", "passed":
+	case ciStatusSuccess, "s", "pass", "passed":
 		return CISuccess, true
-	case "failure", "f", "fail", "failed":
+	case ciStatusFailure, "f", "fail", "failed":
 		return CIFailure, true
-	case "pending", "p":
+	case ciStatusPending, "p":
 		return CIPending, true
 	default:
 		return 0, false
@@ -222,11 +228,11 @@ func parseCIStatus(s string) (CIStatus, bool) {
 func (c CIStatus) String() string {
 	switch c {
 	case CISuccess:
-		return "success"
+		return ciStatusSuccess
 	case CIFailure:
-		return "failure"
+		return ciStatusFailure
 	case CIPending:
-		return "pending"
+		return ciStatusPending
 	case CINone:
 		return ""
 	}

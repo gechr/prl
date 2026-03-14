@@ -216,7 +216,7 @@ func completeSlackRecipients(cfg *Config) []string {
 		results = append(results, display+"\tChannel")
 	}
 
-	// Email completions from users.tf (e.g. "george@figment.io\tGeorge Henderson").
+	// Email completions from users.tf (e.g. "alice@example.com\tAlice Smith").
 	{
 		emailMap, err := parseUsersHCLEmails(cfg)
 		nameMap, _ := parseUsersHCLNames(cfg)

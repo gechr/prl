@@ -90,16 +90,16 @@ func TestRef(t *testing.T) {
 		Number: 42,
 		Repository: Repository{
 			Name:          "dockerfiles",
-			NameWithOwner: "figment-networks/dockerfiles",
+			NameWithOwner: "acme-corp/dockerfiles",
 		},
 	}
 
 	// Default: includes org
 	refSingleOrg = ""
-	require.Equal(t, "figment-networks/dockerfiles#42", pr.Ref())
+	require.Equal(t, "acme-corp/dockerfiles#42", pr.Ref())
 
 	// Single org: omits org
-	refSingleOrg = "figment-networks"
+	refSingleOrg = "acme-corp"
 	require.Equal(t, "dockerfiles#42", pr.Ref())
 
 	// Reset for other tests

@@ -287,7 +287,7 @@ func toPullRequest(item searchItem) PullRequest {
 	// Determine state: the API returns "open" or "closed"; we infer "merged"
 	state := strings.ToLower(item.State)
 	if state == "closed" && item.PullRequest.MergedAt != nil {
-		state = "merged"
+		state = valueMerged
 	}
 
 	// Parse repository from repository_url: https://api.github.com/repos/{owner}/{repo}

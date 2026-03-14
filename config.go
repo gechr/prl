@@ -52,6 +52,12 @@ const (
 	keySpinnerStyle         = "spinner.style"
 	keySpinnerColors        = "spinner.colors"
 	keyTUIAutoRefresh       = "tui.refresh.enabled"
+	keyTUIFilterArchived    = "tui.filters.archived"
+	keyTUIFilterBots        = "tui.filters.bots"
+	keyTUIFilterCI          = "tui.filters.ci"
+	keyTUIFilterDraft       = "tui.filters.draft"
+	keyTUIFilterReview      = "tui.filters.review"
+	keyTUIFilterState       = "tui.filters.state"
 	keyTUISortKey           = "tui.sort.key"
 	keyTUISortOrder         = "tui.sort.order"
 	keyVCS                  = "vcs"
@@ -104,9 +110,20 @@ type TUISortConfig struct {
 	Order string `koanf:"order"`
 }
 
+// TUIFiltersConfig holds persisted filter overrides for TUI mode.
+type TUIFiltersConfig struct {
+	State    string `koanf:"state"`
+	Draft    *bool  `koanf:"draft"`
+	Bots     *bool  `koanf:"bots"`
+	Archived *bool  `koanf:"archived"`
+	CI       string `koanf:"ci"`
+	Review   string `koanf:"review"`
+}
+
 // TUIConfig holds TUI-specific configuration.
 type TUIConfig struct {
 	AutoRefresh TUIAutoRefreshConfig `koanf:"refresh"`
+	Filters     TUIFiltersConfig     `koanf:"filters"`
 	Sort        TUISortConfig        `koanf:"sort"`
 }
 
@@ -165,6 +182,12 @@ func defaultConfig() map[string]any {
 		keyTerraformMemberDir:   "",
 		keySpinnerStyle:         defaultSpinner,
 		keyTUIAutoRefresh:       true,
+		keyTUIFilterArchived:    nil,
+		keyTUIFilterBots:        nil,
+		keyTUIFilterCI:          "",
+		keyTUIFilterDraft:       nil,
+		keyTUIFilterReview:      "",
+		keyTUIFilterState:       "",
 		keyTUISortKey:           "",
 		keyTUISortOrder:         "",
 		keySpinnerColors:        defaultSpinnerColors,
@@ -233,6 +256,28 @@ func loadConfig() (*Config, error) {
 				"invalid default.match %q (expected title, body, or comments)",
 				cfg.Default.Match,
 			)
+		}
+	}
+
+	// Validate tui.filters.*
+	if cfg.TUI.Filters.State != "" {
+		if _, ok := parsePRState(cfg.TUI.Filters.State); !ok {
+			return nil, fmt.Errorf("invalid tui.filters.state %q", cfg.TUI.Filters.State)
+		}
+	}
+	if cfg.TUI.Filters.CI != "" {
+		if _, ok := parseCIStatus(cfg.TUI.Filters.CI); !ok {
+			return nil, fmt.Errorf("invalid tui.filters.ci %q", cfg.TUI.Filters.CI)
+		}
+	}
+	if cfg.TUI.Filters.Review != "" {
+		switch cfg.TUI.Filters.Review {
+		case valueReviewFilterNone,
+			valueReviewFilterRequired,
+			valueReviewFilterApproved,
+			valueReviewFilterChanges:
+		default:
+			return nil, fmt.Errorf("invalid tui.filters.review %q", cfg.TUI.Filters.Review)
 		}
 	}
 
@@ -403,22 +448,24 @@ func mergeIntoAncestor(f *goyamlast.File, key string, value any) bool {
 		if pErr != nil {
 			continue
 		}
-		node, aErr := ancestorPath.ReadNode(f)
-		if aErr != nil {
+		if _, aErr := ancestorPath.ReadNode(f); aErr != nil {
 			continue
 		}
 
-		// Ancestor exists. Unmarshal its content, set the missing key, replace.
+		// Ancestor exists. Rewrite the full document with the missing nested key
+		// populated. This is less surgical than AST replacement, but it avoids
+		// indentation bugs when introducing a new child mapping under an existing
+		// ancestor (for example, adding tui.filters.* under an existing tui block).
 		var existing map[string]any
-		if uErr := goyaml.Unmarshal([]byte(node.String()), &existing); uErr != nil {
+		if uErr := goyaml.Unmarshal([]byte(f.String()), &existing); uErr != nil {
 			return false
 		}
 		if existing == nil {
 			existing = make(map[string]any)
 		}
 
-		// Deep-set the remaining path segments.
-		suffix := parts[depth:]
+		// Deep-set the full dotted path into the decoded document.
+		suffix := parts
 		cur := existing
 		for i, seg := range suffix {
 			if i == len(suffix)-1 {
@@ -435,12 +482,11 @@ func mergeIntoAncestor(f *goyamlast.File, key string, value any) bool {
 			return false
 		}
 
-		trimmed := strings.TrimRight(string(updated), "\n")
-		if rErr := ancestorPath.ReplaceWithReader(
-			f, strings.NewReader(trimmed),
-		); rErr != nil {
+		parsed, pErr := goyamlparser.ParseBytes(updated, goyamlparser.ParseComments)
+		if pErr != nil {
 			return false
 		}
+		*f = *parsed
 		return true
 	}
 	return false
@@ -499,6 +545,13 @@ tui:
   refresh:
     # Automatically refresh results in the background.
     enabled: true
+
+  # Persisted filter overrides for TUI mode.
+  # Set via the filter menu (alt+f) in the TUI.
+  # filters:
+  #   state: merged
+  #   draft: false
+  #   bots: false
 
   sort:
     # Persisted sort column and direction.

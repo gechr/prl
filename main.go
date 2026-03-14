@@ -102,6 +102,16 @@ func run() error {
 		return vErr
 	}
 
+	// Track which flags were explicitly set on CLI (before Normalize applies config defaults).
+	// Bool flags: true iff --flag was passed. Strings: non-empty iff --flag was passed.
+	// *bool: non-nil iff --flag was passed.
+	cli.stateExplicit = cli.State != ""
+	cli.draftExplicit = cli.Draft != nil
+	cli.noBotExplicit = cli.NoBot
+	cli.archivedExplicit = cli.Archived
+	cli.ciExplicit = cli.CI != ""
+	cli.reviewExplicit = cli.Review != ""
+
 	// Normalize with config defaults
 	cli.Normalize(cfg)
 
