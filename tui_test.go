@@ -669,7 +669,7 @@ func TestBatchActionFailuresSurfaceDetails(t *testing.T) {
 		action: tuiActionApproved,
 		count:  1,
 		failed: 1,
-		failures: []batchFailure{{
+		failures: []batchResult{{
 			key: makePRKey(pr),
 			ref: pr.Ref(),
 			url: pr.URL,

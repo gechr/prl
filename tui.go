@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
@@ -23,6 +24,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
+	"github.com/gechr/clog"
 	"github.com/gechr/prl/internal/table"
 	"github.com/gechr/prl/internal/term"
 )
@@ -212,14 +214,15 @@ type tuiAction int
 
 const (
 	tuiActionApproved tuiAction = iota
-	tuiActionClosed
-	tuiActionMerged
 	tuiActionAutomerged
+	tuiActionClosed
+	tuiActionCommented
 	tuiActionForceMerged
+	tuiActionMerged
 	tuiActionOpened
 	tuiActionReopened
-	tuiActionUnsubscribed
 	tuiActionReviewRequested
+	tuiActionUnsubscribed
 )
 
 func (a tuiAction) String() string {
@@ -228,6 +231,8 @@ func (a tuiAction) String() string {
 		return "Approved"
 	case tuiActionClosed:
 		return "Closed"
+	case tuiActionCommented:
+		return "Commented"
 	case tuiActionMerged:
 		return "Merged"
 	case tuiActionAutomerged:
@@ -254,6 +259,7 @@ func (a tuiAction) removes() bool {
 		tuiActionUnsubscribed:
 		return true
 	case tuiActionApproved,
+		tuiActionCommented,
 		tuiActionOpened,
 		tuiActionReopened,
 		tuiActionReviewRequested:
@@ -301,10 +307,10 @@ type batchActionMsg struct {
 	count    int
 	failed   int
 	keys     []prKey
-	failures []batchFailure
+	failures []batchResult
 }
 
-type batchFailure struct {
+type batchResult struct {
 	key prKey
 	ref string
 	url string
@@ -336,6 +342,10 @@ type refreshTickMsg struct{ id int }
 
 // spinnerTickMsg fires to advance the spinner animation frame.
 type spinnerTickMsg struct{ id int }
+
+// screenCheckMsg fires periodically to probe the cursor position and detect
+// external screen clears (e.g. Cmd+K in iTerm2).
+type screenCheckMsg struct{ id int }
 
 // refreshResultMsg carries the result of a background data refresh.
 type refreshResultMsg struct {
@@ -407,6 +417,8 @@ type tuiModel struct {
 	// Pending confirmation (e.g. close/merge).
 	confirmAction   string               // "close", "merge", "diff"
 	confirmPrompt   string               // prompt text for modal
+	confirmSubject  string               // target description for progress (e.g. "data-team#8", "3 PRs")
+	confirmURL      string               // optional URL for hyperlinking the subject in progress
 	confirmCmd      tea.Cmd              // command to run on confirmation
 	confirmCmdFn    func(string) tea.Cmd // command factory when confirmHasInput (receives input value)
 	confirmYes      bool                 // true = Yes selected, false = No selected
@@ -423,6 +435,8 @@ type tuiModel struct {
 	spinner           spinner // spinner animation frames
 	spinnerTick       int     // current spinner frame index
 	spinnerID         int     // generation counter to discard stale ticks
+	screenCheckID     int     // generation counter for screen-check heartbeats
+	repaintTick       bool    // toggled each heartbeat to invalidate the renderer cache
 	showHelp          bool
 
 	// Cached GitHub login of the authenticated user (resolved lazily).
@@ -765,10 +779,11 @@ func (m tuiModel) isFilterRowLocked(row filterRow) bool {
 }
 
 func (m tuiModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.scheduleScreenCheck()}
 	if m.autoRefresh {
-		return scheduleRefresh(len(m.items), m.refreshID)
+		cmds = append(cmds, scheduleRefresh(len(m.items), m.refreshID))
 	}
-	return nil
+	return tea.Batch(cmds...)
 }
 
 // scheduleRefresh returns a tea.Cmd that fires a refreshTickMsg after a delay
@@ -784,6 +799,25 @@ func (m tuiModel) scheduleSpinnerTick() tea.Cmd {
 	id := m.spinnerID
 	d := m.spinner.interval
 	return tea.Tick(d, func(time.Time) tea.Msg { return spinnerTickMsg{id: id} })
+}
+
+// scheduleScreenCheck returns a tea.Cmd that fires a screenCheckMsg after the
+// heartbeat interval, scoped to the current generation (screenCheckID).
+func (m tuiModel) scheduleScreenCheck() tea.Cmd {
+	id := m.screenCheckID
+	return tea.Tick(tuiScreenCheckInt, func(time.Time) tea.Msg {
+		return screenCheckMsg{id: id}
+	})
+}
+
+// applyRepaintMarker toggles the WindowTitle between two values so that
+// the renderer's viewEquals check sees a changed View on every heartbeat tick.
+// This forces a periodic full repaint, recovering from external screen clears
+// (e.g. Cmd+K in iTerm2) that the differential renderer cannot detect.
+func (m tuiModel) applyRepaintMarker(v *tea.View) {
+	if m.repaintTick {
+		v.WindowTitle = " "
+	}
 }
 
 // rescheduleRefresh invalidates older refresh ticks and schedules a new one.
@@ -1059,6 +1093,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.offset = m.scrolledOffset()
 			}
 			m.jumpDigit = 0
+		}
+		return m, nil
+
+	case screenCheckMsg:
+		if msg.id != m.screenCheckID {
+			return m, nil
+		}
+		return m, tea.Batch(tea.Raw(ansiDECXCPR), m.scheduleScreenCheck())
+
+	case tea.CursorPositionMsg:
+		// After an external screen clear (e.g. Cmd+K in iTerm2) the cursor
+		// ends up on the first row, which should never happen in a full-screen
+		// alt-screen view. Toggle repaintTick to invalidate viewEquals and
+		// sequence a ClearScreen (erases the renderer's internal screen state)
+		// followed by another cursor probe. On the second probe the scr is
+		// already erased and the toggled view forces a full repaint.
+		if msg.Y == 0 && m.height > 1 {
+			m.repaintTick = !m.repaintTick
+			return m, tea.Sequence(tea.ClearScreen, tea.Raw(ansiDECXCPR))
 		}
 		return m, nil
 
@@ -1341,6 +1394,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmAction = tuiActionApprove
 		m.confirmYes = true
 		if len(targets) == 1 {
+			m.confirmSubject = targets[0].pr.Ref()
+			m.confirmURL = targets[0].pr.URL
 			m.confirmPrompt = "Approve " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
@@ -1354,6 +1409,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("Approve %d PRs?", len(targets))
 			m.confirmCmd = func() tea.Msg {
 				return runBatchAction(
@@ -1443,9 +1499,11 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		m.confirmAction = "merge"
+		m.confirmAction = tuiActionMerge
 		m.confirmYes = true
 		if len(targets) == 1 {
+			m.confirmSubject = targets[0].pr.Ref()
+			m.confirmURL = targets[0].pr.URL
 			m.confirmPrompt = "Merge " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
@@ -1459,6 +1517,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("Merge %d PRs?", len(targets))
 			m.confirmCmd = func() tea.Msg {
 				return runBatchAction(
@@ -1483,9 +1542,11 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		m.confirmAction = "approve/merge"
+		m.confirmAction = tuiActionApproveMerge
 		m.confirmYes = true
 		if len(targets) == 1 {
+			m.confirmSubject = targets[0].pr.Ref()
+			m.confirmURL = targets[0].pr.URL
 			m.confirmPrompt = "Approve & merge " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
@@ -1507,6 +1568,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("Approve & merge %d PRs?", len(targets))
 			m.confirmCmd = func() tea.Msg {
 				return runBatchAction(
@@ -1534,9 +1596,11 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		m.confirmAction = "force-merge"
+		m.confirmAction = tuiActionForceMerge
 		m.confirmYes = true
 		if len(targets) == 1 {
+			m.confirmSubject = targets[0].pr.Ref()
+			m.confirmURL = targets[0].pr.URL
 			m.confirmPrompt = "Force-merge " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
@@ -1549,6 +1613,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("Force-merge %d PRs?", len(targets))
 			m.confirmCmd = func() tea.Msg {
 				return runBatchAction(
@@ -1571,11 +1636,13 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		m.confirmAction = "close"
+		m.confirmAction = tuiActionClose
 		m.confirmYes = true
 		m.confirmHasInput = true
 		m.confirmInput.SetValue("")
 		if len(targets) == 1 {
+			m.confirmSubject = targets[0].pr.Ref()
+			m.confirmURL = targets[0].pr.URL
 			m.confirmPrompt = "Close " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmdFn = func(comment string) tea.Cmd {
@@ -1591,6 +1658,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("Close %d PRs?", len(targets))
 			m.confirmCmdFn = func(comment string) tea.Cmd {
 				return func() tea.Msg {
@@ -1603,6 +1671,35 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 							return a.closePR(owner, repo, pr.Number, comment, false)
 						},
 					)
+				}
+			}
+		}
+		return m, m.confirmInput.Focus()
+
+	case "c":
+		pr := m.currentPR()
+		if pr == nil {
+			return m, nil
+		}
+		actions := m.actions
+		idx := m.cursor
+		prCopy := *pr
+		m.confirmAction = tuiActionComment
+		m.confirmSubject = prCopy.Ref()
+		m.confirmURL = prCopy.URL
+		m.confirmYes = true
+		m.confirmHasInput = true
+		m.confirmInput.SetValue("")
+		m.confirmPrompt = "Comment on " + styledRef(&prCopy) + "?"
+		m.confirmCmdFn = func(comment string) tea.Cmd {
+			return func() tea.Msg {
+				owner, repo := prOwnerRepo(prCopy)
+				err := actions.comment(owner, repo, prCopy.Number, comment)
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(prCopy),
+					action: tuiActionCommented,
+					err:    err,
 				}
 			}
 		}
@@ -1664,11 +1761,14 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		count := len(prs)
 		cfg := m.cfg
 		cli := m.cli
-		m.confirmAction = "send-slack"
+		m.confirmAction = tuiActionSendSlack
 		m.confirmYes = true
 		if count == 1 {
+			m.confirmSubject = prs[0].Ref()
+			m.confirmURL = prs[0].URL
 			m.confirmPrompt = "Send " + styledRef(&prs[0]) + " to Slack?"
 		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", count)
 			m.confirmPrompt = fmt.Sprintf("Send %d PRs to Slack?", count)
 		}
 		m.confirmCmd = func() tea.Msg {
@@ -1677,7 +1777,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "alt+s":
+	case tuiKeyAltS:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1687,6 +1787,12 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			prs[i] = t.pr
 		}
 		count := len(prs)
+		if count == 1 {
+			flashStatus(&m, "Sending", &prs[0])
+		} else {
+			m.statusMsg = m.styles.statusAction.Render(fmt.Sprintf("Sending %d PRs", count))
+			m.statusErr = false
+		}
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
@@ -1753,9 +1859,11 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		rest := m.rest
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		m.confirmAction = "unassign"
+		m.confirmAction = tuiActionUnassign
 		m.confirmYes = true
 		if len(targets) == 1 {
+			m.confirmSubject = targets[0].pr.Ref()
+			m.confirmURL = targets[0].pr.URL
 			m.confirmPrompt = "Unassign & unsubscribe from " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
@@ -1778,6 +1886,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("Unassign & unsubscribe from %d PRs?", len(targets))
 			m.confirmCmd = func() tea.Msg {
 				login, err := getCurrentLogin(rest)
@@ -1786,7 +1895,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						action:   tuiActionUnsubscribed,
 						count:    len(batch),
 						failed:   len(batch),
-						failures: batchFailuresForTargets(batch, err),
+						failures: batchResultsForTargets(batch, err),
 					}
 				}
 				return runBatchAction(actions, batch, tuiActionUnsubscribed,
@@ -1836,7 +1945,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					action:   tuiActionUnsubscribed,
 					count:    len(batch),
 					failed:   len(batch),
-					failures: batchFailuresForTargets(batch, err),
+					failures: batchResultsForTargets(batch, err),
 				}
 			}
 			return runBatchAction(actions, batch, tuiActionUnsubscribed,
@@ -1900,7 +2009,9 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.autoRefresh = !m.autoRefresh
 		// Persist to config file in the background.
 		enabled := m.autoRefresh
-		_ = saveConfigKey(keyTUIAutoRefresh, enabled)
+		if err := saveConfigKey(keyTUIAutoRefresh, enabled); err != nil {
+			clog.Warn().Err(err).Msg("Failed to persist auto-refresh setting")
+		}
 		if m.autoRefresh {
 			return m, m.rescheduleRefresh()
 		}
@@ -2054,7 +2165,9 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		actions := m.actions
-		m.confirmAction = "close"
+		m.confirmAction = tuiActionClose
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
 		m.confirmInput.SetValue("")
@@ -2064,6 +2177,33 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.closePR(owner, repo, pr.Number, comment, false)
 				return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionClosed, err: err}
+			}
+		}
+		return m, m.confirmInput.Focus()
+	case "c":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		actions := m.actions
+		m.confirmAction = tuiActionComment
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
+		m.confirmYes = true
+		m.confirmHasInput = true
+		m.confirmInput.SetValue("")
+		m.confirmPrompt = "Comment on " + styledRef(&pr) + "?"
+		m.confirmCmdFn = func(comment string) tea.Cmd {
+			return func() tea.Msg {
+				owner, repo := prOwnerRepo(pr)
+				err := actions.comment(owner, repo, pr.Number, comment)
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(pr),
+					action: tuiActionCommented,
+					err:    err,
+				}
 			}
 		}
 		return m, m.confirmInput.Focus()
@@ -2175,6 +2315,29 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		cfg := m.cfg
 		cli := m.cli
+		m.confirmAction = tuiActionSendSlack
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
+		m.confirmYes = true
+		m.confirmPrompt = "Send " + styledRef(&pr) + " to Slack?"
+		m.confirmCmd = func() tea.Msg {
+			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			return slackSentMsg{count: 1, output: out, err: err}
+		}
+		return m, nil
+	case tuiKeyAltS:
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		flashStatus(&m, "Sending", &pr)
+		cfg := m.cfg
+		cli := m.cli
 		return m, func() tea.Msg {
 			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
 			return slackSentMsg{count: 1, output: out, err: err}
@@ -2283,6 +2446,8 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = tuiViewList
 		m.rescheduleRefresh()
 		m.confirmAction = tuiActionApprove
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
 		m.confirmYes = true
 		m.confirmPrompt = "Approve " + styledRef(&pr) + "?"
 		m.confirmCmd = func() tea.Msg {
@@ -2310,6 +2475,35 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			err := actions.approve(owner, repo, pr.Number)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
+	case "c":
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		actions := m.actions
+		m.view = tuiViewList
+		m.rescheduleRefresh()
+		m.confirmAction = tuiActionComment
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
+		m.confirmYes = true
+		m.confirmHasInput = true
+		m.confirmInput.SetValue("")
+		m.confirmPrompt = "Comment on " + styledRef(&pr) + "?"
+		m.confirmCmdFn = func(comment string) tea.Cmd {
+			return func() tea.Msg {
+				owner, repo := prOwnerRepo(pr)
+				err := actions.comment(owner, repo, pr.Number, comment)
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(pr),
+					action: tuiActionCommented,
+					err:    err,
+				}
+			}
+		}
+		return m, m.confirmInput.Focus()
 	case "s":
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2320,6 +2514,31 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
+		cfg := m.cfg
+		cli := m.cli
+		m.view = tuiViewList
+		m.rescheduleRefresh()
+		m.confirmAction = tuiActionSendSlack
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
+		m.confirmYes = true
+		m.confirmPrompt = "Send " + styledRef(&pr) + " to Slack?"
+		m.confirmCmd = func() tea.Msg {
+			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			return slackSentMsg{count: 1, output: out, err: err}
+		}
+		return m, nil
+	case tuiKeyAltS:
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		flashStatus(&m, "Sending", &pr)
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
@@ -2406,19 +2625,22 @@ func (m tuiModel) viewList() tea.View {
 	for pos, idx := range visible[start:end] {
 		index := m.renderTuiIndex(start+pos+1, m.selected[m.rowKeyAt(idx)])
 		display := index + tuiNonCursorPrefix + m.rows[idx].Display
-		if idx == m.cursor {
-			line := m.styles.cursor.Render(tuiCursorPrefix) + display
-			// Inject background color throughout the line so it persists
-			// through existing ANSI codes in the display string.
-			// Skip highlight when there's only one visible result.
-			if len(visible) > 1 {
-				b.WriteString(injectLineBackground(line, m.width))
-			} else {
-				b.WriteString(line)
+		if idx != m.cursor {
+			b.WriteString(tuiNonCursorPrefix + display + "\n")
+			continue
+		}
+		line := m.styles.cursor.Render(tuiCursorPrefix) + display
+		// Inject background color throughout the line so it persists
+		// through existing ANSI codes in the display string.
+		// Skip highlight when there's only one visible result.
+		if len(visible) > 1 {
+			bg := cursorLineBG
+			if m.selected[m.rowKeyAt(idx)] {
+				bg = cursorLineSelectedBG
 			}
+			b.WriteString(injectLineBackground(line, m.width, bg))
 		} else {
-			b.WriteString(tuiNonCursorPrefix)
-			b.WriteString(display)
+			b.WriteString(line)
 		}
 		b.WriteString("\n")
 	}
@@ -2469,6 +2691,7 @@ func (m tuiModel) viewList() tea.View {
 	v := tea.NewView(b.String())
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	m.applyRepaintMarker(&v)
 	return v
 }
 
@@ -2495,7 +2718,7 @@ func (m tuiModel) viewDiff() tea.View {
 			titleStyle.Render(normalizeTUIDisplayText(pr.Title)) +
 			xansi.ResetHyperlink()
 		if m.width > 0 && lg.Width(headerLine) > m.width {
-			headerLine = xansi.Truncate(headerLine, m.width-1, "…")
+			headerLine = xansi.Truncate(headerLine, m.width-1, valueEllipsis)
 		}
 		b.WriteString(headerLine)
 		b.WriteString("\n")
@@ -2546,6 +2769,7 @@ func (m tuiModel) viewDiff() tea.View {
 	if m.confirmInputPending() {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
 	}
+	m.applyRepaintMarker(&v)
 	return v
 }
 
@@ -2627,7 +2851,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 		return xansi.Truncate(suffix, m.width, "")
 	}
 	if lg.Width(indicator) > available {
-		indicator = xansi.Truncate(indicator, available, "…")
+		indicator = xansi.Truncate(indicator, available, valueEllipsis)
 	}
 	pad := max(m.width-lg.Width(indicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
 	return m.styles.separator.Render(separatorPad(pad, col)) +
@@ -2680,6 +2904,7 @@ func (m tuiModel) viewDetail() tea.View {
 	if m.confirmInputPending() {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
 	}
+	m.applyRepaintMarker(&v)
 	return v
 }
 
@@ -2740,17 +2965,56 @@ func (m tuiModel) renderDetailContent() []string {
 		lines = append(lines, headerStyle.Render("Reviews"))
 		lines = append(lines, "")
 		for _, r := range m.detail.Reviews {
-			icon := "💬"
+			icon := iconCommented
 			switch r.State {
 			case valueReviewApproved:
-				icon = "✅"
+				icon = iconApproved
 			case valueReviewChanges:
-				icon = "❌"
+				icon = iconRejected
 			case valueReviewDismissed:
-				icon = "🚫"
+				icon = iconDismissed
 			}
 			name := m.resolver.Resolve(r.User)
 			lines = append(lines, fmt.Sprintf("%s%s %s", detailIndent, icon, name))
+		}
+		lines = append(lines, "")
+	}
+
+	// Checks.
+	if len(m.detail.Checks) > 0 {
+		lines = append(lines, headerStyle.Render("Checks"))
+		lines = append(lines, "")
+		for _, c := range m.detail.Checks {
+			var icon string
+			switch {
+			case c.Status != "completed":
+				icon = "🔄"
+			case c.Conclusion == ciStatusSuccess:
+				icon = iconApproved
+			case c.Conclusion == ciStatusFailure:
+				icon = iconRejected
+			case c.Conclusion == "cancelled":
+				icon = iconDismissed
+			case c.Conclusion == "skipped":
+				icon = "⏭️"
+			case c.Conclusion == "timed_out":
+				icon = "⏱️"
+			case c.Conclusion == "action_required":
+				icon = "⚠️"
+			case c.Conclusion == "neutral":
+				icon = "➖"
+			case c.Conclusion == "stale":
+				icon = "💤"
+			default:
+				icon = "❓"
+			}
+			line := fmt.Sprintf("%s%s %s", detailIndent, icon, c.Name)
+			if c.Duration > 0 {
+				line += " " + lg.NewStyle().
+					Foreground(lg.Color("245")).
+					Render(fmt.Sprintf("[%s]", c.Duration.Round(time.Second)))
+			}
+			lines = append(lines, normalizeTUIDisplayText(line))
 		}
 		lines = append(lines, "")
 	}
@@ -2828,6 +3092,11 @@ func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 const (
 	detailIndent     = "  "
 	defaultTermWidth = 80
+
+	iconApproved  = "✅"
+	iconRejected  = "❌"
+	iconDismissed = "🚫"
+	iconCommented = "💬"
 )
 
 func (m tuiModel) renderMarkdown(body string) []string {
@@ -3070,20 +3339,30 @@ func runBatchAction(
 	action tuiAction,
 	fn func(*ActionRunner, PullRequest) error,
 ) batchActionMsg {
-	var succeeded []prKey
-	var failures []batchFailure
-	failed := 0
-	for _, t := range targets {
-		if err := fn(actions, t.pr); err != nil {
-			failed++
-			failures = append(failures, batchFailure{
+	results := make([]batchResult, len(targets))
+	var wg sync.WaitGroup
+	wg.Add(len(targets))
+	for i, t := range targets {
+		go func(i int, t targetPR) {
+			defer wg.Done()
+			results[i] = batchResult{
 				key: makePRKey(t.pr),
 				ref: t.pr.Ref(),
 				url: t.pr.URL,
-				err: err,
-			})
+				err: fn(actions, t.pr),
+			}
+		}(i, t)
+	}
+	wg.Wait()
+	var succeeded []prKey
+	var failures []batchResult
+	failed := 0
+	for _, r := range results {
+		if r.err != nil {
+			failed++
+			failures = append(failures, r)
 		} else {
-			succeeded = append(succeeded, makePRKey(t.pr))
+			succeeded = append(succeeded, r.key)
 		}
 	}
 	return batchActionMsg{
@@ -3163,10 +3442,10 @@ type targetPR struct {
 	pr    PullRequest
 }
 
-func batchFailuresForTargets(targets []targetPR, err error) []batchFailure {
-	failures := make([]batchFailure, 0, len(targets))
+func batchResultsForTargets(targets []targetPR, err error) []batchResult {
+	failures := make([]batchResult, 0, len(targets))
 	for _, t := range targets {
-		failures = append(failures, batchFailure{
+		failures = append(failures, batchResult{
 			key: makePRKey(t.pr),
 			ref: t.pr.Ref(),
 			url: t.pr.URL,
@@ -3450,6 +3729,7 @@ func (m tuiModel) listHelpPairs() []helpPair {
 	if actionable && !draft {
 		pairs = append(pairs, helpPair{"m", "merge"})
 	}
+	pairs = append(pairs, helpPair{"c", "comment"})
 	if actionable {
 		pairs = append(pairs, helpPair{"C", "close"})
 	}
@@ -3530,6 +3810,7 @@ func (m tuiModel) diffHelpPairs() []helpPair {
 	if actionable && !ownPR {
 		pairs = append(pairs, helpPair{"u", "unsubscribe"})
 	}
+	pairs = append(pairs, helpPair{"c", "comment"})
 	if actionable {
 		pairs = append(pairs, helpPair{"C", "close"})
 	}
@@ -3568,6 +3849,7 @@ func (m tuiModel) detailHelpPairs() []helpPair {
 	if actionable && !draft && !m.isCurrentUserDetail() {
 		pairs = append(pairs, helpPair{"a/y", "approve"})
 	}
+	pairs = append(pairs, helpPair{"c", "comment"})
 	pairs = append(pairs, helpPair{"o", "open"})
 	if actionable {
 		pairs = append(pairs, helpPair{"s", "slack"})
@@ -3761,7 +4043,7 @@ func (m tuiModel) renderOptionsOverlay() string {
 
 	for i, line := range lines {
 		if filterRow(i) == m.optionsCursor {
-			b.WriteString(injectLineBackground(line, contentWidth))
+			b.WriteString(injectLineBackground(line, contentWidth, cursorLineBG))
 		} else {
 			b.WriteString(line)
 		}
@@ -3858,6 +4140,18 @@ func (m tuiModel) helpLines(pairs []helpPair) int {
 	return strings.Count(m.renderHelp(pairs), "\n") + 1
 }
 
+// confirmActionVerb maps confirm action names to in-progress verbs.
+var confirmActionVerb = map[string]string{
+	tuiActionApprove:      "Approving",
+	tuiActionApproveMerge: "Approving & merging",
+	tuiActionClose:        "Closing",
+	tuiActionComment:      "Commenting",
+	tuiActionForceMerge:   "Force-merging",
+	tuiActionMerge:        "Merging",
+	tuiActionSendSlack:    "Sending to Slack",
+	tuiActionUnassign:     "Unassigning",
+}
+
 func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.confirmHasInput && m.confirmCmdFn != nil {
@@ -3865,7 +4159,26 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 	} else {
 		cmd = m.confirmCmd
 	}
+	verb := confirmActionVerb[m.confirmAction]
+	subject := m.confirmSubject
+	url := m.confirmURL
 	m = m.clearConfirm()
+	if verb != "" {
+		if subject != "" {
+			styledSubject := lg.NewStyle().Foreground(lg.Color("117")).Render(subject)
+			if url != "" {
+				styledSubject = xansi.SetHyperlink(url) + styledSubject + xansi.ResetHyperlink()
+			}
+			m.statusMsg = m.styles.statusAction.Render(
+				verb,
+			) + " " + styledSubject + m.styles.statusAction.Render(
+				valueEllipsis,
+			)
+		} else {
+			m.statusMsg = m.styles.statusAction.Render(verb + valueEllipsis)
+		}
+		m.statusErr = false
+	}
 	return m, cmd
 }
 
@@ -3877,6 +4190,16 @@ func (m tuiModel) confirmDismiss() (tea.Model, tea.Cmd) {
 // confirmInputPending returns true when a confirm modal with a text input is active.
 func (m tuiModel) confirmInputPending() bool {
 	return m.confirmHasInput && m.confirmAction != ""
+}
+
+// resizeConfirmInput adjusts the textarea height to fit the content.
+func (m *tuiModel) resizeConfirmInput() {
+	lines := strings.Count(
+		m.confirmInput.Value(),
+		"\n",
+	) + 2 //nolint:mnd // +1 for current line, +1 for cursor visibility
+	h := max(tuiConfirmInputMinHeight, min(lines, tuiConfirmInputMaxHeight))
+	m.confirmInput.SetHeight(h)
 }
 
 func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -3894,17 +4217,18 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case tuiKeyEsc:
 			return m.confirmDismiss()
-		case tuiKeyShiftEnter:
+		case tuiKeyAltEnter:
 			m.confirmYes = true
 			return m.confirmAccept()
 		default:
 			var cmd tea.Cmd
 			m.confirmInput, cmd = m.confirmInput.Update(msg)
+			m.resizeConfirmInput()
 			return m, cmd
 		}
 	}
 	switch msg.String() {
-	case tuiKeyLeft, tuiKeyRight, "h", "l":
+	case tuiKeyLeft, tuiKeyRight, "h", "l", tuiKeySpace, tuiKeyTab:
 		m.confirmYes = !m.confirmYes
 		return m, nil
 	case "y":
@@ -4004,7 +4328,9 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 		{m.cli.archivedExplicit, keyTUIFilterArchived, m.persistedFilterValue(filterRowArchived)},
 	} {
 		if !p.explicit {
-			_ = saveConfigKey(p.key, p.value)
+			if err := saveConfigKey(p.key, p.value); err != nil {
+				clog.Warn().Err(err).Str("key", p.key).Msg("Failed to persist filter setting")
+			}
 		}
 	}
 
@@ -4068,13 +4394,15 @@ func (m tuiModel) renderConfirmModal() string {
 		)
 		b.WriteString("\n")
 		b.WriteString(m.confirmInput.View())
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 		helpKey := m.styles.helpKey
 		helpText := m.styles.helpText
-		hint := helpKey.Render("shift+enter") + " " + helpText.Render("submit") + "  " +
+		hint := helpKey.Render(tuiKeyAltEnter) + " " + helpText.Render("submit") + "  " +
 			helpKey.Render("esc") + " " + helpText.Render("cancel")
 		b.WriteString(hint)
-		return m.styles.overlayBox.Render(b.String())
+		// Fix width so the border stays aligned as the textarea grows.
+		boxWidth := tuiConfirmInputWidth + tuiConfirmPadX*2 //nolint:mnd // border + padding
+		return m.styles.overlayBox.Width(boxWidth).Render(b.String())
 	}
 
 	b.WriteString("\n\n")
@@ -4104,7 +4432,7 @@ func (m tuiModel) renderEmptyOverlay() string {
 		maxQuery := max(1, m.width*4/5-len(prefix)-len(suffix))
 		query := m.filterInput.Value()
 		if len(query) > maxQuery {
-			query = query[:maxQuery-1] + "…"
+			query = query[:maxQuery-1] + valueEllipsis
 		}
 		line1 := dim.Render(prefix) +
 			filter.Render(query) + dim.Render(suffix)
@@ -4126,17 +4454,20 @@ func (m tuiModel) renderEmptyOverlay() string {
 func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmAction = ""
 	m.confirmPrompt = ""
+	m.confirmSubject = ""
+	m.confirmURL = ""
 	m.confirmCmd = nil
 	m.confirmCmdFn = nil
 	m.confirmHasInput = false
 	m.confirmInput.Blur()
 	m.confirmInput.SetValue("")
+	m.confirmInput.SetHeight(tuiConfirmInputMinHeight)
 	return m
 }
 
 func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
 	prCopy := pr
-	m.confirmAction = "review"
+	m.confirmAction = tuiActionReview
 	m.confirmYes = true
 	m.confirmPrompt = "Launch Claude review for " + styledRef(
 		&prCopy,
@@ -4216,13 +4547,16 @@ func overlayCenter(bg, fg string, width, height int) string {
 // cursorLineBG is the ANSI escape to set the cursor line background color.
 const cursorLineBG = "\x1b[48;2;40;10;30m"
 
+// cursorLineSelectedBG is the ANSI escape for selected (checked) row backgrounds.
+const cursorLineSelectedBG = "\x1b[48;2;10;30;15m"
+
 // injectLineBackground wraps a line with a background color that persists
 // through any embedded ANSI SGR codes. It re-applies the background after
 // every SGR sequence (\x1b[...m) so that resets, foreground changes, and
 // other styling never clear the line highlight.
-func injectLineBackground(line string, width int) string {
+func injectLineBackground(line string, width int, bg string) string {
 	var b strings.Builder
-	b.WriteString(cursorLineBG)
+	b.WriteString(bg)
 
 	i := 0
 	for i < len(line) {
@@ -4236,7 +4570,7 @@ func injectLineBackground(line string, width int) string {
 			if j < len(line) && line[j] == 'm' {
 				j++ // include the 'm'
 				b.WriteString(line[i:j])
-				b.WriteString(cursorLineBG) // re-apply background after any SGR
+				b.WriteString(bg) // re-apply background after any SGR
 				i = j
 				continue
 			}
@@ -4566,7 +4900,9 @@ func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
 	m.colWidths = colWidths
 
 	// Persist sort settings to config file in the background.
-	_ = saveConfigKey(keyTUISortKey, m.sortColumn)
+	if err := saveConfigKey(keyTUISortKey, m.sortColumn); err != nil {
+		clog.Warn().Err(err).Msg("Failed to persist sort key")
+	}
 	order := ""
 	if m.sortColumn != "" {
 		order = "desc"
@@ -4574,7 +4910,9 @@ func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
 			order = "asc"
 		}
 	}
-	_ = saveConfigKey(keyTUISortOrder, order)
+	if err := saveConfigKey(keyTUISortOrder, order); err != nil {
+		clog.Warn().Err(err).Msg("Failed to persist sort order")
+	}
 
 	return m, nil
 }
@@ -4770,14 +5108,14 @@ func runTui(
 	ci.Placeholder = "Leave blank to close without comment"
 	ci.ShowLineNumbers = false
 	ci.SetWidth(tuiConfirmInputWidth)
-	ci.SetHeight(tuiConfirmInputHeight)
+	ci.SetHeight(tuiConfirmInputMinHeight)
 	ciStyles := ci.Styles()
-	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("48"))
-	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242"))
+	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("255"))
+	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242")).Italic(true)
 	ciStyles.Focused.CursorLine = lg.NewStyle()
 	ciStyles.Blurred.Text = lg.NewStyle().Foreground(lg.Color("242"))
 	ciStyles.Blurred.CursorLine = lg.NewStyle()
-	ciStyles.Cursor.Color = lg.Color("48")
+	ciStyles.Cursor.Color = lg.Color("255")
 	ci.SetStyles(ciStyles)
 
 	// Resolve current user login eagerly so it's cached for View calls.

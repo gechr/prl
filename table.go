@@ -246,7 +246,7 @@ func defaultColumnsWithAuthor() []string {
 // truncateTitle truncates a title to maxTitleLen runes, appending an ellipsis if needed.
 func truncateTitle(title string) string {
 	if runes := []rune(title); len(runes) > maxTitleLen {
-		return string(runes[:maxTitleLen-1]) + "…"
+		return string(runes[:maxTitleLen-1]) + valueEllipsis
 	}
 	return title
 }

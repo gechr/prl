@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -356,7 +357,16 @@ func (a *ActionRunner) fetchPRBody(owner, repo string, number int) (string, erro
 type PRDetail struct {
 	Body    string
 	Reviews []PRReview
+	Checks  []PRCheck
 	Files   []PRFile
+}
+
+// PRCheck holds a single CI check run.
+type PRCheck struct {
+	Name       string
+	Status     string // queued, in_progress, completed, waiting, requested, pending
+	Conclusion string // success, failure, neutral, cancelled, skipped, timed_out, action_required, stale
+	Duration   time.Duration
 }
 
 // PRReview holds a single review.
@@ -380,6 +390,9 @@ func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, 
 	prPath := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
 	var pr struct {
 		Body string `json:"body"`
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
 	}
 	if err := a.rest.Get(prPath, &pr); err != nil {
 		return detail, err
@@ -404,6 +417,11 @@ func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, 
 			seen[r.User.Login] = len(detail.Reviews)
 			detail.Reviews = append(detail.Reviews, PRReview{User: r.User.Login, State: r.State})
 		}
+	}
+
+	// Fetch check runs.
+	if pr.Head.SHA != "" {
+		detail.Checks = a.fetchCheckRuns(owner, repo, pr.Head.SHA)
 	}
 
 	// Fetch changed files.
@@ -597,6 +615,72 @@ const (
 	checksFailed
 	checksNone
 )
+
+// Check sort priorities: failures first, in-progress, successes, skipped last.
+const (
+	checkOrderFailure    = iota // 0
+	checkOrderInProgress        // 1
+	checkOrderSuccess           // 2
+	checkOrderSkipped           // 3
+)
+
+// fetchCheckRuns fetches individual CI check runs for a commit SHA.
+func (a *ActionRunner) fetchCheckRuns(owner, repo, sha string) []PRCheck {
+	checksPath := fmt.Sprintf("repos/%s/%s/commits/%s/check-runs", owner, repo, sha)
+	var result struct {
+		CheckRuns []struct {
+			Name        string     `json:"name"`
+			Status      string     `json:"status"`
+			Conclusion  string     `json:"conclusion"`
+			StartedAt   *time.Time `json:"started_at"`
+			CompletedAt *time.Time `json:"completed_at"`
+		} `json:"check_runs"`
+	}
+	if err := a.rest.Get(checksPath, &result); err != nil {
+		return nil
+	}
+	checks := make([]PRCheck, 0, len(result.CheckRuns))
+	for _, c := range result.CheckRuns {
+		var dur time.Duration
+		if c.StartedAt != nil && c.CompletedAt != nil {
+			dur = c.CompletedAt.Sub(*c.StartedAt)
+		}
+		checks = append(checks, PRCheck{
+			Name:       c.Name,
+			Status:     c.Status,
+			Conclusion: c.Conclusion,
+			Duration:   dur,
+		})
+	}
+	slices.SortStableFunc(checks, func(a, b PRCheck) int {
+		if d := checkSortOrder(a) - checkSortOrder(b); d != 0 {
+			return d
+		}
+		if a.Duration != b.Duration {
+			return int(a.Duration - b.Duration)
+		}
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	return checks
+}
+
+// checkSortOrder returns a sort key for PRCheck: failures first, then
+// in-progress, then successes, then skipped/neutral last.
+func checkSortOrder(c PRCheck) int {
+	if c.Status != "completed" {
+		return checkOrderInProgress
+	}
+	switch c.Conclusion {
+	case ciStatusFailure, "timed_out", "cancelled", "action_required", "stale":
+		return checkOrderFailure
+	case ciStatusSuccess:
+		return checkOrderSuccess
+	case "skipped", "neutral":
+		return checkOrderSkipped
+	default:
+		return checkOrderSuccess
+	}
+}
 
 // forceMergeInterval is the polling interval for check status.
 const forceMergeInterval = 10 * time.Second

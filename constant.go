@@ -2,6 +2,9 @@ package main
 
 import "time"
 
+// valueEllipsis is the Unicode ellipsis character (U+2026).
+const valueEllipsis = "…"
+
 // Filter/state string values.
 const (
 	valueAll      = "all"
@@ -87,6 +90,7 @@ const (
 	ansiShowCursor   = "\033[?25h"                    // show cursor
 	ansiAltScreenOn  = "\033[?1049h"                  // switch to alternate screen buffer
 	ansiAltScreenOff = "\033[?1049l"                  // switch back to main screen buffer
+	ansiDECXCPR      = "\033[?6n"                     // request extended cursor position (unambiguous)
 	ansiMoveTo1x1    = "\033[1;1H"                    // move cursor to row 1, col 1
 	ansiClearLine    = "\x1b[2K\r"                    // erase current line and return cursor to col 0
 	ansiSpinnerClear = ansiClearLine + ansiShowCursor // erase spinner line and restore cursor
@@ -106,22 +110,33 @@ const (
 const (
 	tuiCursorPrefix = "❯ "
 
-	tuiActionApprove = "approve-pr"
-	tuiActionInfo    = "info"
+	tuiActionApprove      = "approve-pr"
+	tuiActionApproveMerge = "approve/merge"
+	tuiActionClose        = "close"
+	tuiActionComment      = "comment"
+	tuiActionForceMerge   = "force-merge"
+	tuiActionInfo         = "info"
+	tuiActionMerge        = "merge"
+	tuiActionReview       = "review"
+	tuiActionSendSlack    = "send-slack"
+	tuiActionUnassign     = "unassign"
 
 	tuiClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
 
-	tuiConfirmInputWidth  = 50
-	tuiConfirmInputHeight = 4
-	tuiConfirmPadX        = 4
-	tuiConfirmPadY        = 2
-	tuiOptionsPadX        = 2
-	tuiOptionsPadY        = 1
+	tuiConfirmInputWidth     = 65
+	tuiConfirmInputMinHeight = 2
+	tuiConfirmInputMaxHeight = 15
+	tuiConfirmPadX           = 4
+	tuiConfirmPadY           = 2
+	tuiOptionsPadX           = 2
+	tuiOptionsPadY           = 1
 
-	tuiJumpTimeout = 500 * time.Millisecond
-	tuiStatusFlash = 5 * time.Second
+	tuiJumpTimeout    = 500 * time.Millisecond
+	tuiStatusFlash    = 5 * time.Second
+	tuiScreenCheckInt = 1 * time.Second
 
 	tuiKeyAltA         = "alt+a"
+	tuiKeyAltS         = "alt+s"
 	tuiKeyCtrlB        = "ctrl+b"
 	tuiKeyCtrlC        = "ctrl+c"
 	tuiKeyCtrlD        = "ctrl+d"
@@ -135,7 +150,7 @@ const (
 	tuiKeyPgUp         = "pgup"
 	tuiKeyRight        = "right"
 	tuiKeyShiftDown    = "shift+down"
-	tuiKeyShiftEnter   = "shift+enter"
+	tuiKeyAltEnter     = "alt+enter"
 	tuiKeyShiftTab     = "shift+tab"
 	tuiKeyShiftUp      = "shift+up"
 	tuiKeySpace        = "space"
