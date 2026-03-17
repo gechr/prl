@@ -164,7 +164,7 @@ func defaultConfig() map[string]any {
 		keyAuthors:              map[string]string{},
 		keyVCS:                  vcsGit,
 		keyCodeDir:              "",
-		keyDefaultAuthors:       []string{"@me"},
+		keyDefaultAuthors:       []string{valueAtMe},
 		keyDefaultBots:          true,
 		keyDefaultLimit:         defaultLimit,
 		keyDefaultMatch:         "title",
@@ -498,18 +498,18 @@ var defaultConfigYAML = fmt.Sprintf(`# prl configuration
 # Default query parameters applied when the corresponding flag is not set.
 default:
   # Default authors to search for.
-  # Use "@me" for the authenticated user, or specify GitHub usernames.
+  # Use "%[1]s" for the authenticated user, or specify GitHub usernames.
   # Examples:
-  #   authors: ["@me"]
+  #   authors: ["%[1]s"]
   #   authors: ["octocat", "hubot"]
   authors:
-    - "@me"
+    - "%[1]s"
 
   # Whether to include PRs from bot accounts (e.g. dependabot, renovate).
   bots: true
 
   # Maximum number of results to return.
-  limit: %d
+  limit: %[2]d
 
   # Restrict text search to a specific field.
   # Options: title, body, comments
@@ -527,18 +527,18 @@ default:
 
   # Output format for results.
   # Options: table, url, bullet, slack, json, repo
-  output: %s
+  output: %[3]s
 
   # Show oldest results first (at the top).
   reverse: false
 
   # Sort order for results.
   # Options: name, created, updated
-  sort: %s
+  sort: %[4]s
 
   # Filter by PR state.
   # Options: open, closed, merged, all
-  state: %s
+  state: %[5]s
 
 # TUI (interactive browse) settings.
 tui:
@@ -561,17 +561,17 @@ tui:
 
 # VCS used for --clone.
 # Options: git, jj
-vcs: %s
+vcs: %[6]s
 
 # Spinner displayed while fetching data.
 spinner:
   # Animation style.
   # Options: dots, stars
-  style: %s
+  style: %[7]s
 
   # Colors for spinner frames (256-color palette).
   # Each frame cycles through these colors in order.
-  colors: [%s]
+  colors: [%[8]s]
 
 # Base directory for code repositories.
 # Example: code_dir: ~/code/github
@@ -613,6 +613,7 @@ output:
     # Example: two_approver_repos: ["my-org/critical-service"]
     two_approver_repos: []
 `,
+	valueAtMe,
 	defaultLimit,
 	valueTable,
 	valueName,

@@ -77,6 +77,7 @@ func (p *prl) newTableRenderer(
 		table.WithReverse(cli.Interactive || !cli.Reverse || !tty),
 		table.WithShowIndex(showIndex),
 		table.WithTermWidth(termWidth),
+		table.WithTTY(tty),
 	}
 	renderOpts = append(renderOpts, opts...)
 

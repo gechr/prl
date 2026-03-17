@@ -120,7 +120,14 @@ func resolveBotDisplay(display string, resolver *AuthorResolver) string {
 
 // deriveMergeReason returns a human-readable reason for the PR's current status.
 func deriveMergeReason(pr PullRequest) string {
-	if strings.ToLower(pr.State) != valueOpen {
+	state := strings.ToLower(pr.State)
+	if state == valueClosed {
+		return valueRejected
+	}
+	if state == valueMerged {
+		return valueMerged
+	}
+	if state != valueOpen {
 		return valueUnknown
 	}
 	switch pr.MergeStatus {

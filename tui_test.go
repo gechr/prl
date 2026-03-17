@@ -1019,7 +1019,9 @@ func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
 		cfg:         cfg,
 	}
 
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: '*', Text: "*"})
+	model, cmd := m.updateOptionsOverlay(
+		tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt, Text: "alt+o"},
+	)
 	require.NotNil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)

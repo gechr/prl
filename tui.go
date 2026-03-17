@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
@@ -404,10 +405,13 @@ type tuiModel struct {
 	jumpID    int // timeout generation
 
 	// Pending confirmation (e.g. close/merge).
-	confirmAction string  // "close", "merge", "diff"
-	confirmPrompt string  // prompt text for modal
-	confirmCmd    tea.Cmd // command to run on confirmation
-	confirmYes    bool    // true = Yes selected, false = No selected
+	confirmAction   string               // "close", "merge", "diff"
+	confirmPrompt   string               // prompt text for modal
+	confirmCmd      tea.Cmd              // command to run on confirmation
+	confirmCmdFn    func(string) tea.Cmd // command factory when confirmHasInput (receives input value)
+	confirmYes      bool                 // true = Yes selected, false = No selected
+	confirmHasInput bool                 // true when modal includes a text input
+	confirmInput    textarea.Model       // optional text input (e.g. close comment)
 
 	// Background auto-refresh.
 	autoRefresh bool
@@ -579,6 +583,9 @@ func (r refreshSnapshot) run() refreshResultMsg {
 	if err != nil {
 		return refreshResultMsg{err: err}
 	}
+
+	// Post-fetch filters: --closed-by, --merged-by
+	prs = applyTimelineFilters(r.rest, r.cli, prs)
 
 	// Determine if post-enrichment filters require GraphQL data.
 	needsEnrich := r.cli.PRState() == StateReady || r.cli.CIStatus() != CINone
@@ -1172,31 +1179,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle pending confirmation.
 	if m.confirmAction != "" {
-		// Info-only modal (no confirmCmd) - any key dismisses.
-		if m.confirmCmd == nil {
-			switch msg.String() {
-			case tuiKeyEnter, "q", tuiKeyEsc, "y", "n", " ":
-				return m.confirmDismiss()
-			default:
-				return m, nil
-			}
-		}
-		switch msg.String() {
-		case tuiKeyLeft, tuiKeyRight, "h", "l":
-			m.confirmYes = !m.confirmYes
-			return m, nil
-		case "y":
-			return m.confirmAccept()
-		case "n", "q", tuiKeyEsc:
-			return m.confirmDismiss()
-		case tuiKeyEnter:
-			if m.confirmYes {
-				return m.confirmAccept()
-			}
-			return m.confirmDismiss()
-		default:
-			return m, nil
-		}
+		return m.updateConfirmOverlay(msg)
 	}
 
 	// Freeze interactions while a view is loading in the background.
@@ -1590,34 +1573,40 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		copy(batch, targets)
 		m.confirmAction = "close"
 		m.confirmYes = true
+		m.confirmHasInput = true
+		m.confirmInput.SetValue("")
 		if len(targets) == 1 {
 			m.confirmPrompt = "Close " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
-			m.confirmCmd = func() tea.Msg {
-				owner, repo := prOwnerRepo(t.pr)
-				err := actions.closePR(owner, repo, t.pr.Number, "", false)
-				return actionMsg{
-					index:  t.index,
-					key:    makePRKey(t.pr),
-					action: tuiActionClosed,
-					err:    err,
+			m.confirmCmdFn = func(comment string) tea.Cmd {
+				return func() tea.Msg {
+					owner, repo := prOwnerRepo(t.pr)
+					err := actions.closePR(owner, repo, t.pr.Number, comment, false)
+					return actionMsg{
+						index:  t.index,
+						key:    makePRKey(t.pr),
+						action: tuiActionClosed,
+						err:    err,
+					}
 				}
 			}
 		} else {
 			m.confirmPrompt = fmt.Sprintf("Close %d PRs?", len(targets))
-			m.confirmCmd = func() tea.Msg {
-				return runBatchAction(
-					actions,
-					batch,
-					tuiActionClosed,
-					func(a *ActionRunner, pr PullRequest) error {
-						owner, repo := prOwnerRepo(pr)
-						return a.closePR(owner, repo, pr.Number, "", false)
-					},
-				)
+			m.confirmCmdFn = func(comment string) tea.Cmd {
+				return func() tea.Msg {
+					return runBatchAction(
+						actions,
+						batch,
+						tuiActionClosed,
+						func(a *ActionRunner, pr PullRequest) error {
+							owner, repo := prOwnerRepo(pr)
+							return a.closePR(owner, repo, pr.Number, comment, false)
+						},
+					)
+				}
 			}
 		}
-		return m, nil
+		return m, m.confirmInput.Focus()
 
 	case "r":
 		if !hasClaudeReviewLauncher() {
@@ -1959,6 +1948,9 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.confirmInputPending() {
+		return m.updateConfirmOverlay(msg)
+	}
 	maxScroll := m.diffMaxScroll()
 	switch msg.String() {
 	case "q", tuiKeyEsc, "d":
@@ -2062,12 +2054,19 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		actions := m.actions
-		flashStatus(&m, "Closing", &pr)
-		return m, func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			err := actions.closePR(owner, repo, pr.Number, "", false)
-			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionClosed, err: err}
+		m.confirmAction = "close"
+		m.confirmYes = true
+		m.confirmHasInput = true
+		m.confirmInput.SetValue("")
+		m.confirmPrompt = "Close " + styledRef(&pr) + "?"
+		m.confirmCmdFn = func(comment string) tea.Cmd {
+			return func() tea.Msg {
+				owner, repo := prOwnerRepo(pr)
+				err := actions.closePR(owner, repo, pr.Number, comment, false)
+				return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionClosed, err: err}
+			}
 		}
+		return m, m.confirmInput.Focus()
 	case "O":
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -2215,6 +2214,9 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.confirmInputPending() {
+		return m.updateConfirmOverlay(msg)
+	}
 	viewport := m.detailViewport()
 	switch msg.String() {
 	case "q", tuiKeyEsc, tuiKeyEnter:
@@ -2541,6 +2543,9 @@ func (m tuiModel) viewDiff() tea.View {
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
+	if m.confirmInputPending() {
+		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
+	}
 	return v
 }
 
@@ -2672,6 +2677,9 @@ func (m tuiModel) viewDetail() tea.View {
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
+	if m.confirmInputPending() {
+		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
+	}
 	return v
 }
 
@@ -3341,6 +3349,7 @@ func renderEstimatedHeader(
 	}
 
 	g := table.NewGrid([][]string{header, samples})
+	g.TTY = true
 	if flexCol >= 0 && termWidth > 0 {
 		g.FlexCol = flexCol
 		g.MaxWidth = termWidth
@@ -3850,7 +3859,12 @@ func (m tuiModel) helpLines(pairs []helpPair) int {
 }
 
 func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
-	cmd := m.confirmCmd
+	var cmd tea.Cmd
+	if m.confirmHasInput && m.confirmCmdFn != nil {
+		cmd = m.confirmCmdFn(strings.TrimSpace(m.confirmInput.Value()))
+	} else {
+		cmd = m.confirmCmd
+	}
 	m = m.clearConfirm()
 	return m, cmd
 }
@@ -3858,6 +3872,53 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 func (m tuiModel) confirmDismiss() (tea.Model, tea.Cmd) {
 	m = m.clearConfirm()
 	return m, nil
+}
+
+// confirmInputPending returns true when a confirm modal with a text input is active.
+func (m tuiModel) confirmInputPending() bool {
+	return m.confirmHasInput && m.confirmAction != ""
+}
+
+func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Info-only modal (no confirmCmd) - any key dismisses.
+	if m.confirmCmd == nil && m.confirmCmdFn == nil {
+		switch msg.String() {
+		case tuiKeyEnter, "q", tuiKeyEsc, "y", "n", " ":
+			return m.confirmDismiss()
+		default:
+			return m, nil
+		}
+	}
+	// Modal with text input (e.g. close comment).
+	if m.confirmHasInput && m.confirmInput.Focused() {
+		switch msg.String() {
+		case tuiKeyEsc:
+			return m.confirmDismiss()
+		case tuiKeyShiftEnter:
+			m.confirmYes = true
+			return m.confirmAccept()
+		default:
+			var cmd tea.Cmd
+			m.confirmInput, cmd = m.confirmInput.Update(msg)
+			return m, cmd
+		}
+	}
+	switch msg.String() {
+	case tuiKeyLeft, tuiKeyRight, "h", "l":
+		m.confirmYes = !m.confirmYes
+		return m, nil
+	case "y":
+		return m.confirmAccept()
+	case "n", "q", tuiKeyEsc:
+		return m.confirmDismiss()
+	case tuiKeyEnter:
+		if m.confirmYes {
+			return m.confirmAccept()
+		}
+		return m.confirmDismiss()
+	default:
+		return m, nil
+	}
 }
 
 func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -3977,7 +4038,7 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 
 func (m tuiModel) renderConfirmModal() string {
 	var buttons string
-	if m.confirmCmd == nil {
+	if m.confirmCmd == nil && m.confirmCmdFn == nil {
 		// Info-only modal - single OK button.
 		buttons = lg.NewStyle().
 			Background(lg.Color("218")).
@@ -3996,13 +4057,36 @@ func (m tuiModel) renderConfirmModal() string {
 		}
 		buttons = no + "  " + yes
 	}
+
+	var b strings.Builder
+	b.WriteString(m.confirmPrompt)
+
+	if m.confirmHasInput {
+		b.WriteString("\n\n")
+		b.WriteString(
+			lg.NewStyle().Foreground(lg.Color("218")).Bold(true).Render("Comment"),
+		)
+		b.WriteString("\n")
+		b.WriteString(m.confirmInput.View())
+		b.WriteString("\n")
+		helpKey := m.styles.helpKey
+		helpText := m.styles.helpText
+		hint := helpKey.Render("shift+enter") + " " + helpText.Render("submit") + "  " +
+			helpKey.Render("esc") + " " + helpText.Render("cancel")
+		b.WriteString(hint)
+		return m.styles.overlayBox.Render(b.String())
+	}
+
+	b.WriteString("\n\n")
+
+	content := b.String()
 	promptWidth := lg.Width(m.confirmPrompt)
 	buttonsWidth := lg.Width(buttons)
 	centered := buttons
 	if pad := (promptWidth - buttonsWidth) / 2; pad > 0 { //nolint:mnd // center
 		centered = strings.Repeat(" ", pad) + buttons
 	}
-	return m.styles.overlayBox.Render(m.confirmPrompt + "\n\n" + centered)
+	return m.styles.overlayBox.Render(content + centered)
 }
 
 func (m tuiModel) renderEmptyOverlay() string {
@@ -4043,6 +4127,10 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmAction = ""
 	m.confirmPrompt = ""
 	m.confirmCmd = nil
+	m.confirmCmdFn = nil
+	m.confirmHasInput = false
+	m.confirmInput.Blur()
+	m.confirmInput.SetValue("")
 	return m
 }
 
@@ -4071,9 +4159,13 @@ func overlayCenter(bg, fg string, width, height int) string {
 	bgLines := strings.Split(bg, "\n")
 	fgLines := strings.Split(fg, "\n")
 
+	// Use WcWidth consistently - it matches terminal rendering for emoji
+	// with variation selectors (e.g. ⬆️) where GraphemeWidth disagrees.
+	strWidth := xansi.WcWidth.StringWidth
+
 	fgWidth := 0
 	for _, line := range fgLines {
-		if w := lg.Width(line); w > fgWidth {
+		if w := strWidth(line); w > fgWidth {
 			fgWidth = w
 		}
 	}
@@ -4100,17 +4192,20 @@ func overlayCenter(bg, fg string, width, height int) string {
 		}
 		bgLine := bgLines[row]
 		// Pad bg line to startCol with spaces if needed.
-		bgVisible := lg.Width(bgLine)
+		bgVisible := strWidth(bgLine)
 		if bgVisible < startCol {
 			bgLine += strings.Repeat(" ", startCol-bgVisible)
 		}
 		// Build: bg left portion + fg line + bg right portion.
-		// Use ANSI-aware truncation for the left portion.
-		left := xansi.Truncate(bgLine, startCol, "")
+		// Use WcWidth-aware truncation to match terminal rendering.
+		left := xansi.TruncateWc(bgLine, startCol, "")
+		if gap := startCol - strWidth(left); gap > 0 {
+			left += strings.Repeat(" ", gap)
+		}
 		rightStart := startCol + fgWidth
 		var right string
 		if bgVisible > rightStart {
-			right = xansi.TruncateLeft(bgLine, rightStart, "")
+			right = xansi.TruncateLeftWc(bgLine, rightStart, "")
 		}
 		bgLines[row] = left + "\033[0m" + fgLine + right
 	}
@@ -4615,6 +4710,9 @@ func runTui(
 		if err != nil {
 			return fetchResult{err: err}
 		}
+		// Post-fetch filters: --closed-by, --merged-by
+		prs = applyTimelineFilters(rest, cli, prs)
+
 		// Determine if post-enrichment filters require GraphQL data.
 		needsEnrich := cli.PRState() == StateReady || cli.CIStatus() != CINone
 
@@ -4667,29 +4765,45 @@ func runTui(
 	fiStyles.Cursor.Color = lg.Color("216")
 	fi.SetStyles(fiStyles)
 
+	ci := textarea.New()
+	ci.Prompt = ""
+	ci.Placeholder = "Leave blank to close without comment"
+	ci.ShowLineNumbers = false
+	ci.SetWidth(tuiConfirmInputWidth)
+	ci.SetHeight(tuiConfirmInputHeight)
+	ciStyles := ci.Styles()
+	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("48"))
+	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242"))
+	ciStyles.Focused.CursorLine = lg.NewStyle()
+	ciStyles.Blurred.Text = lg.NewStyle().Foreground(lg.Color("242"))
+	ciStyles.Blurred.CursorLine = lg.NewStyle()
+	ciStyles.Cursor.Color = lg.Color("48")
+	ci.SetStyles(ciStyles)
+
 	// Resolve current user login eagerly so it's cached for View calls.
 	login, _ := getCurrentLogin(rest)
 
 	model := tuiModel{
-		items:       r.items,
-		rows:        r.rows,
-		header:      r.header,
-		colWidths:   r.colWidths,
-		actions:     actions,
-		login:       login,
-		autoRefresh: cfg.TUI.AutoRefresh.Enabled,
-		spinner:     buildSpinner(cfg.Spinner),
-		styles:      newTuiStyles(),
-		removed:     make(prKeys),
-		selected:    make(prKeys),
-		filterInput: fi,
-		p:           p,
-		cli:         cli,
-		cfg:         cfg,
-		tty:         tty,
-		resolver:    resolver,
-		rest:        rest,
-		params:      params,
+		items:        r.items,
+		rows:         r.rows,
+		header:       r.header,
+		colWidths:    r.colWidths,
+		actions:      actions,
+		login:        login,
+		autoRefresh:  cfg.TUI.AutoRefresh.Enabled,
+		spinner:      buildSpinner(cfg.Spinner),
+		styles:       newTuiStyles(),
+		removed:      make(prKeys),
+		selected:     make(prKeys),
+		filterInput:  fi,
+		confirmInput: ci,
+		p:            p,
+		cli:          cli,
+		cfg:          cfg,
+		tty:          tty,
+		resolver:     resolver,
+		rest:         rest,
+		params:       params,
 	}
 
 	// Apply persisted sort settings.

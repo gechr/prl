@@ -22,6 +22,9 @@ func New() *prl {
 	}
 }
 
+// SetPlain switches the theme to plain (no ANSI) mode for non-TTY output.
+func (p *prl) SetPlain() { p.theme = p.theme.Plain() }
+
 // RenderBold renders text in bold using the theme.
 func (p *prl) RenderBold(s string) string { return p.theme.Bold.Render(s) }
 
@@ -71,7 +74,14 @@ func (p *prl) prMergeStyle(pr PullRequest) lipgloss.Style {
 // renderMergeStatus returns a plain text label for the PR's CI/review status.
 // Used in non-TTY output where colors are unavailable.
 func (p *prl) renderMergeStatus(pr PullRequest) string {
-	if strings.ToLower(pr.State) != valueOpen {
+	state := strings.ToLower(pr.State)
+	if state == valueClosed {
+		return valueClosed
+	}
+	if state == valueMerged {
+		return valueClosed
+	}
+	if state != valueOpen {
 		return valueUnknown
 	}
 	switch pr.MergeStatus {

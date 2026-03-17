@@ -149,6 +149,159 @@ func filterByAutomerge(
 	return filtered, nil
 }
 
+// applyTimelineFilters applies --closed-by and --merged-by post-fetch filters.
+// Errors are logged and swallowed so the TUI refresh path can call this without error handling.
+func applyTimelineFilters(rest *api.RESTClient, cli *CLI, prs []PullRequest) []PullRequest {
+	if len(prs) == 0 {
+		return prs
+	}
+	needsGQL := len(cli.ClosedBy.Values) > 0 || len(cli.MergedBy.Values) > 0
+	if !needsGQL {
+		return prs
+	}
+	gql, err := newGraphQLClient(withDebug(cli.Debug))
+	if err != nil {
+		clog.Debug().Err(err).Msg("skipping timeline filters")
+		return prs
+	}
+	if len(cli.ClosedBy.Values) > 0 {
+		if filtered, fErr := filterByClosedBy(rest, gql, prs, cli.ClosedBy.Values); fErr == nil {
+			prs = filtered
+		} else {
+			clog.Debug().Err(fErr).Msg("closed-by filter failed")
+		}
+	}
+	if len(cli.MergedBy.Values) > 0 {
+		if filtered, fErr := filterByMergedBy(rest, gql, prs, cli.MergedBy.Values); fErr == nil {
+			prs = filtered
+		} else {
+			clog.Debug().Err(fErr).Msg("merged-by filter failed")
+		}
+	}
+	return prs
+}
+
+// filterByClosedBy keeps only PRs closed by one of the specified logins.
+func filterByClosedBy(
+	rest *api.RESTClient, gql *api.GraphQLClient, prs []PullRequest, logins []string,
+) ([]PullRequest, error) {
+	return filterByTimelineActor(rest, gql, prs, logins, timelineFilter{
+		itemType:  "CLOSED_EVENT",
+		fragment:  "ClosedEvent",
+		queryName: "ClosedBy",
+		label:     "closed-by",
+	})
+}
+
+// filterByMergedBy keeps only PRs merged by one of the specified logins.
+func filterByMergedBy(
+	rest *api.RESTClient, gql *api.GraphQLClient, prs []PullRequest, logins []string,
+) ([]PullRequest, error) {
+	return filterByTimelineActor(rest, gql, prs, logins, timelineFilter{
+		itemType:  "MERGED_EVENT",
+		fragment:  "MergedEvent",
+		queryName: "MergedBy",
+		label:     "merged-by",
+	})
+}
+
+type timelineFilter struct {
+	itemType  string // e.g. "CLOSED_EVENT"
+	fragment  string // e.g. "ClosedEvent"
+	queryName string // GraphQL query name
+	label     string // log label
+}
+
+// filterByTimelineActor is the shared implementation for closed-by and merged-by filters.
+func filterByTimelineActor(
+	rest *api.RESTClient,
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	logins []string,
+	tf timelineFilter,
+) ([]PullRequest, error) {
+	if len(prs) == 0 || len(logins) == 0 {
+		return prs, nil
+	}
+
+	resolved := make(map[string]bool, len(logins))
+	for _, l := range logins {
+		if l == valueAtMe {
+			login, err := getCurrentLogin(rest)
+			if err != nil {
+				return nil, fmt.Errorf("resolving %s: %w", valueAtMe, err)
+			}
+			resolved[strings.ToLower(login)] = true
+		} else {
+			resolved[strings.ToLower(l)] = true
+		}
+	}
+
+	ids := make([]string, len(prs))
+	for i, pr := range prs {
+		ids[i] = pr.NodeID
+	}
+
+	var result struct {
+		Nodes []struct {
+			ID            string `json:"id"`
+			TimelineItems struct {
+				Nodes []struct {
+					Actor struct {
+						Login string `json:"login"`
+					} `json:"actor"`
+				} `json:"nodes"`
+			} `json:"timelineItems"`
+		} `json:"nodes"`
+	}
+
+	query := fmt.Sprintf(
+		`query %s($ids: [ID!]!) {
+			nodes(ids: $ids) {
+				... on PullRequest {
+					id
+					timelineItems(itemTypes: %s, last: 1) {
+						nodes {
+							... on %s {
+								actor { login }
+							}
+						}
+					}
+				}
+			}
+		}`, tf.queryName, tf.itemType, tf.fragment)
+
+	if err := gql.Do(query, map[string]any{"ids": ids}, &result); err != nil {
+		return nil, fmt.Errorf("querying %s: %w", tf.label, err)
+	}
+
+	actors := make(map[string]string, len(result.Nodes))
+	for _, node := range result.Nodes {
+		if len(node.TimelineItems.Nodes) > 0 {
+			actors[node.ID] = strings.ToLower(node.TimelineItems.Nodes[0].Actor.Login)
+		}
+	}
+
+	filtered := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if resolved[actors[pr.NodeID]] {
+			filtered = append(filtered, pr)
+		} else {
+			clog.Debug().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("actor", actors[pr.NodeID]).
+				Msgf("Filtered by %s", tf.label)
+		}
+	}
+
+	clog.Debug().
+		Int("before", len(prs)).
+		Int("after", len(filtered)).
+		Msgf("%s filter applied", tf.label)
+
+	return filtered, nil
+}
+
 // enrichAutomerge queries automerge status via GraphQL and sets Automerge on each PR.
 func enrichAutomerge(gql *api.GraphQLClient, prs []PullRequest) error {
 	if len(prs) == 0 {

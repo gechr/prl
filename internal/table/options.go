@@ -36,7 +36,8 @@ type HeaderRenderer func(name, header string, ctx *RenderContext) string
 type config struct {
 	reverse        bool
 	showIndex      bool
-	termWidth      int // terminal width for flex column truncation (0 = disabled)
+	tty            bool // true when outputting to a terminal
+	termWidth      int  // terminal width for flex column truncation (0 = disabled)
 	headerRenderer HeaderRenderer
 }
 
@@ -45,6 +46,9 @@ func WithReverse(v bool) Option { return func(c *config) { c.reverse = v } }
 
 // WithShowIndex sets whether to show row indices.
 func WithShowIndex(v bool) Option { return func(c *config) { c.showIndex = v } }
+
+// WithTTY sets whether output is going to a terminal.
+func WithTTY(v bool) Option { return func(c *config) { c.tty = v } }
 
 // WithTermWidth sets the terminal width for flex column truncation.
 // When set, columns marked Flex=true are truncated so rows fit within this width.

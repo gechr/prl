@@ -181,6 +181,7 @@ func (r *Renderer[T]) format(rows []Row[T]) RenderedTable[T] {
 	// Prepend header and align.
 	allRows := append([][]string{header}, grid...)
 	g := NewGrid(allRows)
+	g.TTY = r.cfg.tty
 	if flexCol >= 0 && r.cfg.termWidth > 0 {
 		g.FlexCol = flexCol
 		g.MaxWidth = r.cfg.termWidth

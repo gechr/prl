@@ -96,6 +96,9 @@ func run() error {
 	symbols[clog.LevelInfo] = "✅"
 	clog.SetSymbols(symbols)
 	tty := applyColorMode(cli.Color)
+	if !tty {
+		prl.SetPlain()
+	}
 
 	// Validate
 	if vErr := cli.Validate(); vErr != nil {
@@ -490,6 +493,36 @@ func buildOutput(
 		}
 	}
 
+	// Post-fetch filter: --closed-by
+	if len(cli.ClosedBy.Values) > 0 {
+		g, gqlErr := getGQL()
+		if gqlErr != nil {
+			return "", nil, gqlErr
+		}
+		prs, err = filterByClosedBy(rest, g, prs, cli.ClosedBy.Values)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(prs) == 0 {
+			return "", nil, nil
+		}
+	}
+
+	// Post-fetch filter: --merged-by
+	if len(cli.MergedBy.Values) > 0 {
+		g, gqlErr := getGQL()
+		if gqlErr != nil {
+			return "", nil, gqlErr
+		}
+		prs, err = filterByMergedBy(rest, g, prs, cli.MergedBy.Values)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(prs) == 0 {
+			return "", nil, nil
+		}
+	}
+
 	ready := cli.PRState() == StateReady
 	ciFilter := cli.CIStatus()
 	needsEnrich := ready || ciFilter != CINone
@@ -631,6 +664,36 @@ func runOnce(
 			return "", gqlErr
 		}
 		prs, err = filterByAutomerge(g, prs, !*cli.Merge)
+		if err != nil {
+			return "", err
+		}
+		if len(prs) == 0 {
+			return "", nil
+		}
+	}
+
+	// Post-fetch filter: --closed-by
+	if len(cli.ClosedBy.Values) > 0 {
+		g, gqlErr := getGQL()
+		if gqlErr != nil {
+			return "", gqlErr
+		}
+		prs, err = filterByClosedBy(rest, g, prs, cli.ClosedBy.Values)
+		if err != nil {
+			return "", err
+		}
+		if len(prs) == 0 {
+			return "", nil
+		}
+	}
+
+	// Post-fetch filter: --merged-by
+	if len(cli.MergedBy.Values) > 0 {
+		g, gqlErr := getGQL()
+		if gqlErr != nil {
+			return "", gqlErr
+		}
+		prs, err = filterByMergedBy(rest, g, prs, cli.MergedBy.Values)
 		if err != nil {
 			return "", err
 		}

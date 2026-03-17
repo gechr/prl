@@ -14,15 +14,15 @@ import (
 func (p *prl) helpPrinter(cfg *Config) kong.HelpPrinter {
 	renderer := help.NewRenderer(p.theme)
 
-	defaultAuthors := formatCSV(cfg.Default.Authors)
-	if defaultAuthors == "" {
-		defaultAuthors = "@me"
+	defaultAuthor := formatCSV(cfg.Default.Authors)
+	if defaultAuthor == "" {
+		defaultAuthor = valueAtMe
 	}
 
 	return clib.HelpPrinterFunc(renderer,
 		clib.NodeSectionsFunc(clib.WithArguments(&CLI{})),
 		help.WithFlagDefault("owner", formatCSV(cfg.Default.Organizations)),
-		help.WithFlagDefault("author", defaultAuthors),
+		help.WithFlagDefault("author", defaultAuthor),
 		help.WithFlagDefault("limit", fmt.Sprintf("%d", cfg.Default.Limit)),
 		help.WithHelpFlags("Print short help", "Print long help with examples"),
 		help.WithLongHelp(os.Args,

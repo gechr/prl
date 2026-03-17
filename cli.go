@@ -34,6 +34,8 @@ type CLI struct {
 	Team            CSVFlag  `name:"team"        help:"Filter by team authors"                                       short:"t"                                                 placeholder:"<slug>"               clib:"terse='Team',complete='predictor=team',group='Filters/3'"`
 	Involves        CSVFlag  `name:"involves"    help:"Filter by involvement (author, assignee, mentions, comments)" short:"I"                                                 placeholder:"<user>"               clib:"terse='Involvement',complete='predictor=author',group='Filters/3'"`
 	ReviewRequested CSVFlag  `name:"requested"   help:"Filter by requested reviewer"                                           aliases:"review-requested,request"              placeholder:"<user>"               clib:"terse='Requested reviewer',complete='predictor=author',group='Filters/3'"`
+	ClosedBy        CSVFlag  `name:"closed-by"   help:"Filter by who closed the PR (post-fetch)"                                                                               placeholder:"<user>"               clib:"terse='Closed by',complete='predictor=author',group='Filters/3'"`
+	MergedBy        CSVFlag  `name:"merged-by"   help:"Filter by who merged the PR (post-fetch)"                                                                               placeholder:"<user>"               clib:"terse='Merged by',complete='predictor=author',group='Filters/3'"`
 	ReviewedBy      CSVFlag  `name:"reviewed-by" help:"Filter by reviewer"                                                                                                     placeholder:"<user>"               clib:"terse='Reviewed by',complete='predictor=author',group='Filters/3'"`
 	CI              string   `name:"ci"          help:"Filter by CI status"                                                                                                    placeholder:"<status>"             clib:"terse='CI status',complete='values=success failure pending',group='Filters/4',enum='success,failure,pending',highlight='s,f,p'"`
 	Language        string   `name:"language"    help:"Filter by language"                                           short:"l"                                                 placeholder:"<lang>"               clib:"terse='Language',group='Filters/4'"`
@@ -180,6 +182,9 @@ func (c *CLI) Validate() error {
 	if c.Interactive && c.Open {
 		return fmt.Errorf("--interactive and --open are mutually exclusive")
 	}
+	if c.Interactive && c.Count {
+		return fmt.Errorf("--interactive and --count are mutually exclusive")
+	}
 	if c.Watch && c.HasAction() {
 		return fmt.Errorf("--watch cannot be combined with action flags")
 	}
@@ -313,6 +318,17 @@ func (c *CLI) Normalize(cfg *Config) {
 	if c.Sort == nil {
 		c.Sort = &cfg.Default.Sort
 	}
+	// --closed-by / --merged-by imply state and sort-by-updated
+	if len(c.ClosedBy.Values) > 0 && !c.stateExplicit {
+		c.State = valueClosed
+	}
+	if len(c.MergedBy.Values) > 0 && !c.stateExplicit {
+		c.State = valueMerged
+	}
+	if (len(c.ClosedBy.Values) > 0 || len(c.MergedBy.Values) > 0) && !c.sortExplicit {
+		updated := valueUpdated
+		c.Sort = &updated
+	}
 	if c.State == "" {
 		c.State = cfg.Default.State
 	}
@@ -322,8 +338,14 @@ func (c *CLI) Normalize(cfg *Config) {
 	}
 
 	// Author defaults
-	// --requested implies --author=any (don't restrict to self)
-	if c.Author == nil && len(c.ReviewRequested.Values) > 0 {
+	// User-oriented filters imply --author=any (don't restrict to self)
+	hasUserFilter := len(c.ReviewRequested.Values) > 0 ||
+		len(c.Involves.Values) > 0 ||
+		len(c.Commenter.Values) > 0 ||
+		len(c.ReviewedBy.Values) > 0 ||
+		len(c.ClosedBy.Values) > 0 ||
+		len(c.MergedBy.Values) > 0
+	if c.Author == nil && hasUserFilter {
 		c.Author = &CSVFlag{Values: []string{valueAll}}
 	}
 	if c.Author == nil {

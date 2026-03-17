@@ -88,7 +88,7 @@ func newTestRendererWithTTY(
 	}
 	ctx := table.NewRenderContext(testPRL, ansiutil.New(ansiOpts...))
 	// prl default: newest at top → clib WithReverse(true).
-	allOpts := []table.Option{table.WithReverse(true)}
+	allOpts := []table.Option{table.WithReverse(true), table.WithTTY(tty)}
 	allOpts = append(allOpts, opts...)
 	return table.NewRenderer[PRRowModel](columns, ctx, allOpts...)
 }

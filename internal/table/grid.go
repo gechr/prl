@@ -11,8 +11,9 @@ type Grid struct {
 	Rows          [][]string
 	ColumnPadding int
 	Padding       Padding
-	FlexCol       int // index of the flex column (-1 = disabled)
-	MaxWidth      int // terminal width; flex column shrinks to fit (0 = disabled)
+	FlexCol       int  // index of the flex column (-1 = disabled)
+	MaxWidth      int  // terminal width; flex column shrinks to fit (0 = disabled)
+	TTY           bool // when true, wrap spaces in SGR 8 to prevent tab optimization
 }
 
 const defaultColumnPadding = 2
@@ -37,15 +38,18 @@ func VisibleWidth(s string) int {
 	return xansi.WcWidth.StringWidth(s)
 }
 
-// spaces returns n space characters wrapped in SGR 8 (conceal/hidden).
-// This prevents bubbletea v2's hard-tab cursor optimization from collapsing
-// runs of plain spaces into tab characters, which breaks column alignment
-// in TUI contexts. SGR 8 is visually invisible on space characters.
-func spaces(n int) string {
+// spaces returns n space characters. When tty is true, the spaces are wrapped
+// in SGR 8 (conceal/hidden) to prevent bubbletea v2's hard-tab cursor
+// optimization from collapsing runs of plain spaces into tab characters.
+func spaces(n int, tty bool) string {
 	if n <= 0 {
 		return ""
 	}
-	return "\x1b[8m" + strings.Repeat(" ", n) + "\x1b[28m"
+	s := strings.Repeat(" ", n)
+	if tty {
+		return "\x1b[8m" + s + "\x1b[28m"
+	}
+	return s
 }
 
 // truncateVisible truncates s to maxWidth visible characters, appending "…" if
@@ -108,7 +112,7 @@ func (g *Grid) AlignColumns() ([]string, []int) {
 	}
 
 	// Format output with padding.
-	gap := spaces(g.ColumnPadding)
+	gap := spaces(g.ColumnPadding, g.TTY)
 	result := make([]string, len(g.Rows))
 	for i, row := range g.Rows {
 		var sb strings.Builder
@@ -122,18 +126,18 @@ func (g *Grid) AlignColumns() ([]string, []int) {
 			case PaddingLeft:
 				sb.WriteString(field)
 				if !lastCol {
-					sb.WriteString(spaces(pad))
+					sb.WriteString(spaces(pad, g.TTY))
 				}
 			case PaddingRight:
-				sb.WriteString(spaces(pad))
+				sb.WriteString(spaces(pad, g.TTY))
 				sb.WriteString(field)
 			case PaddingCenter:
 				left := pad / 2 //nolint:mnd // halve for centering
 				right := pad - left
-				sb.WriteString(spaces(left))
+				sb.WriteString(spaces(left, g.TTY))
 				sb.WriteString(field)
 				if !lastCol {
-					sb.WriteString(spaces(right))
+					sb.WriteString(spaces(right, g.TTY))
 				}
 			}
 		}

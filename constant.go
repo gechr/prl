@@ -4,21 +4,22 @@ import "time"
 
 // Filter/state string values.
 const (
-	valueAll     = "all"
-	valueAny     = "any"
-	valueAtMe    = "@me"
-	valueBlocked = "blocked"
-	valueClosed  = "closed"
-	valueCreated = "created"
-	valueMerged  = "merged"
-	valueName    = "name"
-	valueOpen    = "open"
-	valueReady   = "ready"
-	valueRepo    = "repo"
-	valueTable   = "table"
-	valueUnknown = "unknown"
-	valueUpdated = "updated"
-	valueURL     = "url"
+	valueAll      = "all"
+	valueAny      = "any"
+	valueAtMe     = "@me"
+	valueBlocked  = "blocked"
+	valueClosed   = "closed"
+	valueCreated  = "created"
+	valueMerged   = "merged"
+	valueName     = "name"
+	valueOpen     = "open"
+	valueReady    = "ready"
+	valueRejected = "rejected"
+	valueRepo     = "repo"
+	valueTable    = "table"
+	valueUnknown  = "unknown"
+	valueUpdated  = "updated"
+	valueURL      = "url"
 
 	colTitle = "title"
 )
@@ -110,10 +111,12 @@ const (
 
 	tuiClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
 
-	tuiConfirmPadX = 4
-	tuiConfirmPadY = 2
-	tuiOptionsPadX = 2
-	tuiOptionsPadY = 1
+	tuiConfirmInputWidth  = 50
+	tuiConfirmInputHeight = 4
+	tuiConfirmPadX        = 4
+	tuiConfirmPadY        = 2
+	tuiOptionsPadX        = 2
+	tuiOptionsPadY        = 1
 
 	tuiJumpTimeout = 500 * time.Millisecond
 	tuiStatusFlash = 5 * time.Second
@@ -127,11 +130,13 @@ const (
 	tuiKeyEnter        = "enter"
 	tuiKeyEsc          = "esc"
 	tuiKeyLeft         = "left"
-	tuiKeyOptions      = "*"
+	tuiKeyOptions      = "alt+o"
 	tuiKeyPgDown       = "pgdown"
 	tuiKeyPgUp         = "pgup"
 	tuiKeyRight        = "right"
 	tuiKeyShiftDown    = "shift+down"
+	tuiKeyShiftEnter   = "shift+enter"
+	tuiKeyShiftTab     = "shift+tab"
 	tuiKeyShiftUp      = "shift+up"
 	tuiKeySpace        = "space"
 	tuiKeyTab          = "tab"

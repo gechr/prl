@@ -42,7 +42,7 @@ func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 func completeAuthors(cfg *Config) []string {
 	var results []string
 
-	results = append(results, "@me\tCurrent user")
+	results = append(results, valueAtMe+"\tCurrent user")
 	results = append(results, "all\tAll authors")
 
 	if cfg == nil {
