@@ -262,6 +262,7 @@ func (a tuiAction) removes() bool {
 		tuiActionUnsubscribed:
 		return true
 	case tuiActionApproved,
+		tuiActionBranchUpdated,
 		tuiActionCommented,
 		tuiActionOpened,
 		tuiActionReopened,
@@ -1262,10 +1263,10 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 
-	case "q":
+	case tuiKeybindQuit:
 		return m, tea.Quit
 
-	case "/":
+	case tuiKeybindFilter:
 		// The filter bar takes one row from the viewport; bump offset so the
 		// cursor row doesn't get pushed off-screen.
 		visible := m.visibleIndices()
@@ -1295,21 +1296,21 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
 		}
 
-	case "j", tuiKeyDown:
+	case tuiKeybindVimDown, tuiKeyDown:
 		if next, ok := m.nextVisible(1); ok {
 			m.cursor = next
 			m.offset = m.scrolledOffset()
 		}
 		return m, nil
 
-	case "k", tuiKeyUp:
+	case tuiKeybindVimUp, tuiKeyUp:
 		if next, ok := m.nextVisible(-1); ok {
 			m.cursor = next
 			m.offset = m.scrolledOffset()
 		}
 		return m, nil
 
-	case tuiKeyPgDown, tuiKeyCtrlF:
+	case tuiKeyCtrlF:
 		viewport := m.listViewport()
 		for range viewport {
 			if next, ok := m.nextVisible(1); ok {
@@ -1319,7 +1320,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.offset = m.scrolledOffset()
 		return m, nil
 
-	case tuiKeyPgUp, tuiKeyCtrlB:
+	case tuiKeyCtrlB:
 		viewport := m.listViewport()
 		for range viewport {
 			if next, ok := m.nextVisible(-1); ok {
@@ -1329,7 +1330,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.offset = m.scrolledOffset()
 		return m, nil
 
-	case "g":
+	case tuiKeybindTop:
 		visible := m.visibleIndices()
 		if len(visible) > 0 {
 			m.cursor = visible[0]
@@ -1337,7 +1338,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "G":
+	case tuiKeybindBottom:
 		visible := m.visibleIndices()
 		if len(visible) > 0 {
 			m.cursor = visible[len(visible)-1]
@@ -1349,15 +1350,15 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleCurrentSelection()
 		return m, nil
 
-	case tuiKeyShiftDown:
+	case tuiKeybindExtendSelectionDown:
 		m.extendSelectionAndMove(1)
 		return m, nil
 
-	case tuiKeyShiftUp:
+	case tuiKeybindExtendSelectionUp:
 		m.extendSelectionAndMove(-1)
 		return m, nil
 
-	case "ctrl+a":
+	case tuiKeybindSelectAll:
 		visible := m.visibleIndices()
 		allSelected := len(visible) > 0
 		for _, idx := range visible {
@@ -1375,7 +1376,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "i":
+	case tuiKeybindInvertSelection:
 		for _, idx := range m.visibleIndices() {
 			key := m.rowKeyAt(idx)
 			if m.selected[key] {
@@ -1386,83 +1387,30 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "a":
+	case tuiKeybindApprove:
 		targets := m.targetApprovablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
-		actions := m.actions
-		batch := make([]targetPR, len(targets))
-		copy(batch, targets)
-		m.confirmAction = tuiActionApprove
-		m.confirmYes = true
-		if len(targets) == 1 {
-			m.confirmSubject = targets[0].pr.Ref()
-			m.confirmURL = targets[0].pr.URL
-			m.confirmPrompt = "Approve " + styledRef(&targets[0].pr) + "?"
-			t := targets[0]
-			m.confirmCmd = func() tea.Msg {
-				owner, repo := prOwnerRepo(t.pr)
-				err := actions.approve(owner, repo, t.pr.Number)
-				return actionMsg{
-					index:  t.index,
-					key:    makePRKey(t.pr),
-					action: tuiActionApproved,
-					err:    err,
-				}
-			}
-		} else {
-			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
-			m.confirmPrompt = fmt.Sprintf("Approve %d PRs?", len(targets))
-			m.confirmCmd = func() tea.Msg {
-				return runBatchAction(
-					actions,
-					batch,
-					tuiActionApproved,
-					func(a *ActionRunner, pr PullRequest) error {
-						owner, repo := prOwnerRepo(pr)
-						return a.approve(owner, repo, pr.Number)
-					},
-				)
-			}
-		}
+		setupConfirmBatch(&m, targets, tuiActionApprove, tuiActionApproved, "Approve",
+			func(a *ActionRunner, pr PullRequest) error {
+				owner, repo := prOwnerRepo(pr)
+				return a.approve(owner, repo, pr.Number)
+			})
 		return m, nil
 
-	case tuiKeyAltA:
+	case tuiKeybindApproveNoConfirm:
 		targets := m.targetApprovablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
-		if len(targets) == 1 {
-			t := targets[0]
-			actions := m.actions
-			return m, func() tea.Msg {
-				owner, repo := prOwnerRepo(t.pr)
-				err := actions.approve(owner, repo, t.pr.Number)
-				return actionMsg{
-					index:  t.index,
-					key:    makePRKey(t.pr),
-					action: tuiActionApproved,
-					err:    err,
-				}
-			}
-		}
-		actions := m.actions
-		batch := make([]targetPR, len(targets))
-		copy(batch, targets)
-		return m, func() tea.Msg {
-			return runBatchAction(
-				actions,
-				batch,
-				tuiActionApproved,
-				func(a *ActionRunner, pr PullRequest) error {
-					owner, repo := prOwnerRepo(pr)
-					return a.approve(owner, repo, pr.Number)
-				},
-			)
-		}
+		return m, batchCmd(m.actions, targets, tuiActionApproved,
+			func(a *ActionRunner, pr PullRequest) error {
+				owner, repo := prOwnerRepo(pr)
+				return a.approve(owner, repo, pr.Number)
+			})
 
-	case "d":
+	case tuiKeybindDiff:
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1494,7 +1442,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	case "m":
+	case tuiKeybindMerge:
 		targets := m.targetMergeablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1537,7 +1485,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "A":
+	case tuiKeybindApproveMerge:
 		targets := m.targetApprovablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1591,7 +1539,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "M":
+	case tuiKeybindForceMerge:
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1631,7 +1579,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "C":
+	case tuiKeybindClose:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1679,7 +1627,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.confirmInput.Focus()
 
-	case "c":
+	case tuiKeybindComment:
 		pr := m.currentPR()
 		if pr == nil {
 			return m, nil
@@ -1708,7 +1656,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.confirmInput.Focus()
 
-	case "r":
+	case tuiKeybindReview:
 		if !hasClaudeReviewLauncher() {
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
@@ -1729,7 +1677,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m = m.prepareClaudeReviewConfirm(prCopy, idx)
 		return m, nil
 
-	case "alt+r":
+	case tuiKeybindReviewNoConfirm:
 		if !hasClaudeReviewLauncher() {
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
@@ -1752,7 +1700,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 
-	case "s":
+	case tuiKeybindSlack:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1780,7 +1728,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tuiKeyAltS:
+	case tuiKeybindSlackNoConfirm:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1803,7 +1751,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return slackSentMsg{count: count, output: out, err: err}
 		}
 
-	case "o":
+	case tuiKeybindOpen:
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1819,83 +1767,36 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selected = make(prKeys)
 		return m, tuiFlashStatus(&m, tuiActionOpened.String(), msg, last.pr.URL, false)
 
-	case "O":
+	case tuiKeybindReopen:
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
-		if len(targets) == 1 {
-			t := targets[0]
-			actions := m.actions
-			return m, func() tea.Msg {
-				owner, repo := prOwnerRepo(t.pr)
-				err := actions.reopenPR(owner, repo, t.pr.Number)
-				return actionMsg{
-					index:  t.index,
-					key:    makePRKey(t.pr),
-					action: tuiActionReopened,
-					err:    err,
-				}
-			}
-		}
-		actions := m.actions
-		batch := make([]targetPR, len(targets))
-		copy(batch, targets)
-		return m, func() tea.Msg {
-			return runBatchAction(
-				actions,
-				batch,
-				tuiActionReopened,
-				func(a *ActionRunner, pr PullRequest) error {
-					owner, repo := prOwnerRepo(pr)
-					return a.reopenPR(owner, repo, pr.Number)
-				},
-			)
-		}
+		return m, batchCmd(m.actions, targets, tuiActionReopened,
+			func(a *ActionRunner, pr PullRequest) error {
+				owner, repo := prOwnerRepo(pr)
+				return a.reopenPR(owner, repo, pr.Number)
+			})
 
-	case "U":
+	case tuiKeybindUpdateBranch:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
-		actions := m.actions
-		batch := make([]targetPR, len(targets))
-		copy(batch, targets)
-		m.confirmAction = tuiActionUpdateBranch
-		m.confirmYes = true
-		if len(targets) == 1 {
-			m.confirmSubject = targets[0].pr.Ref()
-			m.confirmURL = targets[0].pr.URL
-			m.confirmPrompt = "Update branch for " + styledRef(&targets[0].pr) + "?"
-			t := targets[0]
-			m.confirmCmd = func() tea.Msg {
-				owner, repo := prOwnerRepo(t.pr)
-				err := actions.updateBranch(owner, repo, t.pr.Number)
-				return actionMsg{
-					index:  t.index,
-					key:    makePRKey(t.pr),
-					action: tuiActionBranchUpdated,
-					err:    err,
-				}
-			}
-		} else {
-			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
-			m.confirmPrompt = fmt.Sprintf("Update branch for %d PRs?", len(targets))
-			m.confirmCmd = func() tea.Msg {
-				return runBatchAction(
-					actions,
-					batch,
-					tuiActionBranchUpdated,
-					func(a *ActionRunner, pr PullRequest) error {
-						owner, repo := prOwnerRepo(pr)
-						return a.updateBranch(owner, repo, pr.Number)
-					},
-				)
-			}
-		}
+		setupConfirmBatch(
+			&m,
+			targets,
+			tuiActionUpdateBranch,
+			tuiActionBranchUpdated,
+			"Update branch for",
+			func(a *ActionRunner, pr PullRequest) error {
+				owner, repo := prOwnerRepo(pr)
+				return a.updateBranch(owner, repo, pr.Number)
+			},
+		)
 		return m, nil
 
-	case "u":
+	case tuiKeybindUnassign:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1952,7 +1853,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "alt+u":
+	case tuiKeybindUnassignNoConfirm:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -2000,7 +1901,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				})
 		}
 
-	case "ctrl+r":
+	case tuiKeybindCopilotReview:
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -2039,18 +1940,18 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				})
 		}
 
-	case tuiKeyOptions:
+	case tuiKeybindOptions:
 		m.showOptions = true
 		m.optionsCursor = 0
 		m.optionsValues = m.currentFilterValues()
 		m.optionsReset = [6]bool{}
 		return m, nil
 
-	case "?":
+	case tuiKeybindHelp:
 		m.showHelp = true
 		return m, nil
 
-	case "R":
+	case tuiKeybindToggleRefresh:
 		m.autoRefresh = !m.autoRefresh
 		// Persist to config file in the background.
 		enabled := m.autoRefresh
@@ -2109,7 +2010,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	maxScroll := m.diffMaxScroll()
 	switch msg.String() {
-	case "q", tuiKeyEsc, "d":
+	case tuiKeybindQuit, tuiKeyEsc, tuiKeybindDiff:
 		m.diffQueue = nil
 		m.diffHistory = nil
 		m.diffQueueTotal = 0
@@ -2118,14 +2019,14 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffKey = ""
 		m.view = tuiViewList
 		return m, m.rescheduleRefresh()
-	case "n":
+	case tuiKeybindNext:
 		// Skip to next in queue without approving.
 		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
 			m.diffHistory = append(m.diffHistory, m.diffKey)
 			return m, nextCmd
 		}
 		return m, nil
-	case "p":
+	case tuiKeybindPrev:
 		// Go back to previous diff in history.
 		if len(m.diffHistory) == 0 {
 			return m, nil
@@ -2152,29 +2053,29 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:     err,
 			}
 		}
-	case "j", tuiKeyDown:
+	case tuiKeybindVimDown, tuiKeyDown:
 		if m.diffScroll < maxScroll {
 			m.diffScroll++
 		}
 		return m, nil
-	case "k", tuiKeyUp:
+	case tuiKeybindVimUp, tuiKeyUp:
 		if m.diffScroll > 0 {
 			m.diffScroll--
 		}
 		return m, nil
-	case tuiKeyPgDown, tuiKeyCtrlF, tuiKeySpace:
+	case tuiKeyCtrlF, tuiKeySpace:
 		m.diffScroll = min(m.diffScroll+m.diffContentViewport(), maxScroll)
 		return m, nil
-	case tuiKeyPgUp, tuiKeyCtrlB:
+	case tuiKeyCtrlB:
 		m.diffScroll = max(m.diffScroll-m.diffContentViewport(), 0)
 		return m, nil
-	case "g":
+	case tuiKeybindTop:
 		m.diffScroll = 0
 		return m, nil
-	case "G":
+	case tuiKeybindBottom:
 		m.diffScroll = maxScroll
 		return m, nil
-	case "a", "y", tuiKeyAltA:
+	case tuiKeybindApprove, tuiKeybindApproveAlias, tuiKeybindApproveNoConfirm:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2199,7 +2100,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Last item - approve and let actionMsg handler return to list.
 		return m, approveCmd
-	case "C":
+	case tuiKeybindClose:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2225,7 +2126,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.confirmInput.Focus()
-	case "c":
+	case tuiKeybindComment:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2252,7 +2153,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.confirmInput.Focus()
-	case "O":
+	case tuiKeybindReopen:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2273,7 +2174,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
-	case "U":
+	case tuiKeybindUpdateBranch:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2300,7 +2201,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case "u":
+	case tuiKeybindUnassign:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2323,7 +2224,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
-	case "m":
+	case tuiKeybindMerge:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2345,7 +2246,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
-	case "A":
+	case tuiKeybindApproveMerge:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2375,7 +2276,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
-	case "s":
+	case tuiKeybindSlack:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2397,7 +2298,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
 		return m, nil
-	case tuiKeyAltS:
+	case tuiKeybindSlackNoConfirm:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2414,7 +2315,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
-	case "o":
+	case tuiKeybindOpen:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2422,7 +2323,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		_ = openBrowser(pr.URL)
 		return m, nil
-	case "ctrl+r":
+	case tuiKeybindCopilotReview:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2454,36 +2355,36 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	viewport := m.detailViewport()
 	switch msg.String() {
-	case "q", tuiKeyEsc, tuiKeyEnter:
+	case tuiKeybindQuit, tuiKeyEsc, tuiKeyEnter:
 		m.detailKey = ""
 		m.view = tuiViewList
 		return m, m.rescheduleRefresh()
-	case "j", tuiKeyDown:
+	case tuiKeybindVimDown, tuiKeyDown:
 		if m.detailScroll < len(m.detailLines)-viewport {
 			m.detailScroll++
 		}
 		return m, nil
-	case "k", tuiKeyUp:
+	case tuiKeybindVimUp, tuiKeyUp:
 		if m.detailScroll > 0 {
 			m.detailScroll--
 		}
 		return m, nil
-	case tuiKeyPgDown, tuiKeyCtrlF, tuiKeySpace:
+	case tuiKeyCtrlF, tuiKeySpace:
 		maxScroll := max(0, len(m.detailLines)-viewport)
 		m.detailScroll = min(m.detailScroll+viewport, maxScroll)
 		return m, nil
-	case tuiKeyPgUp, tuiKeyCtrlB:
+	case tuiKeyCtrlB:
 		m.detailScroll = max(m.detailScroll-viewport, 0)
 		return m, nil
-	case "g":
+	case tuiKeybindTop:
 		m.detailScroll = 0
 		return m, nil
-	case "G":
+	case tuiKeybindBottom:
 		if end := len(m.detailLines) - viewport; end > 0 {
 			m.detailScroll = end
 		}
 		return m, nil
-	case "d":
+	case tuiKeybindDiff:
 		// Jump to diff from detail view.
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2504,7 +2405,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:     err,
 			}
 		}
-	case "a", "y":
+	case tuiKeybindApprove, tuiKeybindApproveAlias:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2528,7 +2429,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
 		return m, nil
-	case tuiKeyAltA:
+	case tuiKeybindApproveNoConfirm:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2547,7 +2448,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			err := actions.approve(owner, repo, pr.Number)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
-	case "c":
+	case tuiKeybindComment:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2576,7 +2477,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.confirmInput.Focus()
-	case "s":
+	case tuiKeybindSlack:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2600,7 +2501,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
 		return m, nil
-	case tuiKeyAltS:
+	case tuiKeybindSlackNoConfirm:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2617,7 +2518,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
-	case "o":
+	case tuiKeybindOpen:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
 			return m, nil
@@ -2625,7 +2526,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		_ = openBrowser(pr.URL)
 		return m, nil
-	case "r":
+	case tuiKeybindReview:
 		if !hasClaudeReviewLauncher() {
 			m.view = tuiViewList
 			m.confirmAction = tuiActionInfo
@@ -3405,6 +3306,59 @@ func (m tuiModel) scrolledOffset() int {
 	return offset
 }
 
+// batchCmd returns a tea.Cmd that runs fn for a single target or as a batch.
+func batchCmd(
+	actions *ActionRunner,
+	targets []targetPR,
+	result tuiAction,
+	fn func(*ActionRunner, PullRequest) error,
+) tea.Cmd {
+	if len(targets) == 1 {
+		t := targets[0]
+		return func() tea.Msg {
+			err := fn(actions, t.pr)
+			return actionMsg{index: t.index, key: makePRKey(t.pr), action: result, err: err}
+		}
+	}
+	batch := make([]targetPR, len(targets))
+	copy(batch, targets)
+	return func() tea.Msg {
+		return runBatchAction(actions, batch, result, fn)
+	}
+}
+
+// setupConfirmBatch populates the confirm overlay for a single or batch action.
+func setupConfirmBatch(
+	m *tuiModel,
+	targets []targetPR,
+	action string,
+	result tuiAction,
+	verb string,
+	fn func(*ActionRunner, PullRequest) error,
+) {
+	actions := m.actions
+	m.confirmAction = action
+	m.confirmYes = true
+	if len(targets) == 1 {
+		m.confirmSubject = targets[0].pr.Ref()
+		m.confirmURL = targets[0].pr.URL
+		m.confirmPrompt = verb + " " + styledRef(&targets[0].pr) + "?"
+		t := targets[0]
+		m.confirmCmd = func() tea.Msg {
+			err := fn(actions, t.pr)
+			return actionMsg{index: t.index, key: makePRKey(t.pr), action: result, err: err}
+		}
+	} else {
+		batch := make([]targetPR, len(targets))
+		copy(batch, targets)
+		m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
+		m.confirmPrompt = fmt.Sprintf("%s %d PRs?", verb, len(targets))
+		m.confirmCmd = func() tea.Msg {
+			return runBatchAction(actions, batch, result, fn)
+		}
+	}
+}
+
 func runBatchAction(
 	actions *ActionRunner,
 	targets []targetPR,
@@ -3783,7 +3737,7 @@ func (m tuiModel) listHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{tuiKeyEnter, "show"},
 		{tuiKeySpace, "select"},
-		{"/", "filter"},
+		{tuiKeybindFilter, "filter"},
 	}
 	pr := m.currentPR()
 	var state string
@@ -3795,32 +3749,32 @@ func (m tuiModel) listHelpPairs() []helpPair {
 	}
 	actionable := pr != nil && state != valueMerged && state != valueClosed
 	if actionable && !ownPR && !draft {
-		pairs = append(pairs, helpPair{"a", "approve"})
+		pairs = append(pairs, helpPair{tuiKeybindApprove, "approve"})
 	}
-	pairs = append(pairs, helpPair{"d", "diff"})
+	pairs = append(pairs, helpPair{tuiKeybindDiff, "diff"})
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{"m", "merge"})
+		pairs = append(pairs, helpPair{tuiKeybindMerge, "merge"})
 	}
-	pairs = append(pairs, helpPair{"c", "comment"})
+	pairs = append(pairs, helpPair{tuiKeybindComment, "comment"})
 	if actionable {
-		pairs = append(pairs, helpPair{"C", "close"})
+		pairs = append(pairs, helpPair{tuiKeybindClose, "close"})
 	}
 	if state == valueClosed {
-		pairs = append(pairs, helpPair{"O", "reopen"})
+		pairs = append(pairs, helpPair{tuiKeybindReopen, "reopen"})
 	}
-	pairs = append(pairs, helpPair{"o", "open"})
+	pairs = append(pairs, helpPair{tuiKeybindOpen, "open"})
 	if actionable && !draft && hasClaudeReviewLauncher() {
-		pairs = append(pairs, helpPair{"r", "review"})
+		pairs = append(pairs, helpPair{tuiKeybindReview, "review"})
 	}
 	if m.autoRefresh {
-		pairs = append(pairs, helpPair{"R", "refresh " + styledOn})
+		pairs = append(pairs, helpPair{tuiKeybindToggleRefresh, "refresh " + styledOn})
 	} else {
-		pairs = append(pairs, helpPair{"R", "refresh " + styledOff})
+		pairs = append(pairs, helpPair{tuiKeybindToggleRefresh, "refresh " + styledOff})
 	}
 	pairs = append(pairs,
-		helpPair{tuiKeyOptions, "options"},
-		helpPair{"?", "help"},
-		helpPair{"q", "quit"},
+		helpPair{tuiKeybindOptions, "options"},
+		helpPair{tuiKeybindHelp, "help"},
+		helpPair{tuiKeybindQuit, "quit"},
 	)
 	return pairs
 }
@@ -3871,38 +3825,38 @@ func (m tuiModel) diffHelpPairs() []helpPair {
 	ownPR := m.isCurrentUserDiff()
 	actionable := state != valueMerged && state != valueClosed
 	if actionable && !ownPR && !draft {
-		pairs = append(pairs, helpPair{"a/y", "approve"})
+		pairs = append(pairs, helpPair{tuiKeybindApprove + "/" + tuiKeybindApproveAlias, "approve"})
 	}
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{"m", "merge"})
+		pairs = append(pairs, helpPair{tuiKeybindMerge, "merge"})
 	}
 	if actionable && !ownPR && !draft {
-		pairs = append(pairs, helpPair{"A", "approve/merge"})
+		pairs = append(pairs, helpPair{tuiKeybindApproveMerge, "approve/merge"})
 	}
 	if actionable && !ownPR {
-		pairs = append(pairs, helpPair{"u", "unsubscribe"})
+		pairs = append(pairs, helpPair{tuiKeybindUnassign, "unsubscribe"})
 	}
-	pairs = append(pairs, helpPair{"c", "comment"})
+	pairs = append(pairs, helpPair{tuiKeybindComment, "comment"})
 	if actionable {
-		pairs = append(pairs, helpPair{"C", "close"})
+		pairs = append(pairs, helpPair{tuiKeybindClose, "close"})
 	}
 	if state == valueClosed {
-		pairs = append(pairs, helpPair{"O", "reopen"})
+		pairs = append(pairs, helpPair{tuiKeybindReopen, "reopen"})
 	}
-	pairs = append(pairs, helpPair{"o", "open"})
+	pairs = append(pairs, helpPair{tuiKeybindOpen, "open"})
 	if actionable {
-		pairs = append(pairs, helpPair{"s", "slack"})
+		pairs = append(pairs, helpPair{tuiKeybindSlack, "slack"})
 	}
 
 	if m.diffQueueTotal > 0 {
 		if len(m.diffHistory) > 0 {
-			pairs = append(pairs, helpPair{"p", "prev"})
+			pairs = append(pairs, helpPair{tuiKeybindPrev, "prev"})
 		}
 		if len(m.diffQueue) > 0 {
-			pairs = append(pairs, helpPair{"n", "next"})
+			pairs = append(pairs, helpPair{tuiKeybindNext, "next"})
 		}
 	}
-	pairs = append(pairs, helpPair{"d/q", "dismiss"})
+	pairs = append(pairs, helpPair{tuiKeybindDiff + "/" + tuiKeybindQuit, "dismiss"})
 	return pairs
 }
 
@@ -3913,23 +3867,23 @@ func (m tuiModel) renderDiffHelp() string {
 func (m tuiModel) detailHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{"↑/↓", "scroll"},
-		{"d", "diff"},
+		{tuiKeybindDiff, "diff"},
 	}
 	state := m.prStateForKey(m.detailKey)
 	draft := m.prIsDraftForKey(m.detailKey)
 	actionable := state != valueMerged && state != valueClosed
 	if actionable && !draft && !m.isCurrentUserDetail() {
-		pairs = append(pairs, helpPair{"a/y", "approve"})
+		pairs = append(pairs, helpPair{tuiKeybindApprove + "/" + tuiKeybindApproveAlias, "approve"})
 	}
-	pairs = append(pairs, helpPair{"c", "comment"})
-	pairs = append(pairs, helpPair{"o", "open"})
+	pairs = append(pairs, helpPair{tuiKeybindComment, "comment"})
+	pairs = append(pairs, helpPair{tuiKeybindOpen, "open"})
 	if actionable {
-		pairs = append(pairs, helpPair{"s", "slack"})
+		pairs = append(pairs, helpPair{tuiKeybindSlack, "slack"})
 	}
 	if actionable && !draft && hasClaudeReviewLauncher() {
-		pairs = append(pairs, helpPair{"r", "review"})
+		pairs = append(pairs, helpPair{tuiKeybindReview, "review"})
 	}
-	pairs = append(pairs, helpPair{"q", "dismiss"})
+	pairs = append(pairs, helpPair{tuiKeybindQuit, "dismiss"})
 	return pairs
 }
 
@@ -3940,33 +3894,32 @@ func (m tuiModel) renderDetailHelp() string {
 func (m tuiModel) renderHelpOverlay() string {
 	pairs := []helpPair{
 		{"↑/↓ · j/k", "Navigate up/down"},
-		{"PgUp/PgDn", "Page up/down"},
 		{"g/G", "Jump to first/last"},
 		{"enter", "Show PR detail"},
 		{tuiKeySpace, "Toggle selection"},
 		{"shift+↑/↓", "Extend selection"},
-		{"ctrl+a", "Select all/none"},
-		{"i", "Invert selection"},
-		{"/", "Filter"},
-		{"a", "Approve PRs"},
-		{"A", "Approve/Merge PRs"},
-		{tuiKeyAltA, "Approve PRs (no confirm)"},
-		{"d", "View diff"},
-		{"m", "Merge PRs"},
-		{"M", "Force-merge PRs"},
-		{"C", "Close PRs"},
-		{"O", "Reopen PRs"},
-		{"U", "Update branch"},
-		{"u", "Unassign/unsubscribe"},
-		{"alt+u", "Unassign (no confirm)"},
-		{"o", "Open in browser"},
-		{"s", "Send to Slack"},
-		{"alt+s", "Send to Slack (no confirm)"},
+		{tuiKeybindSelectAll, "Select all/none"},
+		{tuiKeybindInvertSelection, "Invert selection"},
+		{tuiKeybindFilter, "Filter"},
+		{tuiKeybindApprove, "Approve PRs"},
+		{tuiKeybindApproveMerge, "Approve/Merge PRs"},
+		{tuiKeybindApproveNoConfirm, "Approve PRs (no confirm)"},
+		{tuiKeybindDiff, "View diff"},
+		{tuiKeybindMerge, "Merge PRs"},
+		{tuiKeybindForceMerge, "Force-merge PRs"},
+		{tuiKeybindClose, "Close PRs"},
+		{tuiKeybindReopen, "Reopen PRs"},
+		{tuiKeybindUpdateBranch, "Update branch"},
+		{tuiKeybindUnassign, "Unassign/unsubscribe"},
+		{tuiKeybindUnassignNoConfirm, "Unassign (no confirm)"},
+		{tuiKeybindOpen, "Open in browser"},
+		{tuiKeybindSlack, "Send to Slack"},
+		{tuiKeybindSlackNoConfirm, "Send to Slack (no confirm)"},
 		{tuiKeyTab, "Cycle sort order"},
-		{tuiKeyOptions, "Options"},
-		{"R", "Toggle auto-refresh"},
-		{"?", "Toggle this help"},
-		{"q", "Quit"},
+		{tuiKeybindOptions, "Options"},
+		{tuiKeybindToggleRefresh, "Toggle auto-refresh"},
+		{tuiKeybindHelp, "Toggle this help"},
+		{tuiKeybindQuit, "Quit"},
 	}
 	if hasClaudeReviewLauncher() {
 		// Insert review before the last two entries (?, q).
@@ -3974,9 +3927,9 @@ func (m tuiModel) renderHelpOverlay() string {
 			pairs[:len(pairs)-2],
 			append(
 				[]helpPair{
-					{"r", "Launch Claude review"},
-					{"alt+r", "Launch Claude review (no confirm)"},
-					{"ctrl+r", "Request Copilot review"},
+					{tuiKeybindReview, "Launch Claude review"},
+					{tuiKeybindReviewNoConfirm, "Launch Claude review (no confirm)"},
+					{tuiKeybindCopilotReview, "Request Copilot review"},
 				},
 				pairs[len(pairs)-2:]...)...)
 	}
@@ -4290,7 +4243,7 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case tuiKeyEsc:
 			return m.confirmDismiss()
-		case tuiKeyAltEnter:
+		case tuiKeybindConfirmSubmit:
 			m.confirmYes = true
 			return m.confirmAccept()
 		default:
@@ -4301,12 +4254,12 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg.String() {
-	case tuiKeyLeft, tuiKeyRight, "h", "l", tuiKeySpace, tuiKeyTab:
+	case tuiKeyLeft, tuiKeyRight, tuiKeybindVimLeft, tuiKeybindVimRight, tuiKeySpace, tuiKeyTab:
 		m.confirmYes = !m.confirmYes
 		return m, nil
-	case "y":
+	case tuiKeybindConfirmYes:
 		return m.confirmAccept()
-	case "n", "q", tuiKeyEsc:
+	case tuiKeybindConfirmNo, tuiKeybindQuit, tuiKeyEsc:
 		return m.confirmDismiss()
 	case tuiKeyEnter:
 		if m.confirmYes {
@@ -4320,16 +4273,16 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case tuiKeyEsc, "q":
+	case tuiKeyEsc, tuiKeybindQuit:
 		m.showOptions = false
 		return m, nil
-	case tuiKeyEnter, tuiKeyOptions:
+	case tuiKeyEnter, tuiKeybindOptions:
 		return m.applyFilterOptions()
-	case "j", tuiKeyDown:
+	case tuiKeybindVimDown, tuiKeyDown:
 		m.optionsCursor = min(m.optionsCursor+1, filterRow(len(filterOptionDefs)-1))
-	case "k", tuiKeyUp:
+	case tuiKeybindVimUp, tuiKeyUp:
 		m.optionsCursor = max(m.optionsCursor-1, 0)
-	case "l", tuiKeyRight:
+	case tuiKeybindVimRight, tuiKeyRight:
 		if !m.isFilterRowLocked(m.optionsCursor) {
 			m.optionsReset[m.optionsCursor] = false
 			n := len(filterOptionDefs[m.optionsCursor].choices)
@@ -4343,7 +4296,7 @@ func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.optionsValues[m.optionsCursor] = (m.optionsValues[m.optionsCursor] + 1) % n
 			}
 		}
-	case "h", tuiKeyLeft:
+	case tuiKeybindVimLeft, tuiKeyLeft:
 		if !m.isFilterRowLocked(m.optionsCursor) {
 			m.optionsReset[m.optionsCursor] = false
 			m.optionsValues[m.optionsCursor] = max(m.optionsValues[m.optionsCursor]-1, 0)
@@ -4470,7 +4423,7 @@ func (m tuiModel) renderConfirmModal() string {
 		b.WriteString("\n\n")
 		helpKey := m.styles.helpKey
 		helpText := m.styles.helpText
-		hint := helpKey.Render(tuiKeyAltEnter) + " " + helpText.Render("submit") + "  " +
+		hint := helpKey.Render(tuiKeybindConfirmSubmit) + " " + helpText.Render("submit") + "  " +
 			helpKey.Render("esc") + " " + helpText.Render("cancel")
 		b.WriteString(hint)
 		// Fix width so the border stays aligned as the textarea grows.
