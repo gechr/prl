@@ -442,54 +442,60 @@ func withSingleTrailingNewline(content string) string {
 // node — operating on nested nodes produces progressively wrong indentation.
 func mergeIntoAncestor(f *goyamlast.File, key string, value any) bool {
 	parts := strings.Split(key, ".")
-	for depth := len(parts) - 1; depth > 0; depth-- {
-		prefix := strings.Join(parts[:depth], ".")
-		ancestorPath, pErr := goyaml.PathString("$." + prefix)
-		if pErr != nil {
-			continue
-		}
-		if _, aErr := ancestorPath.ReadNode(f); aErr != nil {
-			continue
-		}
+	if len(parts) < 2 { //nolint:mnd // need at least key + one ancestor
+		return false
+	}
 
-		// Ancestor exists. Rewrite the full document with the missing nested key
-		// populated. This is less surgical than AST replacement, but it avoids
-		// indentation bugs when introducing a new child mapping under an existing
-		// ancestor (for example, adding tui.filters.* under an existing tui block).
-		var existing map[string]any
-		if uErr := goyaml.Unmarshal([]byte(f.String()), &existing); uErr != nil {
-			return false
-		}
-		if existing == nil {
-			existing = make(map[string]any)
-		}
+	ancestorPath, pErr := goyaml.PathString("$." + parts[0])
+	if pErr != nil {
+		return false
+	}
+	if _, aErr := ancestorPath.ReadNode(f); aErr != nil {
+		return false
+	}
 
-		// Deep-set the full dotted path into the decoded document.
-		suffix := parts
-		cur := existing
-		for i, seg := range suffix {
-			if i == len(suffix)-1 {
-				cur[seg] = value
+	// Top-level ancestor exists. Unmarshal the full document, set the target
+	// key, extract the top-level ancestor's subtree, and replace only that node.
+	var docMap map[string]any
+	if uErr := goyaml.Unmarshal([]byte(f.String()), &docMap); uErr != nil {
+		return false
+	}
+	if docMap == nil {
+		docMap = make(map[string]any)
+	}
+
+	// Deep-set the full dotted path into the decoded document.
+	cur := docMap
+	for i, seg := range parts {
+		if i == len(parts)-1 {
+			cur[seg] = value
+		} else {
+			if next, ok := cur[seg].(map[string]any); ok {
+				cur = next
 			} else {
 				next := make(map[string]any)
 				cur[seg] = next
 				cur = next
 			}
 		}
-
-		updated, mErr := goyaml.Marshal(existing)
-		if mErr != nil {
-			return false
-		}
-
-		parsed, pErr := goyamlparser.ParseBytes(updated, goyamlparser.ParseComments)
-		if pErr != nil {
-			return false
-		}
-		*f = *parsed
-		return true
 	}
-	return false
+
+	ancestorMap, ok := docMap[parts[0]].(map[string]any)
+	if !ok {
+		return false
+	}
+
+	updated, mErr := goyaml.Marshal(ancestorMap)
+	if mErr != nil {
+		return false
+	}
+	if rErr := ancestorPath.ReplaceWithReader(
+		f,
+		strings.NewReader(string(updated)),
+	); rErr != nil {
+		return false
+	}
+	return true
 }
 
 var defaultConfigYAML = fmt.Sprintf(`# prl configuration

@@ -355,10 +355,11 @@ func (a *ActionRunner) fetchPRBody(owner, repo string, number int) (string, erro
 
 // PRDetail holds the full detail for a PR detail view.
 type PRDetail struct {
-	Body    string
-	Reviews []PRReview
-	Checks  []PRCheck
-	Files   []PRFile
+	Body           string
+	MergeableState string // clean, dirty, unstable, behind, blocked, unknown
+	Reviews        []PRReview
+	Checks         []PRCheck
+	Files          []PRFile
 }
 
 // PRCheck holds a single CI check run.
@@ -389,8 +390,9 @@ func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, 
 	// Fetch body.
 	prPath := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
 	var pr struct {
-		Body string `json:"body"`
-		Head struct {
+		Body           string `json:"body"`
+		MergeableState string `json:"mergeable_state"`
+		Head           struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
 	}
@@ -398,6 +400,7 @@ func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, 
 		return detail, err
 	}
 	detail.Body = pr.Body
+	detail.MergeableState = pr.MergeableState
 
 	// Fetch reviews.
 	reviewPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)

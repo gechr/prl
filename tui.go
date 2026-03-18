@@ -2931,6 +2931,10 @@ func (m tuiModel) renderDetailContent() []string {
 	styledURL := xansi.SetHyperlink(pr.URL) + valueStyle.Render(pr.URL) + xansi.ResetHyperlink()
 	lines = append(lines, detailIndent+labelStyle.Render("   URL: ")+styledURL)
 	lines = append(lines, detailIndent+labelStyle.Render("Status: ")+m.renderDetailStatus(pr))
+	if m.detail.MergeableState == valueBehind {
+		lines = append(lines, detailIndent+labelStyle.Render(" State: ")+
+			lg.NewStyle().Foreground(lg.Color("214")).Render("Branch out-of-date"))
+	}
 	lines = append(lines, "")
 
 	// Reviews.
@@ -3038,7 +3042,7 @@ func (m tuiModel) renderDetailContent() []string {
 
 func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 	if pr.IsDraft {
-		return lg.NewStyle().Foreground(lg.Color("240")).Render("Draft")
+		return lg.NewStyle().Foreground(lg.Color("250")).Render("Draft")
 	}
 	state := strings.ToLower(pr.State)
 	if state == valueMerged {
@@ -3049,7 +3053,7 @@ func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 	}
 	switch pr.MergeStatus {
 	case MergeStatusReady:
-		return lg.NewStyle().Foreground(lg.Color("48")).Render("Ready to merge")
+		return lg.NewStyle().Foreground(lg.Color("2")).Render("Ready to merge")
 	case MergeStatusCIPending:
 		return lg.NewStyle().Foreground(lg.Color("214")).Render("CI pending")
 	case MergeStatusCIFailed:
@@ -3735,9 +3739,9 @@ func (m tuiModel) isCurrentUserCursor() bool {
 
 func (m tuiModel) listHelpPairs() []helpPair {
 	pairs := []helpPair{
-		{tuiKeyEnter, "show"},
-		{tuiKeySpace, "select"},
-		{tuiKeybindFilter, "filter"},
+		{tuiKeyEnter, tuiHelpShow},
+		{tuiKeySpace, tuiHelpSelect},
+		{tuiKeybindFilter, tuiHelpFilter},
 	}
 	pr := m.currentPR()
 	var state string
@@ -3749,22 +3753,22 @@ func (m tuiModel) listHelpPairs() []helpPair {
 	}
 	actionable := pr != nil && state != valueMerged && state != valueClosed
 	if actionable && !ownPR && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindApprove, "approve"})
+		pairs = append(pairs, helpPair{tuiKeybindApprove, tuiHelpApprove})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindDiff, "diff"})
+	pairs = append(pairs, helpPair{tuiKeybindDiff, tuiHelpDiff})
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindMerge, "merge"})
+		pairs = append(pairs, helpPair{tuiKeybindMerge, tuiHelpMerge})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindComment, "comment"})
+	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindClose, "close"})
+		pairs = append(pairs, helpPair{tuiKeybindClose, tuiHelpClose})
 	}
 	if state == valueClosed {
-		pairs = append(pairs, helpPair{tuiKeybindReopen, "reopen"})
+		pairs = append(pairs, helpPair{tuiKeybindReopen, tuiHelpReopen})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindOpen, "open"})
+	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
 	if actionable && !draft && hasClaudeReviewLauncher() {
-		pairs = append(pairs, helpPair{tuiKeybindReview, "review"})
+		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
 	if m.autoRefresh {
 		pairs = append(pairs, helpPair{tuiKeybindToggleRefresh, "refresh " + styledOn})
@@ -3772,9 +3776,9 @@ func (m tuiModel) listHelpPairs() []helpPair {
 		pairs = append(pairs, helpPair{tuiKeybindToggleRefresh, "refresh " + styledOff})
 	}
 	pairs = append(pairs,
-		helpPair{tuiKeybindOptions, "options"},
-		helpPair{tuiKeybindHelp, "help"},
-		helpPair{tuiKeybindQuit, "quit"},
+		helpPair{tuiKeybindOptions, tuiHelpOptions},
+		helpPair{tuiKeybindHelp, tuiHelpHelp},
+		helpPair{tuiKeybindQuit, tuiHelpQuit},
 	)
 	return pairs
 }
@@ -3807,7 +3811,7 @@ func (m tuiModel) filterHelpPipeCol() int {
 
 func (m tuiModel) renderFilterHelp() string {
 	pairs := []helpPair{
-		{"↑/↓", "prev/next"},
+		{tuiKeyArrows, "prev/next"},
 		{tuiKeyEnter, "apply"},
 		{tuiKeyEsc, "exit"},
 	}
@@ -3818,45 +3822,46 @@ func (m tuiModel) renderFilterHelp() string {
 
 func (m tuiModel) diffHelpPairs() []helpPair {
 	pairs := []helpPair{
-		{"↑/↓", "scroll"},
+		{tuiKeyArrows, tuiHelpScroll},
 	}
 	state := m.prStateForKey(m.diffKey)
 	draft := m.prIsDraftForKey(m.diffKey)
 	ownPR := m.isCurrentUserDiff()
 	actionable := state != valueMerged && state != valueClosed
-	if actionable && !ownPR && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindApprove + "/" + tuiKeybindApproveAlias, "approve"})
-	}
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindMerge, "merge"})
+		pairs = append(pairs, helpPair{tuiKeybindMerge, tuiHelpMerge})
 	}
 	if actionable && !ownPR && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindApproveMerge, "approve/merge"})
+		pairs = append(
+			pairs,
+			helpPair{tuiKeybindApprove + "/" + tuiKeybindApproveAlias, tuiHelpApprove},
+		)
+		pairs = append(pairs, helpPair{tuiKeybindApproveMerge, tuiHelpApproveMerge})
 	}
 	if actionable && !ownPR {
-		pairs = append(pairs, helpPair{tuiKeybindUnassign, "unsubscribe"})
+		pairs = append(pairs, helpPair{tuiKeybindUnassign, tuiHelpUnsubscribe})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindComment, "comment"})
+	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindClose, "close"})
+		pairs = append(pairs, helpPair{tuiKeybindClose, tuiHelpClose})
 	}
 	if state == valueClosed {
-		pairs = append(pairs, helpPair{tuiKeybindReopen, "reopen"})
+		pairs = append(pairs, helpPair{tuiKeybindReopen, tuiHelpReopen})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindOpen, "open"})
+	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindSlack, "slack"})
+		pairs = append(pairs, helpPair{tuiKeybindSlack, tuiHelpSlack})
 	}
 
 	if m.diffQueueTotal > 0 {
 		if len(m.diffHistory) > 0 {
-			pairs = append(pairs, helpPair{tuiKeybindPrev, "prev"})
+			pairs = append(pairs, helpPair{tuiKeybindPrev, tuiHelpPrev})
 		}
 		if len(m.diffQueue) > 0 {
-			pairs = append(pairs, helpPair{tuiKeybindNext, "next"})
+			pairs = append(pairs, helpPair{tuiKeybindNext, tuiHelpNext})
 		}
 	}
-	pairs = append(pairs, helpPair{tuiKeybindDiff + "/" + tuiKeybindQuit, "dismiss"})
+	pairs = append(pairs, helpPair{tuiKeybindDiff, tuiHelpDismiss})
 	return pairs
 }
 
@@ -3866,24 +3871,30 @@ func (m tuiModel) renderDiffHelp() string {
 
 func (m tuiModel) detailHelpPairs() []helpPair {
 	pairs := []helpPair{
-		{"↑/↓", "scroll"},
-		{tuiKeybindDiff, "diff"},
+		{tuiKeyArrows, tuiHelpScroll},
+		{tuiKeybindDiff, tuiHelpDiff},
 	}
 	state := m.prStateForKey(m.detailKey)
 	draft := m.prIsDraftForKey(m.detailKey)
 	actionable := state != valueMerged && state != valueClosed
 	if actionable && !draft && !m.isCurrentUserDetail() {
-		pairs = append(pairs, helpPair{tuiKeybindApprove + "/" + tuiKeybindApproveAlias, "approve"})
+		pairs = append(
+			pairs,
+			helpPair{tuiKeybindApprove + "/" + tuiKeybindApproveAlias, tuiHelpApprove},
+		)
 	}
-	pairs = append(pairs, helpPair{tuiKeybindComment, "comment"})
-	pairs = append(pairs, helpPair{tuiKeybindOpen, "open"})
+	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
+	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindSlack, "slack"})
+		pairs = append(pairs, helpPair{tuiKeybindSlack, tuiHelpSlack})
+	}
+	if actionable && m.detail.MergeableState == valueBehind {
+		pairs = append(pairs, helpPair{tuiKeybindUpdateBranch, tuiHelpUpdateBranch})
 	}
 	if actionable && !draft && hasClaudeReviewLauncher() {
-		pairs = append(pairs, helpPair{tuiKeybindReview, "review"})
+		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindQuit, "dismiss"})
+	pairs = append(pairs, helpPair{tuiKeybindQuit, tuiHelpDismiss})
 	return pairs
 }
 
@@ -3893,33 +3904,33 @@ func (m tuiModel) renderDetailHelp() string {
 
 func (m tuiModel) renderHelpOverlay() string {
 	pairs := []helpPair{
-		{"↑/↓ · j/k", "Navigate up/down"},
-		{"g/G", "Jump to first/last"},
-		{"enter", "Show PR detail"},
-		{tuiKeySpace, "Toggle selection"},
-		{"shift+↑/↓", "Extend selection"},
-		{tuiKeybindSelectAll, "Select all/none"},
-		{tuiKeybindInvertSelection, "Invert selection"},
-		{tuiKeybindFilter, "Filter"},
-		{tuiKeybindApprove, "Approve PRs"},
-		{tuiKeybindApproveMerge, "Approve/Merge PRs"},
-		{tuiKeybindApproveNoConfirm, "Approve PRs (no confirm)"},
-		{tuiKeybindDiff, "View diff"},
-		{tuiKeybindMerge, "Merge PRs"},
-		{tuiKeybindForceMerge, "Force-merge PRs"},
-		{tuiKeybindClose, "Close PRs"},
-		{tuiKeybindReopen, "Reopen PRs"},
-		{tuiKeybindUpdateBranch, "Update branch"},
-		{tuiKeybindUnassign, "Unassign/unsubscribe"},
-		{tuiKeybindUnassignNoConfirm, "Unassign (no confirm)"},
-		{tuiKeybindOpen, "Open in browser"},
-		{tuiKeybindSlack, "Send to Slack"},
-		{tuiKeybindSlackNoConfirm, "Send to Slack (no confirm)"},
-		{tuiKeyTab, "Cycle sort order"},
-		{tuiKeybindOptions, "Options"},
-		{tuiKeybindToggleRefresh, "Toggle auto-refresh"},
-		{tuiKeybindHelp, "Toggle this help"},
-		{tuiKeybindQuit, "Quit"},
+		{tuiKeyArrows + " · j/k", tuiHelpNavigate},
+		{tuiKeyJumpFirstLast, tuiHelpJumpFirstLast},
+		{tuiKeyEnter, tuiHelpShowPRDetail},
+		{tuiKeySpace, tuiHelpToggleSelection},
+		{"shift+" + tuiKeyArrows, tuiHelpExtendSelection},
+		{tuiKeybindSelectAll, tuiHelpSelectAllNone},
+		{tuiKeybindInvertSelection, tuiHelpInvertSelection},
+		{tuiKeybindFilter, tuiHelpFilter},
+		{tuiKeybindApprove, tuiHelpApprovePRs},
+		{tuiKeybindApproveMerge, tuiHelpApproveMergePRs},
+		{tuiKeybindApproveNoConfirm, tuiHelpApproveNoConfirm},
+		{tuiKeybindDiff, tuiHelpViewDiff},
+		{tuiKeybindMerge, tuiHelpMergePRs},
+		{tuiKeybindForceMerge, tuiHelpForceMergePRs},
+		{tuiKeybindClose, tuiHelpClosePRs},
+		{tuiKeybindReopen, tuiHelpReopenPRs},
+		{tuiKeybindUpdateBranch, tuiHelpUpdateBranchOverlay},
+		{tuiKeybindUnassign, tuiHelpUnassign},
+		{tuiKeybindUnassignNoConfirm, tuiHelpUnassignNoConfirm},
+		{tuiKeybindOpen, tuiHelpOpenInBrowser},
+		{tuiKeybindSlack, tuiHelpSendToSlack},
+		{tuiKeybindSlackNoConfirm, tuiHelpSendToSlackNoConf},
+		{tuiKeyTab, tuiHelpCycleSortOrder},
+		{tuiKeybindOptions, tuiHelpOptions},
+		{tuiKeybindToggleRefresh, tuiHelpToggleAutoRefresh},
+		{tuiKeybindHelp, tuiHelpToggleHelp},
+		{tuiKeybindQuit, tuiHelpQuit},
 	}
 	if hasClaudeReviewLauncher() {
 		// Insert review before the last two entries (?, q).
@@ -3927,9 +3938,9 @@ func (m tuiModel) renderHelpOverlay() string {
 			pairs[:len(pairs)-2],
 			append(
 				[]helpPair{
-					{tuiKeybindReview, "Launch Claude review"},
-					{tuiKeybindReviewNoConfirm, "Launch Claude review (no confirm)"},
-					{tuiKeybindCopilotReview, "Request Copilot review"},
+					{tuiKeybindReview, tuiHelpLaunchReview},
+					{tuiKeybindReviewNoConfirm, tuiHelpLaunchReviewNoConf},
+					{tuiKeybindCopilotReview, tuiHelpCopilotReview},
 				},
 				pairs[len(pairs)-2:]...)...)
 	}

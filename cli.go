@@ -53,30 +53,30 @@ type CLI struct {
 	// Interactive flags
 	Interactive bool `name:"interactive" help:"Launch interactive TUI browser" short:"i" clib:"terse='TUI browser',group='Interactive/0'"`
 
-	Approve      bool   `name:"approve"       help:"Approve each PR"                                                 clib:"terse='Approve PRs',group='Interactive/1'"`
-	Close        bool   `name:"close"         help:"Close each PR"                                                   clib:"terse='Close PRs',group='Interactive/1'"`
-	DeleteBranch bool   `name:"delete-branch" help:"Delete branch after close (requires --close)"                    clib:"terse='Delete branch',group='Interactive/1'"`
-	Comment      string `name:"comment"       help:"Add a comment to each PR"                                        clib:"terse='Add comment',group='Interactive/1'"       placeholder:"<body>"`
-	Edit         bool   `name:"edit"          help:"Edit title and body of each PR"                                  clib:"terse='Edit PR',group='Interactive/1'"                                short:"e"`
-	MarkDraft    bool   `name:"mark-draft"    help:"Convert each PR to draft (only targets non-draft PRs)"           clib:"terse='Convert to draft',group='Interactive/1'"`
-	MarkReady    bool   `name:"mark-ready"    help:"Mark each PR as ready for review (only targets draft PRs)"       clib:"terse='Mark as ready',group='Interactive/1'"`
-	Merge        *bool  `name:"merge"         help:"Toggle auto-merge (squash) on each PR"                           clib:"terse='Auto-merge',group='Interactive/1'"                                       negatable:""`
-	ForceMerge   bool   `name:"force-merge"   help:"Poll for checks, then force-merge (requires bypass permissions)" clib:"terse='Force-merge',group='Interactive/1'"                            short:"M"`
-	Unsubscribe  bool   `name:"unsubscribe"   help:"Remove review request and unsubscribe from each PR"              clib:"terse='Unsubscribe',group='Interactive/1'"`
-	Update       bool   `name:"update"        help:"Update each PR branch from base branch"                          clib:"terse='Update branch',group='Interactive/1'"`
-	Yes          bool   `name:"yes"           help:"Skip interactive confirmation prompt"                            clib:"terse='Skip confirmation',group='Interactive/2'"                      short:"y"`
+	Approve      bool   `name:"approve"       help:"Approve each PR"                                                                                             clib:"terse='Approve PRs',group='Interactive/1'"`
+	Close        bool   `name:"close"         help:"Close each PR"                                                                                               clib:"terse='Close PRs',group='Interactive/1'"`
+	DeleteBranch bool   `name:"delete-branch" help:"Delete branch after close (requires --close)"                                                                clib:"terse='Delete branch',group='Interactive/1'"`
+	Comment      string `name:"comment"       help:"Add a comment to each PR"                                                               placeholder:"<body>" clib:"terse='Add comment',group='Interactive/1'"`
+	Edit         bool   `name:"edit"          help:"Edit title and body of each PR"                                  short:"e"                                   clib:"terse='Edit PR',group='Interactive/1'"`
+	MarkDraft    bool   `name:"mark-draft"    help:"Convert each PR to draft (only targets non-draft PRs)"                                                       clib:"terse='Convert to draft',group='Interactive/1'"`
+	MarkReady    bool   `name:"mark-ready"    help:"Mark each PR as ready for review (only targets draft PRs)"                                                   clib:"terse='Mark as ready',group='Interactive/1'"`
+	Merge        *bool  `name:"merge"         help:"Toggle auto-merge (squash) on each PR"                                     negatable:""                      clib:"terse='Auto-merge',group='Interactive/1'"`
+	ForceMerge   bool   `name:"force-merge"   help:"Poll for checks, then force-merge (requires bypass permissions)" short:"M"                                   clib:"terse='Force-merge',group='Interactive/1'"`
+	Unsubscribe  bool   `name:"unsubscribe"   help:"Remove review request and unsubscribe from each PR"                                                          clib:"terse='Unsubscribe',group='Interactive/1'"`
+	Update       bool   `name:"update"        help:"Update each PR branch from base branch"                                                                      clib:"terse='Update branch',group='Interactive/1'"`
+	Yes          bool   `name:"yes"           help:"Skip interactive confirmation prompt"                            short:"y"                                   clib:"terse='Skip confirmation',group='Interactive/2'"`
 
 	// Action flags
-	Clone bool `name:"clone" help:"Clone unique repos from results (parallel)" clib:"terse='Clone repos',group='Actions/1'"`
-	Copy  bool `name:"copy"  help:"Copy output to clipboard"                   clib:"terse='Copy clipboard',group='Actions/1'"  short:"C"`
-	Count bool `name:"count" help:"Print total result count"                   clib:"terse='Print count',group='Actions/1'"     short:"N"`
-	Dry   bool `name:"dry"   help:"Show search query without executing"        clib:"terse='Dry run',group='Actions/1'"         short:"n" aliases:"dry-run,dryrun"`
-	Open  bool `name:"open"  help:"Open each PR in browser"                    clib:"terse='Open in browser',group='Actions/1'" short:"P"`
-	Web   bool `name:"web"   help:"Open GitHub search in browser"              clib:"terse='Web search',group='Actions/1'"      short:"w"`
+	Clone bool `name:"clone" help:"Clone unique repos from results (parallel)"                                    clib:"terse='Clone repos',group='Actions/1'"`
+	Copy  bool `name:"copy"  help:"Copy output to clipboard"                   short:"C"                          clib:"terse='Copy clipboard',group='Actions/1'"`
+	Count bool `name:"count" help:"Print total result count"                   short:"N"                          clib:"terse='Print count',group='Actions/1'"`
+	Dry   bool `name:"dry"   help:"Show search query without executing"        short:"n" aliases:"dry-run,dryrun" clib:"terse='Dry run',group='Actions/1'"`
+	Open  bool `name:"open"  help:"Open each PR in browser"                    short:"P"                          clib:"terse='Open in browser',group='Actions/1'"`
+	Web   bool `name:"web"   help:"Open GitHub search in browser"              short:"w"                          clib:"terse='Web search',group='Actions/1'"`
 
-	Send   bool   `name:"send"    help:"Send slack output to configured recipient(s)"      clib:"terse='Send to Slack',group='Actions/2'"`
-	SendAt string `name:"send-at" help:"Schedule slack send (+5m, +2h, HH:MM, Unix ts)"    clib:"terse='Schedule Slack send',group='Actions/2'"                                           placeholder:"<time>"`
-	SendTo string `name:"send-to" help:"Override Slack recipient (#channel, @user, email)" clib:"terse='Override Slack recipient',complete='predictor=slack-recipient',group='Actions/2'" placeholder:"<recipient>"`
+	Send   bool   `name:"send"    help:"Send slack output to configured recipient(s)"                                clib:"terse='Send to Slack',group='Actions/2'"`
+	SendAt string `name:"send-at" help:"Schedule slack send (+5m, +2h, HH:MM, Unix ts)"    placeholder:"<time>"      clib:"terse='Schedule Slack send',group='Actions/2'"`
+	SendTo string `name:"send-to" help:"Override Slack recipient (#channel, @user, email)" placeholder:"<recipient>" clib:"terse='Override Slack recipient',complete='predictor=slack-recipient',group='Actions/2'"`
 
 	// Output flags
 	Watch    bool    `name:"watch"   help:"Refresh output periodically"                                                                        short:"W"                                     clib:"terse='Watch mode',group='Output/0'"`
@@ -88,11 +88,11 @@ type CLI struct {
 	Sort     *string `name:"sort"    help:"Sort by"                                                                                                                    placeholder:"<field>" clib:"terse='Sort field',complete='values=name created updated',group='Output/1',enum='name,created,updated',highlight='n,c,u',default='name'"`
 
 	// Miscellaneous
-	Init    bool   `name:"init"    help:"Initialize config with defaults"            clib:"terse='Initialize config',group='Miscellaneous/0'"`
-	Color   string `name:"color"   help:"When to use color"                          clib:"terse='Color mode',complete='values=auto always never',group='Miscellaneous/1',enum='auto,always,never',default='auto'" default:"auto"`
-	Debug   bool   `name:"debug"   help:"Log HTTP requests to stderr"                clib:"terse='Debug mode',group='Miscellaneous/1'"`
-	Quick   bool   `name:"quick"   help:"Skip enrichment (merge status, auto-merge)" clib:"terse='Skip enrichment',group='Miscellaneous/1'"                                                                                       short:"Q"`
-	Verbose bool   `name:"verbose" help:"Enable verbose logging"                     clib:"terse='Verbose',group='Miscellaneous/1'"                                                                                               short:"v"`
+	Init    bool   `name:"init"    help:"Initialize config with defaults"                      clib:"terse='Initialize config',group='Miscellaneous/0'"`
+	Color   string `name:"color"   help:"When to use color"                                    clib:"terse='Color mode',complete='values=auto always never',group='Miscellaneous/1',enum='auto,always,never',default='auto'" default:"auto"`
+	Debug   bool   `name:"debug"   help:"Log HTTP requests to stderr"                          clib:"terse='Debug mode',group='Miscellaneous/1'"`
+	Quick   bool   `name:"quick"   help:"Skip enrichment (merge status, auto-merge)" short:"Q" clib:"terse='Skip enrichment',group='Miscellaneous/1'"`
+	Verbose bool   `name:"verbose" help:"Enable verbose logging"                     short:"v" clib:"terse='Verbose',group='Miscellaneous/1'"`
 
 	stateExplicit    bool `kong:"-"`
 	draftExplicit    bool `kong:"-"`
