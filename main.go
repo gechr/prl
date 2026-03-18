@@ -64,7 +64,11 @@ func run() error {
 	}
 
 	// Handle completion (before validation/search logic)
-	gen := complete.NewGenerator("prl").FromFlags(clib.Reflect(&cli))
+	flags, flagsErr := clib.Reflect(&cli)
+	if flagsErr != nil {
+		clog.Fatal().Msg(flagsErr.Error())
+	}
+	gen := complete.NewGenerator("prl").FromFlags(flags)
 	gen.Specs = append(gen.Specs,
 		complete.Spec{ShortFlag: "h", Terse: "Short help"},
 		complete.Spec{LongFlag: "help", Terse: "Long help"},

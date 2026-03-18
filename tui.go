@@ -140,6 +140,7 @@ type tuiStyles struct {
 	statusAction  lg.Style
 	statusErr     lg.Style
 	statusOK      lg.Style
+	statusPending lg.Style
 }
 
 func newTuiStyles() tuiStyles {
@@ -149,7 +150,8 @@ func newTuiStyles() tuiStyles {
 		selectedIndex: lg.NewStyle().Foreground(lg.Color("118")).Bold(true),
 		statusOK:      lg.NewStyle().Foreground(lg.Color("48")),
 		statusErr:     lg.NewStyle().Foreground(lg.Color("196")),
-		statusAction:  lg.NewStyle().Bold(true),
+		statusAction:  lg.NewStyle().Foreground(lg.Color("2")).Bold(true),
+		statusPending: lg.NewStyle().Foreground(lg.Color("214")).Bold(true),
 		helpText:      lg.NewStyle().Foreground(lg.Color("175")),
 		helpKey:       lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
 		separator:     lg.NewStyle().Foreground(lg.Color("198")).Faint(true),
@@ -218,7 +220,10 @@ const (
 	tuiActionBranchUpdated
 	tuiActionClosed
 	tuiActionCommented
+	tuiActionEnqueued
 	tuiActionForceMerged
+	tuiActionMarkedDraft
+	tuiActionMarkedReady
 	tuiActionMerged
 	tuiActionOpened
 	tuiActionReopened
@@ -229,41 +234,49 @@ const (
 func (a tuiAction) String() string {
 	switch a {
 	case tuiActionApproved:
-		return "Approved"
+		return resultApproved
 	case tuiActionAutomerged:
 		return resultAutomerged
 	case tuiActionBranchUpdated:
-		return "Branch updated"
+		return resultBranchUpdated
 	case tuiActionClosed:
-		return "Closed"
+		return resultClosed
 	case tuiActionCommented:
-		return "Commented"
+		return resultCommented
+	case tuiActionEnqueued:
+		return resultEnqueued
 	case tuiActionForceMerged:
-		return "Force-merged"
+		return resultForceMerged
+	case tuiActionMarkedDraft:
+		return resultMarkedDraft
+	case tuiActionMarkedReady:
+		return resultMarkedReady
 	case tuiActionMerged:
-		return "Merged"
+		return resultMerged
 	case tuiActionOpened:
-		return "Opened"
+		return resultOpened
 	case tuiActionReopened:
-		return "Reopened"
+		return resultReopened
 	case tuiActionReviewRequested:
-		return "Copilot review requested"
+		return resultReviewRequested
 	case tuiActionUnsubscribed:
-		return "Unsubscribed"
+		return resultUnsubscribed
 	default:
-		return "Unknown"
+		return resultUnknown
 	}
 }
 
 // removes returns true if this action removes a PR from the list.
 func (a tuiAction) removes() bool {
 	switch a {
-	case tuiActionClosed, tuiActionMerged, tuiActionAutomerged, tuiActionForceMerged,
-		tuiActionUnsubscribed:
+	case tuiActionClosed, tuiActionMerged, tuiActionAutomerged, tuiActionEnqueued,
+		tuiActionForceMerged, tuiActionUnsubscribed:
 		return true
 	case tuiActionApproved,
 		tuiActionBranchUpdated,
 		tuiActionCommented,
+		tuiActionMarkedDraft,
+		tuiActionMarkedReady,
 		tuiActionOpened,
 		tuiActionReopened,
 		tuiActionReviewRequested:
@@ -274,10 +287,51 @@ func (a tuiAction) removes() bool {
 
 // parseMergeResult converts a mergeOrAutomerge result string to a tuiAction.
 func parseMergeResult(result string) tuiAction {
-	if result == resultAutomerged {
+	switch result {
+	case resultAutomerged:
 		return tuiActionAutomerged
+	case resultEnqueued:
+		return tuiActionEnqueued
+	default:
+		return tuiActionMerged
 	}
-	return tuiActionMerged
+}
+
+// draftToggleHelp returns "mark ready" for draft PRs and "mark draft" otherwise.
+func draftToggleHelp(pr *PullRequest) string {
+	if pr != nil && pr.IsDraft {
+		return tuiHelpMarkReady
+	}
+	return tuiHelpMarkDraft
+}
+
+// mergeHelpForPR returns "merge" for ready PRs and "automerge" otherwise.
+func mergeHelpForPR(pr *PullRequest) string {
+	if pr != nil && pr.MergeStatus == MergeStatusReady {
+		return tuiHelpMerge
+	}
+	return tuiHelpAutomerge
+}
+
+// batchMergeVerb returns "Merge", "Automerge", or "Merge/Automerge"
+// depending on the ready-state mix of the batch.
+func batchMergeVerb(targets []targetPR) string {
+	var ready, notReady int
+	for _, t := range targets {
+		if t.pr.MergeStatus == MergeStatusReady {
+			ready++
+		} else {
+			notReady++
+		}
+	}
+	switch {
+	case notReady == 0:
+		return "Merge"
+	case ready == 0:
+		return "Automerge"
+	default:
+		return "Merge/Automerge"
+	}
 }
 
 // actionMsg is sent when an async action completes.
@@ -927,7 +981,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.err = nil // treat as success
 		}
 		if msg.err != nil {
-			flashCmd := tuiFlashStatus(
+			flashCmd := flashResult(
 				&m,
 				msg.action.String()+" failed:",
 				fmt.Sprintf("%v", msg.err),
@@ -958,7 +1012,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = m.adjustedCursor()
 			m.offset = m.scrolledOffset()
 		}
-		flashCmd := tuiFlashStatus(&m, msg.action.String(), pr.Ref(), pr.URL, false)
+		flashCmd := flashResult(&m, msg.action.String(), pr.Ref(), pr.URL, false)
 		if hint != nil {
 			cmd := lg.NewStyle().Bold(true).Foreground(lg.Color("198")).Render(hint.Hint)
 			m.confirmAction = tuiActionInfo
@@ -999,7 +1053,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmYes = true
 			m.confirmPrompt = renderBatchFailurePrompt(msg)
 			m.confirmCmd = nil
-			return m, tuiFlashStatus(
+			return m, flashResult(
 				&m,
 				msg.action.String(),
 				status+" ("+fmt.Sprintf("%d failed", msg.failed)+")",
@@ -1007,7 +1061,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				true,
 			)
 		}
-		return m, tuiFlashStatus(&m, msg.action.String(), status+" PRs", "", false)
+		return m, flashResult(&m, msg.action.String(), status+" PRs", "", false)
 
 	case clearStatusMsg:
 		if msg.id == m.statusID {
@@ -1021,7 +1075,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.diffLoading = false
 		if msg.err != nil {
-			flashCmd := tuiFlashStatus(&m, "Diff failed:", fmt.Sprintf("%v", msg.err), "", true)
+			flashCmd := flashResult(&m, "Diff failed:", fmt.Sprintf("%v", msg.err), "", true)
 			// Skip to next in queue if available.
 			if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
 				return m, tea.Batch(flashCmd, nextCmd)
@@ -1044,7 +1098,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailFetchedMsg:
 		m.detailLoading = false
 		if msg.err != nil {
-			return m, tuiFlashStatus(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, flashResult(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
 		idx := m.resolveIndex(msg.key, msg.index)
 		if idx < 0 {
@@ -1060,14 +1114,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case claudeReviewMsg:
 		if msg.err != nil {
-			return m, tuiFlashStatus(&m, "Claude failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, flashResult(&m, "Claude failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
 		idx := m.resolveIndex(msg.key, msg.index)
 		if idx < 0 {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
-		return m, tuiFlashStatus(
+		return m, flashResult(
 			&m,
 			"Claude review launched",
 			pr.Ref(),
@@ -1077,7 +1131,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case slackSentMsg:
 		if msg.err != nil {
-			return m, tuiFlashStatus(&m, "Slack failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, flashResult(&m, "Slack failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
 		status := msg.output
 		if status == "" {
@@ -1086,7 +1140,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				status = "1 PR"
 			}
 		}
-		return m, tuiFlashStatus(&m, "Sent to Slack:", status, "", false)
+		return m, flashResult(&m, "Sent to Slack:", status, "", false)
 
 	case jumpTimeoutMsg:
 		if msg.id == m.jumpID && m.jumpDigit > 0 {
@@ -1285,8 +1339,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		idx := m.cursor
 		actions := m.actions
 		prCopy := *pr
-		m.statusMsg = m.styles.statusAction.Render("Fetching") + " " +
-			lg.NewStyle().Foreground(lg.Color("117")).Render(prCopy.Ref())
+		m.statusMsg = m.styles.statusPending.Render("Fetching") + " " +
+			lg.NewStyle().Foreground(lg.Color("117")).Render(prCopy.Ref()) + valueEllipsis
 		m.statusErr = false
 		m.detailLoading = true
 		key := makePRKey(prCopy)
@@ -1429,7 +1483,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		first := targets[0]
 		actions := m.actions
 		m.diffLoading = true
-		flashStatus(&m, "Diffing", &first.pr)
+		flashPending(&m, statusDiffing, &first.pr)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(first.pr)
 			diff, headSHA, err := actions.fetchDiff(owner, repo, first.pr.Number)
@@ -1455,7 +1509,11 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(targets) == 1 {
 			m.confirmSubject = targets[0].pr.Ref()
 			m.confirmURL = targets[0].pr.URL
-			m.confirmPrompt = "Merge " + styledRef(&targets[0].pr) + "?"
+			verb := "Automerge "
+			if targets[0].pr.MergeStatus == MergeStatusReady {
+				verb = "Merge "
+			}
+			m.confirmPrompt = verb + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
 				owner, repo := prOwnerRepo(t.pr)
@@ -1469,7 +1527,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
-			m.confirmPrompt = fmt.Sprintf("Merge %d PRs?", len(targets))
+			m.confirmPrompt = fmt.Sprintf("%s %d PRs?", batchMergeVerb(batch), len(targets))
 			m.confirmCmd = func() tea.Msg {
 				return runBatchAction(
 					actions,
@@ -1627,6 +1685,41 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.confirmInput.Focus()
 
+	case tuiKeybindDraftToggle:
+		pr := m.currentPR()
+		if pr == nil {
+			return m, nil
+		}
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		actions := m.actions
+		idx := m.cursor
+		prCopy := *pr
+		if pr.IsDraft {
+			flashPending(&m, statusMarkingReady, pr)
+			return m, func() tea.Msg {
+				err := actions.markReady(prCopy.NodeID)
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(prCopy),
+					action: tuiActionMarkedReady,
+					err:    err,
+				}
+			}
+		}
+		flashPending(&m, statusMarkingDraft, pr)
+		return m, func() tea.Msg {
+			err := actions.markDraft(prCopy.NodeID)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(prCopy),
+				action: tuiActionMarkedDraft,
+				err:    err,
+			}
+		}
+
 	case tuiKeybindComment:
 		pr := m.currentPR()
 		if pr == nil {
@@ -1739,9 +1832,11 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		count := len(prs)
 		if count == 1 {
-			flashStatus(&m, "Sending", &prs[0])
+			flashPending(&m, statusSending, &prs[0])
 		} else {
-			m.statusMsg = m.styles.statusAction.Render(fmt.Sprintf("Sending %d PRs", count))
+			m.statusMsg = m.styles.statusPending.Render(
+				fmt.Sprintf("Sending %d PRs", count),
+			) + valueEllipsis
 			m.statusErr = false
 		}
 		cfg := m.cfg
@@ -1765,7 +1860,26 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			msg = last.pr.Ref()
 		}
 		m.selected = make(prKeys)
-		return m, tuiFlashStatus(&m, tuiActionOpened.String(), msg, last.pr.URL, false)
+		return m, flashResult(&m, tuiActionOpened.String(), msg, last.pr.URL, false)
+
+	case tuiKeybindCopyURL:
+		targets := m.targetPRs()
+		if len(targets) == 0 {
+			return m, nil
+		}
+		urls := make([]string, len(targets))
+		for i, t := range targets {
+			urls[i] = t.pr.URL
+		}
+		natsort(urls)
+		_ = copyToClipboard(strings.Join(urls, "\n"))
+		last := targets[len(targets)-1]
+		msg := last.pr.Ref()
+		if len(targets) > 1 {
+			msg = fmt.Sprintf("%d URLs", len(targets))
+		}
+		m.selected = make(prKeys)
+		return m, flashResult(&m, resultCopied, msg, "", false)
 
 	case tuiKeybindReopen:
 		targets := m.targetPRs()
@@ -1909,6 +2023,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		if len(targets) == 1 {
 			t := targets[0]
+			flashPending(&m, statusCopilotReview, &t.pr)
 			return m, func() tea.Msg {
 				owner, repo := prOwnerRepo(t.pr)
 				err := actions.requestReview(
@@ -2085,7 +2200,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashStatus(&m, "Approving", &pr)
+		flashPending(&m, statusApproving, &pr)
 		actions := m.actions
 		approveCmd := func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -2126,6 +2241,34 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.confirmInput.Focus()
+	case tuiKeybindDraftToggle:
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		actions := m.actions
+		if pr.IsDraft {
+			flashPending(&m, statusMarkingReady, &pr)
+			return m, func() tea.Msg {
+				err := actions.markReady(pr.NodeID)
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(pr),
+					action: tuiActionMarkedReady,
+					err:    err,
+				}
+			}
+		}
+		flashPending(&m, statusMarkingDraft, &pr)
+		return m, func() tea.Msg {
+			err := actions.markDraft(pr.NodeID)
+			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionMarkedDraft, err: err}
+		}
 	case tuiKeybindComment:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -2163,7 +2306,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		actions := m.actions
-		flashStatus(&m, "Reopening", &pr)
+		flashPending(&m, statusReopening, &pr)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.reopenPR(owner, repo, pr.Number)
@@ -2211,7 +2354,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashStatus(&m, "Unsubscribing", &pr)
+		flashPending(&m, statusUnsubscribing, &pr)
 		actions := m.actions
 		login := m.login
 		return m, func() tea.Msg {
@@ -2234,7 +2377,11 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashStatus(&m, "Merging", &pr)
+		flash := statusAutomerging
+		if pr.MergeStatus == MergeStatusReady {
+			flash = statusMerging
+		}
+		flashPending(&m, flash, &pr)
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -2256,7 +2403,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashStatus(&m, "Approving/merging", &pr)
+		flashPending(&m, statusApproveMerging, &pr)
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -2308,7 +2455,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashStatus(&m, "Sending", &pr)
+		flashPending(&m, statusSending, &pr)
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
@@ -2323,12 +2470,21 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		_ = openBrowser(pr.URL)
 		return m, nil
+	case tuiKeybindCopyURL:
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		_ = copyToClipboard(pr.URL)
+		return m, flashResult(&m, resultCopied, pr.Ref(), "", false)
 	case tuiKeybindCopilotReview:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
 			return m, nil
 		}
 		pr := m.rows[idx].Item.PR
+		flashPending(&m, statusCopilotReview, &pr)
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -2439,7 +2595,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashStatus(&m, "Approving", &pr)
+		flashPending(&m, statusApproving, &pr)
 		actions := m.actions
 		m.view = tuiViewList
 		m.rescheduleRefresh()
@@ -2447,6 +2603,69 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.approve(owner, repo, pr.Number)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
+		}
+	case tuiKeybindMerge:
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if pr.IsDraft || state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		actions := m.actions
+		m.view = tuiViewList
+		m.rescheduleRefresh()
+		verb := "Automerge "
+		if pr.MergeStatus == MergeStatusReady {
+			verb = "Merge "
+		}
+		m.confirmAction = tuiActionMerge
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
+		m.confirmYes = true
+		m.confirmPrompt = verb + styledRef(&pr) + "?"
+		m.confirmCmd = func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			result, err := actions.mergeOrAutomerge(owner, repo, pr)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: parseMergeResult(result),
+				err:    err,
+			}
+		}
+		return m, nil
+	case tuiKeybindDraftToggle:
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		actions := m.actions
+		m.view = tuiViewList
+		m.rescheduleRefresh()
+		if pr.IsDraft {
+			flashPending(&m, statusMarkingReady, &pr)
+			return m, func() tea.Msg {
+				err := actions.markReady(pr.NodeID)
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(pr),
+					action: tuiActionMarkedReady,
+					err:    err,
+				}
+			}
+		}
+		flashPending(&m, statusMarkingDraft, &pr)
+		return m, func() tea.Msg {
+			err := actions.markDraft(pr.NodeID)
+			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionMarkedDraft, err: err}
 		}
 	case tuiKeybindComment:
 		idx := m.resolveIndex(m.detailKey, -1)
@@ -2511,7 +2730,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashStatus(&m, "Sending", &pr)
+		flashPending(&m, statusSending, &pr)
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
@@ -2526,6 +2745,14 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		_ = openBrowser(pr.URL)
 		return m, nil
+	case tuiKeybindCopyURL:
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		_ = copyToClipboard(pr.URL)
+		return m, flashResult(&m, resultCopied, pr.Ref(), "", false)
 	case tuiKeybindReview:
 		if !hasClaudeReviewLauncher() {
 			m.view = tuiViewList
@@ -3404,15 +3631,15 @@ func runBatchAction(
 	}
 }
 
-// flashStatus sets an in-progress status message (e.g. "Merging foo/bar#421")
-// that remains visible until replaced by the action result or cleared.
-func flashStatus(m *tuiModel, verb string, pr *PullRequest) {
-	m.statusMsg = m.styles.statusAction.Render(verb) + " " +
-		lg.NewStyle().Foreground(lg.Color("117")).Render(pr.Ref())
+// flashPending sets a persistent in-progress status (e.g. "Merging foo/bar#421…")
+// that remains visible until replaced by the action result.
+func flashPending(m *tuiModel, verb string, pr *PullRequest) {
+	m.statusMsg = m.styles.statusPending.Render(verb) + " " +
+		lg.NewStyle().Foreground(lg.Color("117")).Render(pr.Ref()) + valueEllipsis
 	m.statusErr = false
 }
 
-func tuiFlashStatus(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
+func flashResult(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
 	m.statusID++
 	m.statusErr = isErr
 	if isErr {
@@ -3497,6 +3724,14 @@ func (m tuiModel) targetPRs() []targetPR {
 	}
 	if pr := m.currentPR(); pr != nil {
 		return []targetPR{{m.cursor, *pr}}
+	}
+	return nil
+}
+
+// prForKey returns a pointer to the PR identified by key, or nil if not found.
+func (m tuiModel) prForKey(key prKey) *PullRequest {
+	if idx := m.resolveIndex(key, -1); idx >= 0 && idx < len(m.rows) {
+		return &m.rows[idx].Item.PR
 	}
 	return nil
 }
@@ -3757,7 +3992,7 @@ func (m tuiModel) listHelpPairs() []helpPair {
 	}
 	pairs = append(pairs, helpPair{tuiKeybindDiff, tuiHelpDiff})
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindMerge, tuiHelpMerge})
+		pairs = append(pairs, helpPair{tuiKeybindMerge, mergeHelpForPR(pr)})
 	}
 	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
 	if actionable {
@@ -3766,7 +4001,11 @@ func (m tuiModel) listHelpPairs() []helpPair {
 	if state == valueClosed {
 		pairs = append(pairs, helpPair{tuiKeybindReopen, tuiHelpReopen})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
+	pairs = append(
+		pairs,
+		helpPair{tuiKeybindOpen, tuiHelpOpen},
+		helpPair{tuiKeybindCopyURL, tuiHelpCopy},
+	)
 	if actionable && !draft && hasClaudeReviewLauncher() {
 		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
@@ -3824,12 +4063,16 @@ func (m tuiModel) diffHelpPairs() []helpPair {
 	pairs := []helpPair{
 		{tuiKeyArrows, tuiHelpScroll},
 	}
+	pr := m.prForKey(m.diffKey)
 	state := m.prStateForKey(m.diffKey)
 	draft := m.prIsDraftForKey(m.diffKey)
 	ownPR := m.isCurrentUserDiff()
 	actionable := state != valueMerged && state != valueClosed
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindMerge, tuiHelpMerge})
+		pairs = append(pairs, helpPair{tuiKeybindMerge, mergeHelpForPR(pr)})
+	}
+	if actionable {
+		pairs = append(pairs, helpPair{tuiKeybindDraftToggle, draftToggleHelp(pr)})
 	}
 	if actionable && !ownPR && !draft {
 		pairs = append(
@@ -3849,10 +4092,17 @@ func (m tuiModel) diffHelpPairs() []helpPair {
 		pairs = append(pairs, helpPair{tuiKeybindReopen, tuiHelpReopen})
 	}
 	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
+	pairs = append(pairs, helpPair{tuiKeybindCopyURL, tuiHelpCopy})
 	if actionable {
 		pairs = append(pairs, helpPair{tuiKeybindSlack, tuiHelpSlack})
 	}
 
+	if actionable && !draft && hasClaudeReviewLauncher() {
+		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
+	}
+	if actionable && !draft {
+		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilotReview})
+	}
 	if m.diffQueueTotal > 0 {
 		if len(m.diffHistory) > 0 {
 			pairs = append(pairs, helpPair{tuiKeybindPrev, tuiHelpPrev})
@@ -3874,9 +4124,16 @@ func (m tuiModel) detailHelpPairs() []helpPair {
 		{tuiKeyArrows, tuiHelpScroll},
 		{tuiKeybindDiff, tuiHelpDiff},
 	}
+	pr := m.prForKey(m.detailKey)
 	state := m.prStateForKey(m.detailKey)
 	draft := m.prIsDraftForKey(m.detailKey)
 	actionable := state != valueMerged && state != valueClosed
+	if actionable && !draft {
+		pairs = append(pairs, helpPair{tuiKeybindMerge, mergeHelpForPR(pr)})
+	}
+	if actionable {
+		pairs = append(pairs, helpPair{tuiKeybindDraftToggle, draftToggleHelp(pr)})
+	}
 	if actionable && !draft && !m.isCurrentUserDetail() {
 		pairs = append(
 			pairs,
@@ -3885,6 +4142,7 @@ func (m tuiModel) detailHelpPairs() []helpPair {
 	}
 	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
 	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
+	pairs = append(pairs, helpPair{tuiKeybindCopyURL, tuiHelpCopy})
 	if actionable {
 		pairs = append(pairs, helpPair{tuiKeybindSlack, tuiHelpSlack})
 	}
@@ -3893,6 +4151,9 @@ func (m tuiModel) detailHelpPairs() []helpPair {
 	}
 	if actionable && !draft && hasClaudeReviewLauncher() {
 		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
+	}
+	if actionable && !draft {
+		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilotReview})
 	}
 	pairs = append(pairs, helpPair{tuiKeybindQuit, tuiHelpDismiss})
 	return pairs
@@ -3904,33 +4165,35 @@ func (m tuiModel) renderDetailHelp() string {
 
 func (m tuiModel) renderHelpOverlay() string {
 	pairs := []helpPair{
-		{tuiKeyArrows + " · j/k", tuiHelpNavigate},
-		{tuiKeyJumpFirstLast, tuiHelpJumpFirstLast},
-		{tuiKeyEnter, tuiHelpShowPRDetail},
-		{tuiKeySpace, tuiHelpToggleSelection},
-		{"shift+" + tuiKeyArrows, tuiHelpExtendSelection},
-		{tuiKeybindSelectAll, tuiHelpSelectAllNone},
-		{tuiKeybindInvertSelection, tuiHelpInvertSelection},
-		{tuiKeybindFilter, tuiHelpFilter},
-		{tuiKeybindApprove, tuiHelpApprovePRs},
-		{tuiKeybindApproveMerge, tuiHelpApproveMergePRs},
-		{tuiKeybindApproveNoConfirm, tuiHelpApproveNoConfirm},
-		{tuiKeybindDiff, tuiHelpViewDiff},
-		{tuiKeybindMerge, tuiHelpMergePRs},
-		{tuiKeybindForceMerge, tuiHelpForceMergePRs},
-		{tuiKeybindClose, tuiHelpClosePRs},
-		{tuiKeybindReopen, tuiHelpReopenPRs},
-		{tuiKeybindUpdateBranch, tuiHelpUpdateBranchOverlay},
-		{tuiKeybindUnassign, tuiHelpUnassign},
-		{tuiKeybindUnassignNoConfirm, tuiHelpUnassignNoConfirm},
-		{tuiKeybindOpen, tuiHelpOpenInBrowser},
-		{tuiKeybindSlack, tuiHelpSendToSlack},
-		{tuiKeybindSlackNoConfirm, tuiHelpSendToSlackNoConf},
-		{tuiKeyTab, tuiHelpCycleSortOrder},
-		{tuiKeybindOptions, tuiHelpOptions},
-		{tuiKeybindToggleRefresh, tuiHelpToggleAutoRefresh},
-		{tuiKeybindHelp, tuiHelpToggleHelp},
-		{tuiKeybindQuit, tuiHelpQuit},
+		{tuiKeyArrows + " · j/k", tuiDescNavigate},
+		{tuiKeyJumpFirstLast, tuiDescJumpFirstLast},
+		{tuiKeyEnter, tuiDescShow},
+		{tuiKeySpace, tuiDescSelect},
+		{"shift+" + tuiKeyArrows, tuiDescExtendSelection},
+		{tuiKeybindSelectAll, tuiDescSelectAll},
+		{tuiKeybindInvertSelection, tuiDescInvertSelection},
+		{tuiKeybindFilter, tuiDescFilter},
+		{tuiKeybindApprove, tuiDescApprove},
+		{tuiKeybindApproveMerge, tuiDescApproveMerge},
+		{tuiKeybindApproveNoConfirm, tuiDescApproveNoConfirm},
+		{tuiKeybindDiff, tuiDescDiff},
+		{tuiKeybindDraftToggle, tuiDescDraftToggle},
+		{tuiKeybindMerge, tuiDescMerge},
+		{tuiKeybindForceMerge, tuiDescForceMerge},
+		{tuiKeybindClose, tuiDescClose},
+		{tuiKeybindReopen, tuiDescReopen},
+		{tuiKeybindUpdateBranch, tuiDescUpdateBranch},
+		{tuiKeybindUnassign, tuiDescUnassign},
+		{tuiKeybindUnassignNoConfirm, tuiDescUnassignNoConf},
+		{tuiKeybindOpen, tuiDescOpen},
+		{tuiKeybindCopyURL, tuiDescCopy},
+		{tuiKeybindSlack, tuiDescSendSlack},
+		{tuiKeybindSlackNoConfirm, tuiDescSendSlackNoConf},
+		{tuiKeyTab, tuiDescCycleSortOrder},
+		{tuiKeybindOptions, tuiDescOptions},
+		{tuiKeybindToggleRefresh, tuiDescRefresh},
+		{tuiKeybindHelp, tuiDescHelp},
+		{tuiKeybindQuit, tuiDescQuit},
 	}
 	if hasClaudeReviewLauncher() {
 		// Insert review before the last two entries (?, q).
@@ -3938,9 +4201,9 @@ func (m tuiModel) renderHelpOverlay() string {
 			pairs[:len(pairs)-2],
 			append(
 				[]helpPair{
-					{tuiKeybindReview, tuiHelpLaunchReview},
-					{tuiKeybindReviewNoConfirm, tuiHelpLaunchReviewNoConf},
-					{tuiKeybindCopilotReview, tuiHelpCopilotReview},
+					{tuiKeybindReview, tuiDescReview},
+					{tuiKeybindReviewNoConfirm, tuiDescReviewNoConfirm},
+					{tuiKeybindCopilotReview, tuiDescCopilotReview},
 				},
 				pairs[len(pairs)-2:]...)...)
 	}
@@ -4206,13 +4469,11 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 			if url != "" {
 				styledSubject = xansi.SetHyperlink(url) + styledSubject + xansi.ResetHyperlink()
 			}
-			m.statusMsg = m.styles.statusAction.Render(
+			m.statusMsg = m.styles.statusPending.Render(
 				verb,
-			) + " " + styledSubject + m.styles.statusAction.Render(
-				valueEllipsis,
-			)
+			) + " " + styledSubject + valueEllipsis
 		} else {
-			m.statusMsg = m.styles.statusAction.Render(verb + valueEllipsis)
+			m.statusMsg = m.styles.statusPending.Render(verb) + valueEllipsis
 		}
 		m.statusErr = false
 	}
@@ -4346,7 +4607,7 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	// Rebuild search params.
 	params, err := buildSearchQuery(m.cli, m.cfg)
 	if err != nil {
-		return m, tuiFlashStatus(&m, err.Error(), "", "", true)
+		return m, flashResult(&m, err.Error(), "", "", true)
 	}
 	m.params = params
 
@@ -4379,7 +4640,7 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	m.showRefreshStatus = true
 	m.spinnerTick = 0
 	m.spinnerID++
-	m.statusMsg = "Applying…"
+	m.statusMsg = lg.NewStyle().Foreground(lg.Color("218")).Bold(true).Render("Applying…")
 	m.statusErr = false
 
 	// Recompute cursor/offset since viewport may change (filter indicator line).

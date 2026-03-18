@@ -318,18 +318,40 @@ func (a *ActionRunner) closePR(
 	return nil
 }
 
-// mergeOrAutomerge enables automerge, or merges directly if the PR is already in clean status.
+// mergeOrAutomerge picks the right merge strategy based on the PR's known status:
+//   - Ready/Unknown: try direct merge, then enqueue (merge queue), then automerge.
+//   - Not ready: try automerge, then enqueue, then direct merge.
+//
 // Returns the log message on success.
 func (a *ActionRunner) mergeOrAutomerge(owner, repo string, pr PullRequest) (string, error) {
-	err := a.enableAutomerge(pr.NodeID)
-	if err == nil {
+	if pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusUnknown {
+		// Try direct merge first (instant).
+		if err := a.mergePR(owner, repo, pr.Number); err == nil {
+			return resultMerged, nil
+		}
+		// Direct merge failed — try merge queue.
+		if err := a.enqueuePR(pr.NodeID); err == nil {
+			return resultEnqueued, nil
+		}
+		// Fall back to automerge.
+		if err := a.enableAutomerge(pr.NodeID); err != nil {
+			return "", err
+		}
 		return resultAutomerged, nil
 	}
-	// Automerge failed - always try direct merge as fallback.
-	if mergeErr := a.mergePR(owner, repo, pr.Number); mergeErr != nil {
-		return "", mergeErr
+	// Not ready — enable automerge first.
+	if err := a.enableAutomerge(pr.NodeID); err == nil {
+		return resultAutomerged, nil
 	}
-	return "Merged", nil
+	// Try merge queue.
+	if err := a.enqueuePR(pr.NodeID); err == nil {
+		return resultEnqueued, nil
+	}
+	// Last resort: direct merge.
+	if err := a.mergePR(owner, repo, pr.Number); err != nil {
+		return "", err
+	}
+	return resultMerged, nil
 }
 
 func (a *ActionRunner) mergePR(owner, repo string, number int) error {
@@ -489,6 +511,15 @@ func (a *ActionRunner) enableAutomerge(nodeID string) error {
 	return a.doNodeMutation(
 		`mutation EnableAutomerge($id: ID!) {
 			enablePullRequestAutomerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) {
+				clientMutationId
+			}
+		}`, nodeID)
+}
+
+func (a *ActionRunner) enqueuePR(nodeID string) error {
+	return a.doNodeMutation(
+		`mutation EnqueuePR($id: ID!) {
+			enqueuePullRequest(input: {pullRequestId: $id}) {
 				clientMutationId
 			}
 		}`, nodeID)

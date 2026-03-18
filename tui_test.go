@@ -534,7 +534,7 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 		diffLines: diffLines,
 		view:      tuiViewDiff,
 		height:    12,
-		width:     180,
+		width:     250,
 		styles:    newTuiStyles(),
 	}
 
