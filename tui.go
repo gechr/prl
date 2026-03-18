@@ -215,6 +215,7 @@ type tuiAction int
 const (
 	tuiActionApproved tuiAction = iota
 	tuiActionAutomerged
+	tuiActionBranchUpdated
 	tuiActionClosed
 	tuiActionCommented
 	tuiActionForceMerged
@@ -229,24 +230,26 @@ func (a tuiAction) String() string {
 	switch a {
 	case tuiActionApproved:
 		return "Approved"
+	case tuiActionAutomerged:
+		return resultAutomerged
+	case tuiActionBranchUpdated:
+		return "Branch updated"
 	case tuiActionClosed:
 		return "Closed"
 	case tuiActionCommented:
 		return "Commented"
-	case tuiActionMerged:
-		return "Merged"
-	case tuiActionAutomerged:
-		return resultAutomerged
 	case tuiActionForceMerged:
 		return "Force-merged"
+	case tuiActionMerged:
+		return "Merged"
 	case tuiActionOpened:
 		return "Opened"
 	case tuiActionReopened:
 		return "Reopened"
-	case tuiActionUnsubscribed:
-		return "Unsubscribed"
 	case tuiActionReviewRequested:
 		return "Copilot review requested"
+	case tuiActionUnsubscribed:
+		return "Unsubscribed"
 	default:
 		return "Unknown"
 	}
@@ -1850,6 +1853,48 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			)
 		}
 
+	case "U":
+		targets := m.targetActionablePRs()
+		if len(targets) == 0 {
+			return m, nil
+		}
+		actions := m.actions
+		batch := make([]targetPR, len(targets))
+		copy(batch, targets)
+		m.confirmAction = tuiActionUpdateBranch
+		m.confirmYes = true
+		if len(targets) == 1 {
+			m.confirmSubject = targets[0].pr.Ref()
+			m.confirmURL = targets[0].pr.URL
+			m.confirmPrompt = "Update branch for " + styledRef(&targets[0].pr) + "?"
+			t := targets[0]
+			m.confirmCmd = func() tea.Msg {
+				owner, repo := prOwnerRepo(t.pr)
+				err := actions.updateBranch(owner, repo, t.pr.Number)
+				return actionMsg{
+					index:  t.index,
+					key:    makePRKey(t.pr),
+					action: tuiActionBranchUpdated,
+					err:    err,
+				}
+			}
+		} else {
+			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
+			m.confirmPrompt = fmt.Sprintf("Update branch for %d PRs?", len(targets))
+			m.confirmCmd = func() tea.Msg {
+				return runBatchAction(
+					actions,
+					batch,
+					tuiActionBranchUpdated,
+					func(a *ActionRunner, pr PullRequest) error {
+						owner, repo := prOwnerRepo(pr)
+						return a.updateBranch(owner, repo, pr.Number)
+					},
+				)
+			}
+		}
+		return m, nil
+
 	case "u":
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
@@ -2228,6 +2273,33 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
+	case "U":
+		idx := m.resolveIndex(m.diffKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		actions := m.actions
+		m.confirmAction = tuiActionUpdateBranch
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
+		m.confirmYes = true
+		m.confirmPrompt = "Update branch for " + styledRef(&pr) + "?"
+		m.confirmCmd = func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			err := actions.updateBranch(owner, repo, pr.Number)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: tuiActionBranchUpdated,
+				err:    err,
+			}
+		}
+		return m, nil
 	case "u":
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -3884,6 +3956,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		{"M", "Force-merge PRs"},
 		{"C", "Close PRs"},
 		{"O", "Reopen PRs"},
+		{"U", "Update branch"},
 		{"u", "Unassign/unsubscribe"},
 		{"alt+u", "Unassign (no confirm)"},
 		{"o", "Open in browser"},

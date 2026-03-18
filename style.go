@@ -22,9 +22,6 @@ func New() *prl {
 	}
 }
 
-// SetPlain switches the theme to plain (no ANSI) mode for non-TTY output.
-func (p *prl) SetPlain() { p.theme = p.theme.Plain() }
-
 // RenderBold renders text in bold using the theme.
 func (p *prl) RenderBold(s string) string { return p.theme.Bold.Render(s) }
 

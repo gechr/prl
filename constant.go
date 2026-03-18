@@ -120,6 +120,7 @@ const (
 	tuiActionReview       = "review"
 	tuiActionSendSlack    = "send-slack"
 	tuiActionUnassign     = "unassign"
+	tuiActionUpdateBranch = "update-branch"
 
 	tuiClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
 

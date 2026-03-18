@@ -12,6 +12,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/kong"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/cli/go-gh/v2/pkg/api"
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clib/complete"
@@ -96,9 +97,6 @@ func run() error {
 	symbols[clog.LevelInfo] = "✅"
 	clog.SetSymbols(symbols)
 	tty := applyColorMode(cli.Color)
-	if !tty {
-		prl.SetPlain()
-	}
 
 	// Validate
 	if vErr := cli.Validate(); vErr != nil {
@@ -132,7 +130,7 @@ func run() error {
 
 	// Dry run mode
 	if cli.Dry {
-		fmt.Println(prl.buildDryRunOutput(params, &cli, cfg))
+		lipgloss.Println(prl.buildDryRunOutput(params, &cli, cfg))
 		return nil
 	}
 
@@ -192,7 +190,7 @@ func run() error {
 		return err
 	}
 	if output != "" {
-		fmt.Println(output)
+		lipgloss.Println(output)
 	}
 	return nil
 }
@@ -961,9 +959,11 @@ func applyColorMode(color string) bool {
 	switch color {
 	case "always":
 		clog.SetColorMode(clog.ColorAlways)
+		lipgloss.Writer.Profile = colorprofile.TrueColor
 		return true
 	case "never":
 		clog.SetColorMode(clog.ColorNever)
+		lipgloss.Writer.Profile = colorprofile.NoTTY
 		return false
 	default: // "auto"
 		return term.Is(os.Stdout)
