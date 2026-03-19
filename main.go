@@ -704,11 +704,6 @@ func runOnce(
 		}
 	}
 
-	// Clone mode: clone unique repos and exit
-	if cli.Clone {
-		return "", cloneRepos(rest, prs, cfg.VCS)
-	}
-
 	ready := cli.PRState() == StateReady
 	ciFilter := cli.CIStatus()
 	needsEnrich := ready || ciFilter != CINone
@@ -812,6 +807,14 @@ func runOnce(
 		return "", runInteractive(cli, rest, cfg, rows)
 	}
 
+	// Non-interactive clone: --clone --yes
+	if cli.Clone {
+		if stopSpinner != nil {
+			stopSpinner()
+		}
+		return "", cloneRepos(rest, prs, cfg.VCS)
+	}
+
 	// Non-interactive actions: pass PRs directly
 	if err := runActions(cli, rest, prs); err != nil {
 		return "", err
@@ -833,7 +836,7 @@ func runOnce(
 		}
 	}
 
-	if cli.HasAction() {
+	if cli.HasAction() || cli.Clone {
 		return "", nil
 	}
 	return output, nil
@@ -855,6 +858,11 @@ func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow
 	selectedPRs := make([]PullRequest, len(selected))
 	for i, row := range selected {
 		selectedPRs[i] = row.Item.PR
+	}
+
+	// Clone repos
+	if cli.Clone {
+		return cloneRepos(rest, selectedPRs, cfg.VCS)
 	}
 
 	// Run actions first (approve, merge, close, etc.)
@@ -920,6 +928,9 @@ func buildActionHeader(cli *CLI) string {
 	var parts []string
 	if cli.Approve {
 		parts = append(parts, "Approve")
+	}
+	if cli.Clone {
+		parts = append(parts, "Clone")
 	}
 	if cli.Close {
 		parts = append(parts, "Close")

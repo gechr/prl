@@ -45,7 +45,10 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string) error {
 	for _, t := range targets {
 		repoName := filepath.Base(t.NameWithOwner)
 		if _, err := os.Stat(repoName); err == nil {
-			clog.Warn().Str("repo", displayName(t.NameWithOwner)).Msg("Skipping (already exists)")
+			repoURL := "https://github.com/" + t.NameWithOwner
+			clog.Warn().
+				Link("repo", repoURL, displayName(t.NameWithOwner)).
+				Msg("Skipping (already exists)")
 			continue
 		}
 		toClone = append(toClone, t)
@@ -62,9 +65,11 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string) error {
 	sem := make(chan struct{}, maxConcurrency)
 
 	for _, t := range toClone {
-		ev := clog.Info().Str("repo", displayName(t.NameWithOwner))
+		repoURL := "https://github.com/" + t.NameWithOwner
+		ev := clog.Info().Link("repo", repoURL, displayName(t.NameWithOwner))
 		if t.Branch != "" {
-			ev = ev.Str("branch", t.Branch)
+			branchURL := repoURL + "/tree/" + t.Branch
+			ev = ev.Link("branch", branchURL, t.Branch)
 		}
 		ev.Msg("Cloning")
 
@@ -81,9 +86,11 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string) error {
 				mu.Unlock()
 			}
 			n := cloned.Add(1)
+			repoURL := "https://github.com/" + target.NameWithOwner
 			clog.Info().
-				Str("repo", displayName(target.NameWithOwner)).
-				Msgf("Cloned [%d/%d]", n, total)
+				Link("repo", repoURL, displayName(target.NameWithOwner)).
+				Str("progress", fmt.Sprintf("%d/%d", n, total)).
+				Msg("Cloned")
 		}(t)
 	}
 	wg.Wait()

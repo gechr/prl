@@ -386,7 +386,8 @@ func (c *CLI) IsInteractive() bool {
 	if c.Yes {
 		return false
 	}
-	return c.Approve || c.Close || c.Comment != "" || c.Edit || c.ForceMerge || c.MarkDraft ||
+	return c.Approve || c.Clone || c.Close || c.Comment != "" || c.Edit || c.ForceMerge ||
+		c.MarkDraft ||
 		c.MarkReady ||
 		(c.Merge != nil && *c.Merge) ||
 		c.Unsubscribe ||
@@ -487,7 +488,7 @@ func (c *CLI) ApplyOutputOverrides() {
 	if c.Open {
 		c.setOutput(valueURL)
 	}
-	if c.HasAction() {
+	if c.HasAction() || c.Clone {
 		if c.IsInteractive() {
 			c.setOutput(valueTable)
 		} else {
