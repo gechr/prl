@@ -75,9 +75,13 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		qualifiers = append(qualifiers, "merged:"+parseDate(cli.Merged))
 	}
 
-	// Review filter
+	// Review filter — review:required only makes sense for open PRs (it means
+	// "review required but not yet given"). For closed/merged PRs it filters
+	// almost everything out, so skip it for non-open states.
 	if cli.Review != "" {
-		qualifiers = append(qualifiers, "review:"+cli.Review)
+		if cli.Review != valueReviewFilterRequired || state == StateOpen || state == StateReady {
+			qualifiers = append(qualifiers, "review:"+cli.Review)
+		}
 	}
 
 	// Author filter (only when no team)
@@ -183,6 +187,14 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		qualifiers = append(qualifiers, "-review:approved")
 	}
 
+	// Unsubscribe implicit filters: default to --requested=@me and exclude own PRs.
+	if cli.Unsubscribe {
+		if len(reqVals) == 0 {
+			qualifiers = append(qualifiers, "user-review-requested:@me")
+		}
+		qualifiers = append(qualifiers, "-author:@me")
+	}
+
 	// Draft implicit filters: skip PRs already in the target state.
 	// mark-draft uses draft:false to find non-draft PRs that can be converted TO draft.
 	// mark-ready uses draft:true to find draft PRs that can be marked as ready for review.
@@ -216,8 +228,11 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	case SortUpdated:
 		sortField = valueUpdated
 	case SortName:
-		// GitHub API has no name sort; omit to use default relevance
-		break
+		// GitHub API has no name sort; use created as a proxy so the API
+		// always returns newest results first. Without this, the API falls
+		// back to "best match" relevance which returns an arbitrary subset
+		// when results exceed the limit.
+		sortField = valueCreated
 	}
 
 	limit := cli.LimitValue()

@@ -305,6 +305,14 @@ func draftToggleHelp(pr *PullRequest) string {
 	return tuiHelpMarkDraft
 }
 
+// closeReopenHelp returns "reopen" for closed PRs and "close" otherwise.
+func closeReopenHelp(state string) string {
+	if state == valueClosed {
+		return tuiHelpReopen
+	}
+	return tuiHelpClose
+}
+
 // mergeHelpForPR returns "merge" for ready PRs and "automerge" otherwise.
 func mergeHelpForPR(pr *PullRequest) string {
 	if pr != nil && pr.MergeStatus == MergeStatusReady {
@@ -473,15 +481,16 @@ type tuiModel struct {
 	jumpID    int // timeout generation
 
 	// Pending confirmation (e.g. close/merge).
-	confirmAction   string               // "close", "merge", "diff"
-	confirmPrompt   string               // prompt text for modal
-	confirmSubject  string               // target description for progress (e.g. "data-team#8", "3 PRs")
-	confirmURL      string               // optional URL for hyperlinking the subject in progress
-	confirmCmd      tea.Cmd              // command to run on confirmation
-	confirmCmdFn    func(string) tea.Cmd // command factory when confirmHasInput (receives input value)
-	confirmYes      bool                 // true = Yes selected, false = No selected
-	confirmHasInput bool                 // true when modal includes a text input
-	confirmInput    textarea.Model       // optional text input (e.g. close comment)
+	confirmAction     string               // "close", "merge", "diff"
+	confirmPrompt     string               // prompt text for modal
+	confirmSubject    string               // target description for progress (e.g. "data-team#8", "3 PRs")
+	confirmURL        string               // optional URL for hyperlinking the subject in progress
+	confirmCmd        tea.Cmd              // command to run on confirmation
+	confirmCmdFn      func(string) tea.Cmd // command factory when confirmHasInput (receives input value)
+	confirmYes        bool                 // true = Yes selected, false = No selected
+	confirmHasInput   bool                 // true when modal includes a text input
+	confirmInputLabel string               // label above the textarea (default: "Comment")
+	confirmInput      textarea.Model       // optional text input (e.g. close comment)
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -1658,6 +1667,19 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiKeybindClose:
+		// Dynamic close/reopen: if the current PR is closed, reopen; otherwise close.
+		pr := m.currentPR()
+		if pr != nil && strings.ToLower(pr.State) == valueClosed {
+			targets := m.targetPRs()
+			if len(targets) == 0 {
+				return m, nil
+			}
+			return m, batchCmd(m.actions, targets, tuiActionReopened,
+				func(a *ActionRunner, pr PullRequest) error {
+					owner, repo := prOwnerRepo(pr)
+					return a.reopenPR(owner, repo, pr.Number)
+				})
+		}
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
@@ -1788,7 +1810,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		idx := m.cursor
 		prCopy := *pr
 		m = m.prepareClaudeReviewConfirm(prCopy, idx)
-		return m, nil
+		return m, m.confirmInput.Focus()
 
 	case tuiKeybindReviewNoConfirm:
 		if !hasClaudeReviewLauncher() {
@@ -1808,8 +1830,9 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		idx := m.cursor
 		prCopy := *pr
+		prompt := defaultClaudeReviewPrompt(prCopy)
 		return m, func() tea.Msg {
-			err := launchClaudeReview(prCopy)
+			err := launchClaudeReview(prCopy, prompt)
 			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 
@@ -1901,17 +1924,6 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selected = make(prKeys)
 		return m, flashResult(&m, resultCopied, msg, "", false)
 
-	case tuiKeybindReopen:
-		targets := m.targetPRs()
-		if len(targets) == 0 {
-			return m, nil
-		}
-		return m, batchCmd(m.actions, targets, tuiActionReopened,
-			func(a *ActionRunner, pr PullRequest) error {
-				owner, repo := prOwnerRepo(pr)
-				return a.reopenPR(owner, repo, pr.Number)
-			})
-
 	case tuiKeybindUpdateBranch:
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
@@ -1931,7 +1943,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiKeybindUnassign:
-		targets := m.targetActionablePRs()
+		targets := m.targetOtherActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -1988,7 +2000,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiKeybindUnassignNoConfirm:
-		targets := m.targetActionablePRs()
+		targets := m.targetOtherActionablePRs()
 		if len(targets) == 0 {
 			return m, nil
 		}
@@ -2242,8 +2254,22 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		pr := m.rows[idx].Item.PR
 		state := strings.ToLower(pr.State)
-		if state == valueMerged || state == valueClosed {
+		if state == valueMerged {
 			return m, nil
+		}
+		if state == valueClosed {
+			actions := m.actions
+			flashPending(&m, statusReopening, &pr)
+			return m, func() tea.Msg {
+				owner, repo := prOwnerRepo(pr)
+				err := actions.reopenPR(owner, repo, pr.Number)
+				return actionMsg{
+					index:  idx,
+					key:    makePRKey(pr),
+					action: tuiActionReopened,
+					err:    err,
+				}
+			}
 		}
 		actions := m.actions
 		m.confirmAction = tuiActionClose
@@ -2316,27 +2342,6 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, m.confirmInput.Focus()
-	case tuiKeybindReopen:
-		idx := m.resolveIndex(m.diffKey, -1)
-		if idx < 0 {
-			return m, nil
-		}
-		pr := m.rows[idx].Item.PR
-		if strings.ToLower(pr.State) != valueClosed {
-			return m, nil
-		}
-		actions := m.actions
-		flashPending(&m, statusReopening, &pr)
-		return m, func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			err := actions.reopenPR(owner, repo, pr.Number)
-			return actionMsg{
-				index:  idx,
-				key:    makePRKey(pr),
-				action: tuiActionReopened,
-				err:    err,
-			}
-		}
 	case tuiKeybindUpdateBranch:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -2793,7 +2798,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.view = tuiViewList
 		m = m.prepareClaudeReviewConfirm(pr, idx)
-		return m, m.rescheduleRefresh()
+		return m, tea.Batch(m.confirmInput.Focus(), m.rescheduleRefresh())
 	}
 	return m, nil
 }
@@ -3803,6 +3808,20 @@ func (m tuiModel) targetActionablePRs() []targetPR {
 	return targets[:n]
 }
 
+// targetOtherActionablePRs returns targetActionablePRs excluding PRs authored by the current user.
+func (m tuiModel) targetOtherActionablePRs() []targetPR {
+	targets := m.targetActionablePRs()
+	n := 0
+	for _, t := range targets {
+		if m.isCurrentUserPR(t.pr) {
+			continue
+		}
+		targets[n] = t
+		n++
+	}
+	return targets[:n]
+}
+
 // targetMergeablePRs returns targetActionablePRs excluding draft PRs.
 func (m tuiModel) targetMergeablePRs() []targetPR {
 	targets := m.targetActionablePRs()
@@ -4015,11 +4034,8 @@ func (m tuiModel) listHelpPairs() []helpPair {
 		pairs = append(pairs, helpPair{tuiKeybindMerge, mergeHelpForPR(pr)})
 	}
 	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
-	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindClose, tuiHelpClose})
-	}
-	if state == valueClosed {
-		pairs = append(pairs, helpPair{tuiKeybindReopen, tuiHelpReopen})
+	if state != valueMerged {
+		pairs = append(pairs, helpPair{tuiKeybindClose, closeReopenHelp(state)})
 	}
 	pairs = append(
 		pairs,
@@ -4074,7 +4090,7 @@ func (m tuiModel) renderFilterHelp() string {
 		{tuiKeyEnter, "apply"},
 		{tuiKeyEsc, "exit"},
 	}
-	base := m.renderHelp(pairs)
+	base := strings.TrimLeft(m.renderHelp(pairs), " ")
 	sep := m.styles.separator.Render("│")
 	return m.renderFilterSyntaxHints() + filterHelpGap + sep + filterHelpGap + base
 }
@@ -4105,11 +4121,8 @@ func (m tuiModel) diffHelpPairs() []helpPair {
 		pairs = append(pairs, helpPair{tuiKeybindUnassign, tuiHelpUnsubscribe})
 	}
 	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
-	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindClose, tuiHelpClose})
-	}
-	if state == valueClosed {
-		pairs = append(pairs, helpPair{tuiKeybindReopen, tuiHelpReopen})
+	if state != valueMerged {
+		pairs = append(pairs, helpPair{tuiKeybindClose, closeReopenHelp(state)})
 	}
 	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
 	pairs = append(pairs, helpPair{tuiKeybindCopyURL, tuiHelpCopy})
@@ -4201,7 +4214,6 @@ func (m tuiModel) renderHelpOverlay() string {
 		{tuiKeybindMerge, tuiDescMerge},
 		{tuiKeybindForceMerge, tuiDescForceMerge},
 		{tuiKeybindClose, tuiDescClose},
-		{tuiKeybindReopen, tuiDescReopen},
 		{tuiKeybindUpdateBranch, tuiDescUpdateBranch},
 		{tuiKeybindUnassign, tuiDescUnassign},
 		{tuiKeybindUnassignNoConfirm, tuiDescUnassignNoConf},
@@ -4510,6 +4522,24 @@ func (m tuiModel) confirmInputPending() bool {
 	return m.confirmHasInput && m.confirmAction != ""
 }
 
+func newConfirmInput() textarea.Model {
+	ci := textarea.New()
+	ci.Prompt = ""
+	ci.Placeholder = "Leave blank to close without comment"
+	ci.ShowLineNumbers = false
+	ci.SetWidth(tuiConfirmInputWidth)
+	ci.SetHeight(tuiConfirmInputMinHeight)
+	ciStyles := ci.Styles()
+	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("255"))
+	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242")).Italic(true)
+	ciStyles.Focused.CursorLine = lg.NewStyle()
+	ciStyles.Blurred.Text = lg.NewStyle().Foreground(lg.Color("242"))
+	ciStyles.Blurred.CursorLine = lg.NewStyle()
+	ciStyles.Cursor.Color = lg.Color("255")
+	ci.SetStyles(ciStyles)
+	return ci
+}
+
 // resizeConfirmInput adjusts the textarea height to fit the content.
 func (m *tuiModel) resizeConfirmInput() {
 	lines := strings.Count(
@@ -4706,9 +4736,13 @@ func (m tuiModel) renderConfirmModal() string {
 	b.WriteString(m.confirmPrompt)
 
 	if m.confirmHasInput {
+		label := m.confirmInputLabel
+		if label == "" {
+			label = "Comment"
+		}
 		b.WriteString("\n\n")
 		b.WriteString(
-			lg.NewStyle().Foreground(lg.Color("218")).Bold(true).Render("Comment"),
+			lg.NewStyle().Foreground(lg.Color("218")).Bold(true).Render(label),
 		)
 		b.WriteString("\n")
 		b.WriteString(m.confirmInput.View())
@@ -4777,6 +4811,7 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmCmd = nil
 	m.confirmCmdFn = nil
 	m.confirmHasInput = false
+	m.confirmInputLabel = ""
 	m.confirmInput.Blur()
 	m.confirmInput.SetValue("")
 	m.confirmInput.SetHeight(tuiConfirmInputMinHeight)
@@ -4787,12 +4822,15 @@ func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
 	prCopy := pr
 	m.confirmAction = tuiActionReview
 	m.confirmYes = true
-	m.confirmPrompt = "Launch Claude review for " + styledRef(
-		&prCopy,
-	) + "?\n\nThis will clone the repo and open a new terminal tab."
-	m.confirmCmd = func() tea.Msg {
-		err := launchClaudeReview(prCopy)
-		return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
+	m.confirmHasInput = true
+	m.confirmInputLabel = "Prompt"
+	m.confirmInput.SetValue(defaultClaudeReviewPrompt(pr))
+	m.confirmPrompt = "Launch Claude review for " + styledRef(&prCopy) + "?"
+	m.confirmCmdFn = func(prompt string) tea.Cmd {
+		return func() tea.Msg {
+			err := launchClaudeReview(prCopy, prompt)
+			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
+		}
 	}
 	return m
 }
@@ -5001,13 +5039,13 @@ func highlightWithChroma(raw string) string {
 // launchClaudeReview opens a new terminal tab, clones the PR there, and
 // launches a Claude session in that tab. Cloning happens in the new tab
 // so SSH prompts and progress are visible to the user.
-func launchClaudeReview(pr PullRequest) error {
+func launchClaudeReview(pr PullRequest, prompt string) error {
 	launcher := currentClaudeReviewLauncher()
 	if launcher == claudeLauncherNone {
 		return fmt.Errorf("unsupported terminal %q", os.Getenv("TERM_PROGRAM"))
 	}
 
-	script, err := buildClaudeReviewAppleScript(launcher, buildClaudeReviewCommand(pr))
+	script, err := buildClaudeReviewAppleScript(launcher, buildClaudeReviewCommand(pr, prompt))
 	if err != nil {
 		return err
 	}
@@ -5024,14 +5062,9 @@ func launchClaudeReview(pr PullRequest) error {
 	return nil
 }
 
-func buildClaudeReviewCommand(pr PullRequest) string {
+func defaultClaudeReviewPrompt(pr PullRequest) string {
 	nwo := pr.Repository.NameWithOwner
-
-	// Clone repo and checkout the PR ref in the new tab so the user sees
-	// progress and any SSH/auth prompts. Fetches refs/pull/N/head which
-	// works for open, closed, and fork PRs alike.
-	remote := "git@github.com:" + nwo
-	prompt := fmt.Sprintf(
+	return fmt.Sprintf(
 		"Perform a comprehensive code review of PR #%d in %s. "+
 			"The PR branch is checked out. First read the PR context with: gh pr view %[1]d --repo %[2]s "+
 			"Then get the diff with: gh api repos/%[2]s/pulls/%[1]d -H 'Accept: application/vnd.github.v3.diff' "+
@@ -5039,6 +5072,15 @@ func buildClaudeReviewCommand(pr PullRequest) string {
 			"Be thorough but concise.",
 		pr.Number, nwo,
 	)
+}
+
+func buildClaudeReviewCommand(pr PullRequest, prompt string) string {
+	nwo := pr.Repository.NameWithOwner
+
+	// Clone repo and checkout the PR ref in the new tab so the user sees
+	// progress and any SSH/auth prompts. Fetches refs/pull/N/head which
+	// works for open, closed, and fork PRs alike.
+	remote := "git@github.com:" + nwo
 	// Use a fixed review directory so the user only has to trust it once.
 	cacheHome := os.Getenv("XDG_CACHE_HOME")
 	if cacheHome == "" {
@@ -5421,20 +5463,7 @@ func runTui(
 	fiStyles.Cursor.Color = lg.Color("216")
 	fi.SetStyles(fiStyles)
 
-	ci := textarea.New()
-	ci.Prompt = ""
-	ci.Placeholder = "Leave blank to close without comment"
-	ci.ShowLineNumbers = false
-	ci.SetWidth(tuiConfirmInputWidth)
-	ci.SetHeight(tuiConfirmInputMinHeight)
-	ciStyles := ci.Styles()
-	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("255"))
-	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242")).Italic(true)
-	ciStyles.Focused.CursorLine = lg.NewStyle()
-	ciStyles.Blurred.Text = lg.NewStyle().Foreground(lg.Color("242"))
-	ciStyles.Blurred.CursorLine = lg.NewStyle()
-	ciStyles.Cursor.Color = lg.Color("255")
-	ci.SetStyles(ciStyles)
+	ci := newConfirmInput()
 
 	// Resolve current user login eagerly so it's cached for View calls.
 	login, _ := getCurrentLogin(rest)

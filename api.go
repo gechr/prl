@@ -344,7 +344,7 @@ func (a *ActionRunner) mergeOrAutomerge(owner, repo string, pr PullRequest) (str
 		if err := a.mergePR(owner, repo, pr.Number); err == nil {
 			return resultMerged, nil
 		}
-		// Direct merge failed — try merge queue.
+		// Direct merge failed - try merge queue.
 		if err := a.enqueuePR(pr.NodeID); err == nil {
 			return resultEnqueued, nil
 		}
@@ -354,7 +354,7 @@ func (a *ActionRunner) mergeOrAutomerge(owner, repo string, pr PullRequest) (str
 		}
 		return resultAutomerged, nil
 	}
-	// Not ready — enable automerge first.
+	// Not ready - enable automerge first.
 	if err := a.enableAutomerge(pr.NodeID); err == nil {
 		return resultAutomerged, nil
 	}

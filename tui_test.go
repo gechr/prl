@@ -60,29 +60,32 @@ func TestBuildClaudeReviewAppleScriptUnsupported(t *testing.T) {
 }
 
 func TestPrepareClaudeReviewConfirmUsesYesNo(t *testing.T) {
-	var m tuiModel
+	m := tuiModel{confirmInput: newConfirmInput()}
 	pr := testReviewPullRequest()
 
 	m = m.prepareClaudeReviewConfirm(pr, 0)
 
 	require.Equal(t, "review", m.confirmAction)
-	require.NotNil(t, m.confirmCmd)
+	require.NotNil(t, m.confirmCmdFn)
 	require.True(t, m.confirmYes)
-	require.Contains(t, m.confirmPrompt, "This will clone the repo and open a new terminal tab.")
+	require.True(t, m.confirmHasInput)
+	require.Equal(t, "Prompt", m.confirmInputLabel)
+	require.Contains(t, m.confirmInput.Value(), "Perform a comprehensive code review")
 }
 
 func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	pr := testReviewPullRequest()
 	m := tuiModel{
-		items:    []PRRowModel{{PR: pr}},
-		rows:     []TableRow{{Item: PRRowModel{PR: pr}}},
-		removed:  make(prKeys),
-		selected: make(prKeys),
+		items:        []PRRowModel{{PR: pr}},
+		rows:         []TableRow{{Item: PRRowModel{PR: pr}}},
+		removed:      make(prKeys),
+		selected:     make(prKeys),
+		confirmInput: newConfirmInput(),
 	}
 
 	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	require.Nil(t, cmd)
+	require.NotNil(t, cmd) // Focus cmd for the prompt textarea
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, "review", bm.confirmAction)
@@ -1020,7 +1023,7 @@ func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
 	}
 
 	model, cmd := m.updateOptionsOverlay(
-		tea.KeyPressMsg{Code: 'o', Mod: tea.ModAlt, Text: "alt+o"},
+		tea.KeyPressMsg{Code: 'O', Text: "O"},
 	)
 	require.NotNil(t, cmd)
 	bm, ok := model.(tuiModel)

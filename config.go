@@ -439,7 +439,7 @@ func withSingleTrailingNewline(content string) string {
 //
 // We only replace at depth=1 (top-level keys) because ReplaceWithReader does
 // not re-indent replacement content to match the column offset of the replaced
-// node — operating on nested nodes produces progressively wrong indentation.
+// node - operating on nested nodes produces progressively wrong indentation.
 func mergeIntoAncestor(f *goyamlast.File, key string, value any) bool {
 	parts := strings.Split(key, ".")
 	if len(parts) < 2 { //nolint:mnd // need at least key + one ancestor

@@ -73,8 +73,8 @@ func (p *prl) newTableRenderer(
 	renderOpts := []table.Option{
 		// prl default: newest at top → clib reverse=true.
 		// --reverse flag means oldest at top → clib reverse=false.
-		// Non-TTY: ignore --reverse, always newest at top (#1, #2, #3… from top).
-		table.WithReverse(cli.Interactive || !cli.Reverse || !tty),
+		// Non-TTY / interactive multi-select: always newest at top.
+		table.WithReverse(cli.Interactive || cli.IsInteractive() || !cli.Reverse || !tty),
 		table.WithShowIndex(showIndex),
 		table.WithTermWidth(termWidth),
 		table.WithTTY(tty),

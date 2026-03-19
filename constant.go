@@ -181,7 +181,7 @@ const (
 	tuiKeyEnter       = "enter"
 	tuiKeyEsc         = "esc"
 	tuiKeyLeft        = "left"
-	tuiKeybindOptions = "alt+o"
+	tuiKeybindOptions = "O"
 	tuiKeyRight       = "right"
 	tuiKeySpace       = "space"
 	tuiKeyTab         = "tab"
@@ -211,7 +211,6 @@ const (
 	tuiKeybindSlack               = "s"
 	tuiKeybindSlackNoConfirm      = "alt+s"
 	tuiKeybindOpen                = "o"
-	tuiKeybindReopen              = "O"
 	tuiKeybindUpdateBranch        = "U"
 	tuiKeybindUnassign            = "u"
 	tuiKeybindUnassignNoConfirm   = "alt+u"
@@ -232,7 +231,7 @@ const (
 	tuiKeyJumpFirstLast           = "g/G"
 )
 
-// tuiHelp* — terse lowercase labels for bottom help bars.
+// tuiHelp* - terse lowercase labels for bottom help bars.
 const (
 	tuiHelpApprove       = "approve"
 	tuiHelpApproveMerge  = "approve/merge"
@@ -263,12 +262,12 @@ const (
 	tuiHelpUpdateBranch  = "update branch"
 )
 
-// tuiDesc* — Title Case descriptions for the ? help overlay.
+// tuiDesc* - Title Case descriptions for the ? help overlay.
 const (
 	tuiDescApprove          = "Approve PRs"
 	tuiDescApproveMerge     = "Approve/Merge PRs"
 	tuiDescApproveNoConfirm = "Approve PRs (no confirm)"
-	tuiDescClose            = "Close PRs"
+	tuiDescClose            = "Close/Reopen PRs"
 	tuiDescCopilotReview    = "Request Copilot review"
 	tuiDescCopy             = "Copy URL(s)"
 	tuiDescCycleSortOrder   = "Cycle sort order"
@@ -286,7 +285,6 @@ const (
 	tuiDescOptions          = "Options"
 	tuiDescQuit             = "Quit"
 	tuiDescRefresh          = "Toggle auto-refresh"
-	tuiDescReopen           = "Reopen PRs"
 	tuiDescReview           = "Launch Claude review"
 	tuiDescReviewNoConfirm  = "Launch Claude review (no confirm)"
 	tuiDescSelect           = "Toggle selection"
