@@ -118,6 +118,8 @@ const (
 	watchMinInterval = 3 * time.Second                // floor: few results
 	watchMaxInterval = 30 * time.Second               // ceiling: many results
 	watchScalePer    = 500 * time.Millisecond         // additional delay per result
+	watchIdleDecay   = 1 * time.Hour                  // no interaction for this long → interval reaches watchIdleMax
+	watchIdleMax     = 60 * time.Second               // ceiling when fully idle
 	ansiClearScreen  = "\033[2J\033[H"                // clear screen + move cursor to top-left
 	ansiHideCursor   = "\033[?25l"                    // hide cursor
 	ansiShowCursor   = "\033[?25h"                    // show cursor

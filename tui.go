@@ -484,8 +484,9 @@ type tuiModel struct {
 	confirmInput    textarea.Model       // optional text input (e.g. close comment)
 
 	// Background auto-refresh.
-	autoRefresh bool
-	refreshing  bool // true while a background refresh is in-flight
+	autoRefresh     bool
+	refreshing      bool      // true while a background refresh is in-flight
+	lastInteraction time.Time // tracks last user keypress for idle-based refresh decay
 	// showRefreshStatus is true when the in-flight refresh was triggered by
 	// applying options and should show a temporary "Refreshing..." status.
 	showRefreshStatus bool
@@ -839,15 +840,28 @@ func (m tuiModel) isFilterRowLocked(row filterRow) bool {
 func (m tuiModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.scheduleScreenCheck()}
 	if m.autoRefresh {
-		cmds = append(cmds, scheduleRefresh(len(m.items), m.refreshID))
+		cmds = append(
+			cmds,
+			scheduleRefresh(len(m.items), m.refreshID, time.Since(m.lastInteraction)),
+		)
 	}
 	return tea.Batch(cmds...)
 }
 
 // scheduleRefresh returns a tea.Cmd that fires a refreshTickMsg after a delay
-// scaled by the number of results (reusing watch-mode intervals).
-func scheduleRefresh(n, id int) tea.Cmd {
+// scaled by the number of results (reusing watch-mode intervals) and further
+// slowed by user inactivity. The idle parameter is time since the last
+// keypress; after watchIdleDecay of inactivity the interval reaches
+// watchIdleMax regardless of result count.
+func scheduleRefresh(n, id int, idle time.Duration) tea.Cmd {
 	d := watchInterval(n)
+	if idle > 0 && idle < watchIdleDecay {
+		// Linearly blend from the base interval toward watchIdleMax.
+		frac := float64(idle) / float64(watchIdleDecay)
+		d = time.Duration(float64(d)*(1-frac) + float64(watchIdleMax)*frac)
+	} else if idle >= watchIdleDecay {
+		d = watchIdleMax
+	}
 	return tea.Tick(d, func(time.Time) tea.Msg { return refreshTickMsg{id: id} })
 }
 
@@ -878,11 +892,15 @@ func (m tuiModel) applyRepaintMarker(v *tea.View) {
 	}
 }
 
+// touchInteraction records that the user interacted with the TUI,
+// resetting the idle decay for auto-refresh scheduling.
+func (m *tuiModel) touchInteraction() { m.lastInteraction = time.Now() }
+
 // rescheduleRefresh invalidates older refresh ticks and schedules a new one.
 func (m *tuiModel) rescheduleRefresh() tea.Cmd {
 	if m.autoRefresh {
 		m.refreshID++
-		return scheduleRefresh(len(m.items), m.refreshID)
+		return scheduleRefresh(len(m.items), m.refreshID, time.Since(m.lastInteraction))
 	}
 	return nil
 }
@@ -1168,6 +1186,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// followed by another cursor probe. On the second probe the scr is
 		// already erased and the toggled view forces a full repaint.
 		if msg.Y == 0 && m.height > 1 {
+			m.touchInteraction()
 			m.repaintTick = !m.repaintTick
 			return m, tea.Sequence(tea.ClearScreen, tea.Raw(ansiDECXCPR))
 		}
@@ -1237,6 +1256,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.rescheduleRefresh()
 
 	case tea.KeyMsg:
+		m.touchInteraction()
 		switch m.view {
 		case tuiViewDiff:
 			return m.updateDiffView(msg)
@@ -5420,26 +5440,27 @@ func runTui(
 	login, _ := getCurrentLogin(rest)
 
 	model := tuiModel{
-		items:        r.items,
-		rows:         r.rows,
-		header:       r.header,
-		colWidths:    r.colWidths,
-		actions:      actions,
-		login:        login,
-		autoRefresh:  cfg.TUI.AutoRefresh.Enabled,
-		spinner:      buildSpinner(cfg.Spinner),
-		styles:       newTuiStyles(),
-		removed:      make(prKeys),
-		selected:     make(prKeys),
-		filterInput:  fi,
-		confirmInput: ci,
-		p:            p,
-		cli:          cli,
-		cfg:          cfg,
-		tty:          tty,
-		resolver:     resolver,
-		rest:         rest,
-		params:       params,
+		items:           r.items,
+		rows:            r.rows,
+		header:          r.header,
+		colWidths:       r.colWidths,
+		actions:         actions,
+		login:           login,
+		autoRefresh:     cfg.TUI.AutoRefresh.Enabled,
+		lastInteraction: time.Now(),
+		spinner:         buildSpinner(cfg.Spinner),
+		styles:          newTuiStyles(),
+		removed:         make(prKeys),
+		selected:        make(prKeys),
+		filterInput:     fi,
+		confirmInput:    ci,
+		p:               p,
+		cli:             cli,
+		cfg:             cfg,
+		tty:             tty,
+		resolver:        resolver,
+		rest:            rest,
+		params:          params,
 	}
 
 	// Apply persisted sort settings.
