@@ -309,7 +309,8 @@ func toPullRequest(item searchItem) PullRequest {
 
 	return PullRequest{
 		Number:     item.Number,
-		Title:      item.Title,
+		Title:      strings.TrimSpace(item.Title),
+		TitleRaw:   item.Title,
 		URL:        item.HTMLURL,
 		State:      state,
 		IsDraft:    item.Draft,

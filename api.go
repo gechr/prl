@@ -176,16 +176,24 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 	}
 
 	if cli.Unsubscribe {
-		login, err := getCurrentLogin(a.rest)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("unsubscribe %s: %v", pr.URL, err))
-		} else if err := a.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID); err != nil {
-			errs = append(errs, fmt.Sprintf("unsubscribe %s: %v", pr.URL, err))
-		} else {
-			clog.Info().
-				Link("pr", pr.URL, pr.Ref()).
-				Str("title", truncateTitle(pr.Title)).
-				Msg("Unsubscribed")
+		logins := cli.ReviewRequested.Values
+		if len(logins) == 0 {
+			login, err := getCurrentLogin(a.rest)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("unsubscribe %s: %v", pr.URL, err))
+			} else {
+				logins = []string{login}
+			}
+		}
+		for _, login := range logins {
+			if err := a.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID); err != nil {
+				errs = append(errs, fmt.Sprintf("unsubscribe %s: %v", pr.URL, err))
+			} else {
+				clog.Info().
+					Link("pr", pr.URL, pr.Ref()).
+					Str("title", truncateTitle(pr.Title)).
+					Msg("Unsubscribed")
+			}
 		}
 	}
 

@@ -43,6 +43,7 @@ type PullRequest struct {
 	Repository  Repository  `json:"repository"`
 	State       string      `json:"state"`
 	Title       string      `json:"title"`
+	TitleRaw    string      `json:"-"`
 	UpdatedAt   time.Time   `json:"updatedAt"`
 	URL         string      `json:"url"`
 }
