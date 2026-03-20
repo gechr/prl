@@ -109,7 +109,7 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	require.Contains(t, overlay, "Launch Claude review")
 	require.Contains(t, overlay, "alt+r")
 	require.Contains(t, overlay, "Launch Claude review (no confirm)")
-	require.Contains(t, overlay, "shift+↑/↓")
+	require.Contains(t, overlay, "shift++↑↓")
 }
 
 func TestRenderHelpOverlayAlignsExtendedSelectionKey(t *testing.T) {

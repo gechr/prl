@@ -186,7 +186,7 @@ func run() error {
 	}
 
 	var output string
-	if err := withSpinner(tty, s, func(stopSpinner func()) error {
+	if err := withSpinner(tty && !cli.Debug, s, func(stopSpinner func()) error {
 		var runErr error
 		output, runErr = runOnce(prl, rest, &cli, cfg, tty, params, stopSpinner)
 		return runErr
@@ -209,6 +209,11 @@ func withSpinner[T any](tty bool, s spinner, fn func(stop func()) T) T {
 	stopReq := make(chan struct{})
 	stopAck := make(chan struct{})
 	done := make(chan T, 1)
+
+	// Clear the spinner line before any clog write so output doesn't interleave.
+	clog.AddHook(clog.HookBeforeWrite, func() { fmt.Print(ansiSpinnerClear) })
+	defer clog.ClearHooks(clog.HookBeforeWrite)
+
 	go func() {
 		var once sync.Once
 		stop := func() {
@@ -327,7 +332,7 @@ func runWatch(
 		prs    []PullRequest
 		err    error
 	}
-	r := withSpinner(tty, s, func(func()) fetchResult {
+	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
 		out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params)
 		return fetchResult{out, prs, fErr}
 	})

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	clib "github.com/gechr/clib/cli/kong"
+	"github.com/gechr/clog"
 )
 
 // CSVFlag is a comma-separated value flag backed by clib.
@@ -321,13 +322,20 @@ func (c *CLI) Normalize(cfg *Config) {
 	// --closed-by / --merged-by imply state and sort-by-updated
 	if len(c.ClosedBy.Values) > 0 && !c.stateExplicit {
 		c.State = valueClosed
+		clog.Debug().Msgf("--closed-by implied --state=%s", valueClosed)
 	}
 	if len(c.MergedBy.Values) > 0 && !c.stateExplicit {
 		c.State = valueMerged
+		clog.Debug().Msgf("--merged-by implied --state=%s", valueMerged)
 	}
 	if (len(c.ClosedBy.Values) > 0 || len(c.MergedBy.Values) > 0) && !c.sortExplicit {
 		updated := valueUpdated
 		c.Sort = &updated
+		if len(c.ClosedBy.Values) > 0 {
+			clog.Debug().Msg("--closed-by implied --sort=updated")
+		} else {
+			clog.Debug().Msg("--merged-by implied --sort=updated")
+		}
 	}
 	if c.State == "" {
 		c.State = cfg.Default.State
@@ -347,6 +355,7 @@ func (c *CLI) Normalize(cfg *Config) {
 		len(c.MergedBy.Values) > 0
 	if c.Author == nil && hasUserFilter {
 		c.Author = &CSVFlag{Values: []string{valueAll}}
+		clog.Debug().Msg("user-oriented filter implied --author=any")
 	}
 	if c.Author == nil {
 		c.Author = &CSVFlag{Values: cfg.Default.Authors}
@@ -355,6 +364,7 @@ func (c *CLI) Normalize(cfg *Config) {
 	// Bots: config bots=false implies --no-bot
 	if !cfg.Default.Bots && !c.NoBot {
 		c.NoBot = true
+		clog.Debug().Msg("config bots=false implied --no-bot")
 	}
 
 	// Reverse: XOR with config default so --reverse toggles the configured direction
@@ -503,10 +513,12 @@ func (c *CLI) ApplyOutputOverrides() {
 	// --send-at and --send-to imply --send
 	if c.SendAt != "" {
 		c.Send = true
+		clog.Debug().Msg("--send-at implied --send")
 	}
 	if c.SendTo != "" {
 		c.SendTo = normalizeSlackChannel(c.SendTo)
 		c.Send = true
+		clog.Debug().Msg("--send-to implied --send")
 	}
 
 	// --send: table for interactive selection; slack for non-interactive (--yes)
@@ -521,5 +533,6 @@ func (c *CLI) ApplyOutputOverrides() {
 	// -o slack implies --copy
 	if c.OutputFormat() == OutputSlack {
 		c.Copy = true
+		clog.Debug().Msg("-o slack implied --copy")
 	}
 }

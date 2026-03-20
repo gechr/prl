@@ -185,14 +185,17 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// Approve implicit filter: -review:approved when --approve is used and --review is NOT set
 	if cli.Approve && cli.Review == "" {
 		qualifiers = append(qualifiers, "-review:approved")
+		clog.Debug().Msg("--approve implied -review:approved filter")
 	}
 
 	// Unsubscribe implicit filters: default to --requested=@me and exclude own PRs.
 	if cli.Unsubscribe {
 		if len(reqVals) == 0 {
 			qualifiers = append(qualifiers, "user-review-requested:@me")
+			clog.Debug().Msg("--unsubscribe implied --requested=@me")
 		}
 		qualifiers = append(qualifiers, "-author:@me")
+		clog.Debug().Msg("--unsubscribe implied -author:@me filter")
 	}
 
 	// Draft implicit filters: skip PRs already in the target state.
@@ -201,9 +204,15 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// force-merge uses draft:false because draft PRs cannot be merged.
 	if cli.MarkDraft || cli.ForceMerge {
 		qualifiers = append(qualifiers, "draft:false")
+		if cli.MarkDraft {
+			clog.Debug().Msg("--mark-draft implied --no-draft filter")
+		} else {
+			clog.Debug().Msg("--force-merge implied --no-draft filter")
+		}
 	}
 	if cli.MarkReady {
 		qualifiers = append(qualifiers, "draft:true")
+		clog.Debug().Msg("--mark-ready implied --draft filter")
 	}
 
 	// Match (only when there's a query string)

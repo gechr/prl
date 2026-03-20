@@ -3324,7 +3324,7 @@ const (
 
 	iconApproved  = "✅"
 	iconRejected  = "❌"
-	iconDismissed = "🚫"
+	iconDismissed = "🥀"
 	iconCommented = "💬"
 )
 
@@ -5399,7 +5399,7 @@ func runTui(
 		colWidths []int
 		err       error
 	}
-	r := withSpinner(tty, s, func(func()) fetchResult {
+	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
 		prs, err := executeSearch(rest, params)
 		if err != nil {
 			return fetchResult{err: err}
