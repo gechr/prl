@@ -227,7 +227,7 @@ const (
 	tuiKeybindConfirmSubmit       = "alt+enter"
 	tuiKeybindConfirmYes          = "y"
 	tuiKeybindConfirmNo           = "n"
-	tuiKeyArrows                  = "+↑↓"
+	tuiKeyArrows                  = "↑↓"
 	tuiKeyJumpFirstLast           = "g/G"
 )
 

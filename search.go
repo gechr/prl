@@ -174,6 +174,11 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		}
 	}
 
+	// Comments filter
+	if cli.Comments != "" {
+		qualifiers = append(qualifiers, "comments:"+cli.Comments)
+	}
+
 	// Language filter
 	if cli.Language != "" {
 		qualifiers = append(qualifiers, "language:"+cli.Language)
