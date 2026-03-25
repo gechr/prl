@@ -1804,8 +1804,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		state := strings.ToLower(pr.State)
-		if pr.IsDraft || state == valueMerged || state == valueClosed {
-			return m, nil
+		if state == valueMerged || state == valueClosed {
+			return m, flashResult(&m, "Cannot review:", "PR is "+state, "", true)
 		}
 		idx := m.cursor
 		prCopy := *pr
@@ -1825,7 +1825,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		state := strings.ToLower(pr.State)
-		if pr.IsDraft || state == valueMerged || state == valueClosed {
+		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
 		idx := m.cursor
@@ -2793,7 +2793,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		pr := m.rows[idx].Item.PR
 		state := strings.ToLower(pr.State)
-		if pr.IsDraft || state == valueMerged || state == valueClosed {
+		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
 		m.view = tuiViewList
@@ -4542,11 +4542,20 @@ func newConfirmInput() textarea.Model {
 
 // resizeConfirmInput adjusts the textarea height to fit the content.
 func (m *tuiModel) resizeConfirmInput() {
-	lines := strings.Count(
-		m.confirmInput.Value(),
-		"\n",
-	) + 2 //nolint:mnd // +1 for current line, +1 for cursor visibility
-	h := max(tuiConfirmInputMinHeight, min(lines, tuiConfirmInputMaxHeight))
+	width := m.confirmInput.Width()
+	if width <= 0 {
+		width = tuiConfirmInputWidth
+	}
+	visual := 0
+	for line := range strings.SplitSeq(m.confirmInput.Value(), "\n") {
+		if len(line) == 0 {
+			visual++
+		} else {
+			visual += (len(line) + width - 1) / width
+		}
+	}
+	visual++ // cursor visibility
+	h := max(tuiConfirmInputMinHeight, min(visual, tuiConfirmInputMaxHeight))
 	m.confirmInput.SetHeight(h)
 }
 
@@ -4825,6 +4834,7 @@ func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmHasInput = true
 	m.confirmInputLabel = "Prompt"
 	m.confirmInput.SetValue(defaultClaudeReviewPrompt(pr))
+	m.resizeConfirmInput()
 	m.confirmPrompt = "Launch Claude review for " + styledRef(&prCopy) + "?"
 	m.confirmCmdFn = func(prompt string) tea.Cmd {
 		return func() tea.Msg {

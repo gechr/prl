@@ -22,6 +22,26 @@ const (
 	MergeStatusCIFailed              // CI failed or errored
 )
 
+func (m MergeStatus) String() string {
+	switch m {
+	case MergeStatusUnknown:
+		return "unknown"
+	case MergeStatusReady:
+		return "ready"
+	case MergeStatusBlocked:
+		return "blocked"
+	case MergeStatusCIPending:
+		return "ci_pending"
+	case MergeStatusCIFailed:
+		return "ci_failed"
+	}
+	return "unknown"
+}
+
+func (m MergeStatus) MarshalJSON() ([]byte, error) { //nolint:unparam // satisfies json.Marshaler
+	return []byte(`"` + m.String() + `"`), nil
+}
+
 type Author struct {
 	Login string `json:"login"`
 }
@@ -32,12 +52,12 @@ type Label struct {
 
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
-	Automerge   bool        `json:"-"`
+	Automerge   bool        `json:"automerge"`
 	Author      Author      `json:"author"`
 	CreatedAt   time.Time   `json:"createdAt"`
-	IsDraft     bool        `json:"-"`
+	IsDraft     bool        `json:"draft"`
 	Labels      []Label     `json:"labels"`
-	MergeStatus MergeStatus `json:"-"`
+	MergeStatus MergeStatus `json:"mergeStatus"`
 	NodeID      string      `json:"-"`
 	Number      int         `json:"number"`
 	Repository  Repository  `json:"repository"`
