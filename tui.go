@@ -1167,7 +1167,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				status = "1 PR"
 			}
 		}
-		return m, flashResult(&m, "Sent to Slack:", status, "", false)
+		return m, flashResult(&m, "Slacked", status, "", false)
 
 	case jumpTimeoutMsg:
 		if msg.id == m.jumpID && m.jumpDigit > 0 {
@@ -1859,7 +1859,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmPrompt = fmt.Sprintf("Send %d PRs to Slack?", count)
 		}
 		m.confirmCmd = func() tea.Msg {
-			out, err := sendSlack(prs, cli, cfg)
+			out, err := sendSlack(cli, cfg, prs)
 			return slackSentMsg{count: count, output: out, err: err}
 		}
 		return m, nil
@@ -1875,7 +1875,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		count := len(prs)
 		if count == 1 {
-			flashPending(&m, statusSending, &prs[0])
+			flashPending(&m, statusSlacking, &prs[0])
 		} else {
 			m.statusMsg = m.styles.statusPending.Render(
 				fmt.Sprintf("Sending %d PRs", count),
@@ -1885,7 +1885,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
-			out, err := sendSlack(prs, cli, cfg)
+			out, err := sendSlack(cli, cfg, prs)
 			return slackSentMsg{count: count, output: out, err: err}
 		}
 
@@ -2466,7 +2466,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmYes = true
 		m.confirmPrompt = "Send " + styledRef(&pr) + " to Slack?"
 		m.confirmCmd = func() tea.Msg {
-			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			out, err := sendSlack(cli, cfg, []PullRequest{pr})
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
 		return m, nil
@@ -2480,11 +2480,11 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashPending(&m, statusSending, &pr)
+		flashPending(&m, statusSlacking, &pr)
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
-			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			out, err := sendSlack(cli, cfg, []PullRequest{pr})
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
 	case tuiKeybindOpen:
@@ -2741,7 +2741,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmYes = true
 		m.confirmPrompt = "Send " + styledRef(&pr) + " to Slack?"
 		m.confirmCmd = func() tea.Msg {
-			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			out, err := sendSlack(cli, cfg, []PullRequest{pr})
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
 		return m, nil
@@ -2755,11 +2755,11 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		flashPending(&m, statusSending, &pr)
+		flashPending(&m, statusSlacking, &pr)
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
-			out, err := sendSlack([]PullRequest{pr}, cli, cfg)
+			out, err := sendSlack(cli, cfg, []PullRequest{pr})
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
 	case tuiKeybindOpen:
@@ -4406,15 +4406,43 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 		return help
 	}
 	lastNL := strings.LastIndex(help, "\n")
+	prefix := ""
 	lastLine := help
 	if lastNL >= 0 {
+		prefix = help[:lastNL+1]
 		lastLine = help[lastNL+1:]
 	}
-	pad := m.width - lg.Width(lastLine) - lg.Width(status) - 1
-	if pad > 0 {
-		return help + strings.Repeat(" ", pad) + status + " "
+	sw := lg.Width(status)
+	// Drop help pairs from the right until status fits.
+	const helpGap = "  "
+	for {
+		pad := m.width - lg.Width(lastLine) - sw - 1
+		if pad > 0 {
+			return prefix + lastLine + strings.Repeat(" ", pad) + status + " "
+		}
+		// Remove the rightmost help pair.
+		idx := strings.LastIndex(lastLine, helpGap)
+		if idx < 0 {
+			break
+		}
+		lastLine = lastLine[:idx]
 	}
-	return help
+	// No pairs left - wrap status across up to 3 lines, right-aligned.
+	var lines []string
+	for range 3 {
+		if lg.Width(status) <= m.width {
+			lines = append(lines, status)
+			break
+		}
+		line := xansi.Truncate(status, m.width, "")
+		lines = append(lines, line)
+		status = strings.TrimPrefix(status, xansi.Strip(line))
+	}
+	wrapped := strings.Join(lines, "\n")
+	if prefix != "" {
+		return prefix + wrapped
+	}
+	return wrapped
 }
 
 func (m tuiModel) renderHelp(pairs []helpPair) string {
@@ -4480,7 +4508,7 @@ var confirmActionVerb = map[string]string{
 	tuiActionComment:      "Commenting",
 	tuiActionForceMerge:   "Force-merging",
 	tuiActionMerge:        "Merging",
-	tuiActionSendSlack:    "Sending to Slack",
+	tuiActionSendSlack:    "Slacking",
 	tuiActionUnassign:     "Unassigning",
 }
 
@@ -4531,7 +4559,7 @@ func newConfirmInput() textarea.Model {
 	ci.SetHeight(tuiConfirmInputMinHeight)
 	ciStyles := ci.Styles()
 	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("255"))
-	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242")).Italic(true)
+	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242"))
 	ciStyles.Focused.CursorLine = lg.NewStyle()
 	ciStyles.Blurred.Text = lg.NewStyle().Foreground(lg.Color("242"))
 	ciStyles.Blurred.CursorLine = lg.NewStyle()

@@ -174,7 +174,13 @@ func slackRecipientForRepo(repo string, recipients slackRecipients) string {
 // sendSlack renders and sends PRs to Slack. If cli.SendTo is set it overrides
 // all routing and sends everything to that single recipient; otherwise PRs are
 // grouped by the recipients config and sent per recipient.
-func sendSlack(prs []PullRequest, cli *CLI, cfg *Config) (string, error) {
+// Automerge status is enriched on-demand for accurate reactions.
+func sendSlack(cli *CLI, cfg *Config, prs []PullRequest) (string, error) {
+	// Enrich automerge status so renderSlack can compute reactions.
+	if gql, err := newGraphQLClient(withDebug(cli.Debug)); err == nil {
+		_ = enrichAutomerge(gql, prs)
+	}
+
 	if cli.SendTo != "" {
 		msg, reactions := renderSlack(prs, cfg)
 		if msg == "" {

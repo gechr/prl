@@ -111,7 +111,7 @@ const (
 	statusMarkingReady   = "Marking ready"
 	statusMerging        = "Merging"
 	statusReopening      = "Reopening"
-	statusSending        = "Sending"
+	statusSlacking       = "Slacking"
 	statusUnsubscribing  = "Unsubscribing"
 )
 

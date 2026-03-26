@@ -75,7 +75,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		qualifiers = append(qualifiers, "merged:"+parseDate(cli.Merged))
 	}
 
-	// Review filter — review:required only makes sense for open PRs (it means
+	// Review filter - review:required only makes sense for open PRs (it means
 	// "review required but not yet given"). For closed/merged PRs it filters
 	// almost everything out, so skip it for non-open states.
 	if cli.Review != "" {

@@ -569,7 +569,7 @@ func buildOutput(
 		}
 	}
 
-	// Enrich auto-merge status for Slack reactions (only when actually sending).
+	// Enrich auto-merge status for Slack reactions/display.
 	if !cli.Quick && cli.Send {
 		if g, gqlErr := getGQL(); gqlErr == nil {
 			if amErr := enrichAutomerge(g, prs); amErr != nil {
@@ -748,7 +748,7 @@ func runOnce(
 		}
 	}
 
-	// Enrich auto-merge status for Slack reactions (only when actually sending).
+	// Enrich auto-merge status for Slack reactions/display.
 	if !cli.Quick && cli.Send {
 		if g, gqlErr := getGQL(); gqlErr == nil {
 			if amErr := enrichAutomerge(g, prs); amErr != nil {
@@ -797,7 +797,7 @@ func runOnce(
 		return "", nil
 	}
 
-	// Clipboard copy (before interactive selection) — always copy plain URLs.
+	// Clipboard copy (before interactive selection) - always copy plain URLs.
 	if cli.Copy {
 		urls := make([]string, len(prs))
 		for i, pr := range prs {
@@ -841,7 +841,7 @@ func runOnce(
 
 	// Send to Slack (after actions, if any)
 	if cli.Send {
-		if _, err := sendSlack(prs, cli, cfg); err != nil {
+		if _, err := sendSlack(cli, cfg, prs); err != nil {
 			return "", err
 		}
 	}
@@ -929,7 +929,7 @@ func runInteractiveSend(cli *CLI, cfg *Config, prs []PullRequest) error {
 		clog.Warn().Err(err).Msg("Clipboard copy failed")
 	}
 	fmt.Println(slackOutput)
-	_, err := sendSlack(prs, cli, cfg)
+	_, err := sendSlack(cli, cfg, prs)
 	return err
 }
 
