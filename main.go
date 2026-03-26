@@ -797,9 +797,14 @@ func runOnce(
 		return "", nil
 	}
 
-	// Clipboard copy (before interactive selection)
+	// Clipboard copy (before interactive selection) — always copy plain URLs.
 	if cli.Copy {
-		if err := copyToClipboard(output); err != nil {
+		urls := make([]string, len(prs))
+		for i, pr := range prs {
+			urls[i] = pr.URL
+		}
+		natsort(urls)
+		if err := copyToClipboard(strings.Join(urls, "\n")); err != nil {
 			clog.Warn().Err(err).Msg("Clipboard copy failed")
 		}
 	}
