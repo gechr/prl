@@ -26,6 +26,8 @@ const (
 	valueURL      = "url"
 
 	colTitle = "title"
+
+	copilotReviewer = "copilot-pull-request-reviewer[bot]"
 )
 
 // GitHub API status values.

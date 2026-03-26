@@ -940,6 +940,9 @@ func buildActionHeader(cli *CLI) string {
 	if cli.Close {
 		parts = append(parts, "Close")
 	}
+	if cli.Copilot {
+		parts = append(parts, "Copilot review")
+	}
 	if cli.Comment != "" {
 		parts = append(parts, "Comment")
 	}

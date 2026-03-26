@@ -2062,7 +2062,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					owner,
 					repo,
 					t.pr.Number,
-					"copilot-pull-request-reviewer[bot]",
+					copilotReviewer,
 				)
 				return actionMsg{
 					index:  t.index,
@@ -2082,7 +2082,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						owner,
 						repo,
 						pr.Number,
-						"copilot-pull-request-reviewer[bot]",
+						copilotReviewer,
 					)
 				})
 		}
@@ -2517,7 +2517,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				owner,
 				repo,
 				pr.Number,
-				"copilot-pull-request-reviewer[bot]",
+				copilotReviewer,
 			)
 			return actionMsg{
 				index:  idx,

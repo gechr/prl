@@ -175,6 +175,17 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		}
 	}
 
+	if cli.Copilot {
+		if err := a.requestReview(owner, repo, pr.Number, copilotReviewer); err != nil {
+			errs = append(errs, fmt.Sprintf("copilot-review %s: %v", pr.URL, err))
+		} else {
+			clog.Info().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Copilot review requested")
+		}
+	}
+
 	if cli.Unsubscribe {
 		if unsubErrs := a.unsubscribeAll(cli, owner, repo, pr); len(unsubErrs) > 0 {
 			errs = append(errs, unsubErrs...)
@@ -549,7 +560,11 @@ func (a *ActionRunner) disableAutomerge(nodeID string) error {
 		}`, nodeID)
 }
 
-func (a *ActionRunner) requestReview(owner, repo string, number int, login string) error {
+func (a *ActionRunner) requestReview(
+	owner, repo string,
+	number int,
+	login string, //nolint:unparam // login is intentionally general-purpose
+) error {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/requested_reviewers", owner, repo, number)
 	body := jsonBody(map[string][]string{"reviewers": {login}})
 	return a.rest.Do(http.MethodPost, path, body, nil)

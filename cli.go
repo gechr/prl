@@ -57,6 +57,7 @@ type CLI struct {
 
 	Approve      bool   `name:"approve"       help:"Approve each PR"                                                                                             clib:"terse='Approve PRs',group='Interactive/1'"`
 	Close        bool   `name:"close"         help:"Close each PR"                                                                                               clib:"terse='Close PRs',group='Interactive/1'"`
+	Copilot      bool   `name:"copilot"       help:"Request Copilot review on each PR"                                                                           clib:"terse='Copilot review',group='Interactive/1'"`
 	DeleteBranch bool   `name:"delete-branch" help:"Delete branch after close (requires --close)"                                                                clib:"terse='Delete branch',group='Interactive/1'"`
 	Comment      string `name:"comment"       help:"Add a comment to each PR"                                                               placeholder:"<body>" clib:"terse='Add comment',group='Interactive/1'"`
 	Edit         bool   `name:"edit"          help:"Edit title and body of each PR"                                  short:"e"                                   clib:"terse='Edit PR',group='Interactive/1'"`
@@ -116,6 +117,9 @@ func (c *CLI) Validate() error {
 	}
 	if c.Close && c.Update {
 		return fmt.Errorf("--close and --update are mutually exclusive")
+	}
+	if c.Copilot && c.Close {
+		return fmt.Errorf("--copilot and --close are mutually exclusive")
 	}
 	if c.MarkDraft && c.MarkReady {
 		return fmt.Errorf("--mark-draft and --mark-ready are mutually exclusive")
@@ -384,7 +388,8 @@ func (c *CLI) Normalize(cfg *Config) {
 
 // HasAction returns true if any action flag is set.
 func (c *CLI) HasAction() bool {
-	return c.Approve || c.Close || c.Comment != "" || c.Edit || c.ForceMerge || c.MarkDraft ||
+	return c.Approve || c.Close || c.Comment != "" || c.Copilot || c.Edit || c.ForceMerge ||
+		c.MarkDraft ||
 		c.MarkReady ||
 		c.Merge != nil ||
 		c.Unsubscribe ||
@@ -397,7 +402,8 @@ func (c *CLI) IsInteractive() bool {
 	if c.Yes {
 		return false
 	}
-	return c.Approve || c.Clone || c.Close || c.Comment != "" || c.Edit || c.ForceMerge ||
+	return c.Approve || c.Clone || c.Close || c.Comment != "" || c.Copilot || c.Edit ||
+		c.ForceMerge ||
 		c.MarkDraft ||
 		c.MarkReady ||
 		(c.Merge != nil && *c.Merge) ||
