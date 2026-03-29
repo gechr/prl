@@ -437,6 +437,18 @@ type jumpTimeoutMsg struct{ id int }
 // refreshTickMsg fires when it's time to start a background refresh.
 type refreshTickMsg struct{ id int }
 
+type detailRefreshTickMsg struct {
+	id  int
+	key prKey
+}
+
+type detailChecksRefreshedMsg struct {
+	id     int
+	key    prKey
+	checks []PRCheck
+	err    error
+}
+
 // spinnerTickMsg fires to advance the spinner animation frame.
 type spinnerTickMsg struct{ id int }
 
@@ -457,33 +469,34 @@ type refreshResultMsg struct {
 //
 //nolint:recvcheck // selection helpers use pointer receivers to mutate maps/fields in-place
 type tuiModel struct {
-	items         []PRRowModel // canonical data for rerender on resize/refresh
-	rows          []TableRow   // current rendered order; row.Item is the action target
-	header        string
-	colWidths     []int // visible column widths for header click hit-testing
-	sortColumn    string
-	sortAsc       bool
-	cursor        int
-	offset        int
-	view          tuiView
-	diff          string
-	diffLines     []string
-	diffKey       prKey
-	diffScroll    int
-	detail        PRDetail
-	detailLines   []string
-	detailKey     prKey
-	detailScroll  int
-	detailLoading bool
-	statusMsg     string
-	statusErr     bool
-	statusID      int
-	actions       *ActionRunner
-	width         int
-	height        int
-	styles        tuiStyles
-	removed       prKeys
-	selected      prKeys
+	items           []PRRowModel // canonical data for rerender on resize/refresh
+	rows            []TableRow   // current rendered order; row.Item is the action target
+	header          string
+	colWidths       []int // visible column widths for header click hit-testing
+	sortColumn      string
+	sortAsc         bool
+	cursor          int
+	offset          int
+	view            tuiView
+	diff            string
+	diffLines       []string
+	diffKey         prKey
+	diffScroll      int
+	detail          PRDetail
+	detailLines     []string
+	detailKey       prKey
+	detailScroll    int
+	detailRefreshID int
+	detailLoading   bool
+	statusMsg       string
+	statusErr       bool
+	statusID        int
+	actions         *ActionRunner
+	width           int
+	height          int
+	styles          tuiStyles
+	removed         prKeys
+	selected        prKeys
 
 	// Filter options overlay.
 	showOptions   bool
@@ -527,6 +540,7 @@ type tuiModel struct {
 	autoRefresh     bool
 	refreshing      bool      // true while a background refresh is in-flight
 	lastInteraction time.Time // tracks last user keypress for idle-based refresh decay
+	lastRefreshAt   time.Time // last successful list refresh
 	// showRefreshStatus is true when the in-flight refresh was triggered by
 	// applying options and should show a temporary "Refreshing..." status.
 	showRefreshStatus bool
@@ -888,12 +902,9 @@ func (m tuiModel) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// scheduleRefresh returns a tea.Cmd that fires a refreshTickMsg after a delay
-// scaled by the number of results (reusing watch-mode intervals) and further
-// slowed by user inactivity. The idle parameter is time since the last
-// keypress; after watchIdleDecay of inactivity the interval reaches
-// watchIdleMax regardless of result count.
-func scheduleRefresh(n, id int, idle time.Duration) tea.Cmd {
+// refreshDelay returns the next list refresh delay using the adaptive watch-mode
+// cadence plus idle-based slowdown.
+func refreshDelay(n int, idle time.Duration) time.Duration {
 	d := watchInterval(n)
 	if idle > 0 && idle < watchIdleDecay {
 		// Linearly blend from the base interval toward watchIdleMax.
@@ -902,6 +913,14 @@ func scheduleRefresh(n, id int, idle time.Duration) tea.Cmd {
 	} else if idle >= watchIdleDecay {
 		d = watchIdleMax
 	}
+	return d
+}
+
+// scheduleRefresh returns a tea.Cmd that fires a refreshTickMsg after a delay
+// scaled by the number of results (reusing watch-mode intervals) and further
+// slowed by user inactivity.
+func scheduleRefresh(n, id int, idle time.Duration) tea.Cmd {
+	d := refreshDelay(n, idle)
 	return tea.Tick(d, func(time.Time) tea.Msg { return refreshTickMsg{id: id} })
 }
 
@@ -936,6 +955,89 @@ func (m tuiModel) applyRepaintMarker(v *tea.View) {
 // resetting the idle decay for auto-refresh scheduling.
 func (m *tuiModel) touchInteraction() { m.lastInteraction = time.Now() }
 
+func (m tuiModel) detailHasPendingChecks() bool {
+	for _, check := range m.detail.Checks {
+		if check.Status != ciStatusCompleted {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *tuiModel) clampDetailScroll() {
+	maxScroll := max(0, len(m.detailLines)-m.detailViewport())
+	m.detailScroll = min(max(m.detailScroll, 0), maxScroll)
+}
+
+func (m tuiModel) scheduleDetailRefresh() tea.Cmd {
+	if m.view != tuiViewDetail || m.diffLoading || m.detailKey == "" ||
+		!m.detailHasPendingChecks() {
+		return nil
+	}
+	id := m.detailRefreshID
+	key := m.detailKey
+	return tea.Tick(detailCheckInterval, func(time.Time) tea.Msg {
+		return detailRefreshTickMsg{id: id, key: key}
+	})
+}
+
+// refetchDetail re-fetches the currently displayed detail view (e.g. after
+// an action like update-branch changes PR state).
+func (m tuiModel) refetchDetail() tea.Cmd {
+	pr := m.prForKey(m.detailKey)
+	if pr == nil {
+		return nil
+	}
+	actions := m.actions
+	key := m.detailKey
+	idx := m.resolveIndex(key, -1)
+	prCopy := *pr
+	return func() tea.Msg {
+		owner, repo := prOwnerRepo(prCopy)
+		detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number, prCopy.NodeID)
+		return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
+	}
+}
+
+func (m *tuiModel) stopDetailRefresh(clearKey bool) {
+	m.detailRefreshID++
+	if clearKey {
+		m.detailKey = ""
+	}
+}
+
+func (m *tuiModel) clearDiffState() {
+	m.diffQueue = nil
+	m.diffHistory = nil
+	m.diffQueueTotal = 0
+	m.diffAdvanced = false
+	m.diffLoading = false
+	m.diffKey = ""
+}
+
+func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
+	m.refreshing = true
+	m.showRefreshStatus = showStatus
+	m.spinnerTick = 0
+	m.spinnerID++
+	if showStatus {
+		m.statusMsg = styleTitle.Bold(true).Render("Applying…")
+		m.statusErr = false
+	}
+	snapshot := newRefreshSnapshot(*m)
+	filterGen := m.filterGen
+	spinnerID := m.spinnerID
+	return tea.Batch(
+		m.scheduleSpinnerTick(),
+		func() tea.Msg {
+			result := snapshot.run()
+			result.filterGen = filterGen
+			result.spinnerID = spinnerID
+			return result
+		},
+	)
+}
+
 // rescheduleRefresh invalidates older refresh ticks and schedules a new one.
 func (m *tuiModel) rescheduleRefresh() tea.Cmd {
 	if m.autoRefresh {
@@ -943,6 +1045,32 @@ func (m *tuiModel) rescheduleRefresh() tea.Cmd {
 		return scheduleRefresh(len(m.items), m.refreshID, time.Since(m.lastInteraction))
 	}
 	return nil
+}
+
+func (m *tuiModel) refreshOrReschedule() tea.Cmd {
+	if !m.autoRefresh {
+		return nil
+	}
+	if m.refreshing {
+		return nil
+	}
+	if time.Since(m.lastRefreshAt) >= refreshDelay(len(m.items), time.Since(m.lastInteraction)) {
+		m.refreshID++
+		return m.startRefresh(false)
+	}
+	return m.rescheduleRefresh()
+}
+
+func (m *tuiModel) exitDetailView() tea.Cmd {
+	m.stopDetailRefresh(true)
+	m.view = tuiViewList
+	return m.refreshOrReschedule()
+}
+
+func (m *tuiModel) exitDiffView() tea.Cmd {
+	m.clearDiffState()
+	m.view = tuiViewList
+	return m.refreshOrReschedule()
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -974,6 +1102,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.view == tuiViewDetail && len(m.detailLines) > 0 {
 			m.detailLines = m.renderDetailContent()
+			m.clampDetailScroll()
 		}
 		return m, nil
 
@@ -1057,11 +1186,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(flashCmd, nextCmd)
 			}
 			if m.view == tuiViewDiff {
-				m.view = tuiViewList
-				m.diffKey = ""
-				m.diffHistory = nil
-				m.diffQueueTotal = 0
-				return m, tea.Batch(flashCmd, m.rescheduleRefresh())
+				return m, tea.Batch(flashCmd, m.exitDiffView())
 			}
 			return m, flashCmd
 		}
@@ -1087,11 +1212,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(flashCmd, nextCmd)
 		}
 		if m.view == tuiViewDiff {
-			m.view = tuiViewList
-			m.diffKey = ""
-			m.diffHistory = nil
-			m.diffQueueTotal = 0
-			return m, tea.Batch(flashCmd, m.rescheduleRefresh())
+			return m, tea.Batch(flashCmd, m.exitDiffView())
+		}
+		if m.view == tuiViewDetail && m.detailKey != "" {
+			return m, tea.Batch(flashCmd, m.refetchDetail())
 		}
 		return m, flashCmd
 
@@ -1138,11 +1262,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
 				return m, tea.Batch(flashCmd, nextCmd)
 			}
+			if m.view == tuiViewDetail {
+				return m, tea.Batch(flashCmd, m.scheduleDetailRefresh())
+			}
 			return m, flashCmd
 		}
 		idx := m.resolveIndex(msg.key, msg.index)
 		if idx < 0 {
 			return m, nil // PR no longer in list
+		}
+		if m.view == tuiViewDetail {
+			m.stopDetailRefresh(true)
 		}
 		m.diffKey = msg.key
 		pr := m.rows[idx].Item.PR
@@ -1168,7 +1298,44 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailScroll = 0
 		m.view = tuiViewDetail
 		m.statusMsg = ""
-		return m, nil
+		return m, m.scheduleDetailRefresh()
+
+	case detailRefreshTickMsg:
+		if msg.id != m.detailRefreshID || msg.key != m.detailKey || m.view != tuiViewDetail ||
+			m.diffLoading {
+			return m, nil
+		}
+		pr := m.prForKey(msg.key)
+		if pr == nil || pr.NodeID == "" {
+			return m, nil
+		}
+		actions := m.actions
+		key := msg.key
+		id := msg.id
+		nodeID := pr.NodeID
+		return m, func() tea.Msg {
+			checks, err := actions.fetchChecksGraphQL(nodeID)
+			return detailChecksRefreshedMsg{id: id, key: key, checks: checks, err: err}
+		}
+
+	case detailChecksRefreshedMsg:
+		if msg.id != m.detailRefreshID || msg.key != m.detailKey || m.view != tuiViewDetail ||
+			m.diffLoading {
+			return m, nil
+		}
+		if msg.err != nil {
+			clog.Debug().
+				Err(msg.err).
+				Str("detail_key", string(msg.key)).
+				Msg("Detail check refresh failed")
+			return m, m.scheduleDetailRefresh()
+		}
+		scroll := m.detailScroll
+		m.detail.Checks = msg.checks
+		m.detailLines = m.renderDetailContent()
+		m.detailScroll = scroll
+		m.clampDetailScroll()
+		return m, m.scheduleDetailRefresh()
 
 	case claudeReviewMsg:
 		if msg.err != nil {
@@ -1236,21 +1403,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.autoRefresh || m.view != tuiViewList || msg.id != m.refreshID || m.refreshing {
 			return m, nil
 		}
-		m.refreshing = true
-		m.spinnerTick = 0
-		m.spinnerID++
-		snapshot := newRefreshSnapshot(m)
-		filterGen := m.filterGen
-		spinnerID := m.spinnerID
-		return m, tea.Batch(
-			m.scheduleSpinnerTick(),
-			func() tea.Msg {
-				result := snapshot.run()
-				result.filterGen = filterGen
-				result.spinnerID = spinnerID
-				return result
-			},
-		)
+		return m, m.startRefresh(false)
 
 	case spinnerTickMsg:
 		if !m.refreshing || msg.id != m.spinnerID {
@@ -1282,6 +1435,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showRefreshStatus = false
 			m.statusMsg = ""
 		}
+		m.lastRefreshAt = time.Now()
 		m.dismissedEmpty = false
 		// Re-apply sort to fresh rows before merging state.
 		rows := msg.rows
@@ -1406,7 +1560,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		key := makePRKey(prCopy)
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
-			detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number)
+			detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number, prCopy.NodeID)
 			return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
 		}
 
@@ -2183,20 +2337,13 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.confirmInputPending() {
+	if m.confirmAction != "" {
 		return m.updateConfirmOverlay(msg)
 	}
 	maxScroll := m.diffMaxScroll()
 	switch msg.String() {
 	case tuiKeybindQuit, tuiKeyEsc, tuiKeybindDiff:
-		m.diffQueue = nil
-		m.diffHistory = nil
-		m.diffQueueTotal = 0
-		m.diffAdvanced = false
-		m.diffLoading = false
-		m.diffKey = ""
-		m.view = tuiViewList
-		return m, m.rescheduleRefresh()
+		return m, m.exitDiffView()
 	case tuiKeybindNext:
 		// Skip to next in queue without approving.
 		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
@@ -2562,15 +2709,13 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.confirmInputPending() {
+	if m.confirmAction != "" {
 		return m.updateConfirmOverlay(msg)
 	}
 	viewport := m.detailViewport()
 	switch msg.String() {
 	case tuiKeybindQuit, tuiKeyEsc, tuiKeyEnter:
-		m.detailKey = ""
-		m.view = tuiViewList
-		return m, m.rescheduleRefresh()
+		return m, m.exitDetailView()
 	case tuiKeybindVimDown, tuiKeyDown:
 		if m.detailScroll < len(m.detailLines)-viewport {
 			m.detailScroll++
@@ -2628,8 +2773,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		actions := m.actions
-		m.view = tuiViewList
-		m.rescheduleRefresh()
+		refreshCmd := m.exitDetailView()
 		m.confirmAction = tuiActionApprove
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
@@ -2640,7 +2784,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			err := actions.approve(owner, repo, pr.Number)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
-		return m, nil
+		return m, refreshCmd
 	case tuiKeybindApproveNoConfirm:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2653,13 +2797,12 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		flashPending(&m, statusApproving, &pr)
 		actions := m.actions
-		m.view = tuiViewList
-		m.rescheduleRefresh()
-		return m, func() tea.Msg {
+		refreshCmd := m.exitDetailView()
+		return m, tea.Batch(refreshCmd, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.approve(owner, repo, pr.Number)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
-		}
+		})
 	case tuiKeybindMerge:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2671,8 +2814,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		actions := m.actions
-		m.view = tuiViewList
-		m.rescheduleRefresh()
+		refreshCmd := m.exitDetailView()
 		verb := "Automerge "
 		if pr.MergeStatus == MergeStatusReady {
 			verb = "Merge "
@@ -2692,7 +2834,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
-		return m, nil
+		return m, refreshCmd
 	case tuiKeybindDraftToggle:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2704,11 +2846,10 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		actions := m.actions
-		m.view = tuiViewList
-		m.rescheduleRefresh()
+		refreshCmd := m.exitDetailView()
 		if pr.IsDraft {
 			flashPending(&m, statusMarkingReady, &pr)
-			return m, func() tea.Msg {
+			return m, tea.Batch(refreshCmd, func() tea.Msg {
 				err := actions.markReady(pr.NodeID)
 				return actionMsg{
 					index:  idx,
@@ -2716,13 +2857,13 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					action: tuiActionMarkedReady,
 					err:    err,
 				}
-			}
+			})
 		}
 		flashPending(&m, statusMarkingDraft, &pr)
-		return m, func() tea.Msg {
+		return m, tea.Batch(refreshCmd, func() tea.Msg {
 			err := actions.markDraft(pr.NodeID)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionMarkedDraft, err: err}
-		}
+		})
 	case tuiKeybindComment:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2730,8 +2871,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		pr := m.rows[idx].Item.PR
 		actions := m.actions
-		m.view = tuiViewList
-		m.rescheduleRefresh()
+		refreshCmd := m.exitDetailView()
 		m.confirmAction = tuiActionComment
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
@@ -2751,7 +2891,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		return m, m.confirmInput.Focus()
+		return m, tea.Batch(m.confirmInput.Focus(), refreshCmd)
 	case tuiKeybindSlack:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2764,8 +2904,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		cfg := m.cfg
 		cli := m.cli
-		m.view = tuiViewList
-		m.rescheduleRefresh()
+		refreshCmd := m.exitDetailView()
 		m.confirmAction = tuiActionSendSlack
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
@@ -2775,7 +2914,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			out, err := sendSlack(cli, cfg, []PullRequest{pr})
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
-		return m, nil
+		return m, refreshCmd
 	case tuiKeybindSlackNoConfirm:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2793,6 +2932,33 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			out, err := sendSlack(cli, cfg, []PullRequest{pr})
 			return slackSentMsg{count: 1, output: out, err: err}
 		}
+	case tuiKeybindUpdateBranch:
+		idx := m.resolveIndex(m.detailKey, -1)
+		if idx < 0 {
+			return m, nil
+		}
+		pr := m.rows[idx].Item.PR
+		state := strings.ToLower(pr.State)
+		if state == valueMerged || state == valueClosed {
+			return m, nil
+		}
+		actions := m.actions
+		m.confirmAction = tuiActionUpdateBranch
+		m.confirmSubject = pr.Ref()
+		m.confirmURL = pr.URL
+		m.confirmYes = true
+		m.confirmPrompt = "Update branch for " + styledRef(&pr) + "?"
+		m.confirmCmd = func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			err := actions.updateBranch(owner, repo, pr.Number)
+			return actionMsg{
+				index:  idx,
+				key:    makePRKey(pr),
+				action: tuiActionBranchUpdated,
+				err:    err,
+			}
+		}
+		return m, nil
 	case tuiKeybindOpen:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2811,12 +2977,12 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, flashResult(&m, resultCopied, pr.Ref(), "", false)
 	case tuiKeybindReview:
 		if !hasClaudeReviewLauncher() {
-			m.view = tuiViewList
+			refreshCmd := m.exitDetailView()
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
 			m.confirmPrompt = tuiClaudeReviewUnsupported
 			m.confirmCmd = nil
-			return m, m.rescheduleRefresh()
+			return m, refreshCmd
 		}
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -2827,9 +2993,9 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state == valueMerged || state == valueClosed {
 			return m, nil
 		}
-		m.view = tuiViewList
+		refreshCmd := m.exitDetailView()
 		m = m.prepareClaudeReviewConfirm(pr, idx)
-		return m, tea.Batch(m.confirmInput.Focus(), m.rescheduleRefresh())
+		return m, tea.Batch(m.confirmInput.Focus(), refreshCmd)
 	}
 	return m, nil
 }
@@ -3013,7 +3179,7 @@ func (m tuiModel) viewDiff() tea.View {
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
-	if m.confirmInputPending() {
+	if m.confirmAction != "" {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
 	}
 	m.applyRepaintMarker(&v)
@@ -3148,7 +3314,7 @@ func (m tuiModel) viewDetail() tea.View {
 
 	v := tea.NewView(b.String())
 	v.AltScreen = true
-	if m.confirmInputPending() {
+	if m.confirmAction != "" {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
 	}
 	m.applyRepaintMarker(&v)
@@ -3220,6 +3386,9 @@ func (m tuiModel) renderDetailContent() []string {
 			case valueReviewDismissed:
 				icon = iconDismissed
 			}
+			if isAuthorBot(r.User) && icon == iconCommented {
+				icon = iconCopilot
+			}
 			name := m.resolver.Resolve(r.User)
 			lines = append(lines, fmt.Sprintf("%s%s %s", detailIndent, icon, name))
 		}
@@ -3233,7 +3402,7 @@ func (m tuiModel) renderDetailContent() []string {
 		for _, c := range m.detail.Checks {
 			var icon string
 			switch {
-			case c.Status != "completed":
+			case c.Status != ciStatusCompleted:
 				icon = "🔄"
 			case c.Conclusion == ciStatusSuccess:
 				icon = iconApproved
@@ -3334,6 +3503,7 @@ const (
 	defaultTermWidth = 80
 
 	iconApproved  = "✅"
+	iconCopilot   = "🤖"
 	iconRejected  = "❌"
 	iconDismissed = "🥀"
 	iconCommented = "💬"
@@ -4511,6 +4681,7 @@ var confirmActionVerb = map[string]string{
 	tuiActionMerge:        "Merging",
 	tuiActionSendSlack:    "Slacking",
 	tuiActionUnassign:     "Unassigning",
+	tuiActionUpdateBranch: "Updating branch",
 }
 
 func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
@@ -4544,11 +4715,6 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 func (m tuiModel) confirmDismiss() (tea.Model, tea.Cmd) {
 	m = m.clearConfirm()
 	return m, nil
-}
-
-// confirmInputPending returns true when a confirm modal with a text input is active.
-func (m tuiModel) confirmInputPending() bool {
-	return m.confirmHasInput && m.confirmAction != ""
 }
 
 func newConfirmInput() textarea.Model {
@@ -4717,17 +4883,8 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	m.cursor = m.adjustedCursor()
 	m.offset = m.scrolledOffset()
 
-	filterGen := m.filterGen
-	spinCmd := m.scheduleSpinnerTick()
-	spinnerID := m.spinnerID
-	snapshot := newRefreshSnapshot(m)
-	refreshCmd := func() tea.Msg {
-		result := snapshot.run()
-		result.filterGen = filterGen
-		result.spinnerID = spinnerID
-		return result
-	}
-	return m, tea.Batch(spinCmd, refreshCmd)
+	m.refreshID++
+	return m, m.startRefresh(true)
 }
 
 func (m tuiModel) renderConfirmModal() string {
@@ -5486,6 +5643,7 @@ func runTui(
 		login:           login,
 		autoRefresh:     cfg.TUI.AutoRefresh.Enabled,
 		lastInteraction: time.Now(),
+		lastRefreshAt:   time.Now(),
 		spinner:         buildSpinner(cfg.Spinner),
 		styles:          newTuiStyles(),
 		removed:         make(prKeys),

@@ -535,6 +535,11 @@ func (c *CLI) ApplyOutputOverrides() {
 		} else {
 			c.setOutput("slack")
 		}
+		// --send implies --no-draft unless draft was explicitly set
+		if !c.draftExplicit {
+			c.Draft = new(false)
+			clog.Debug().Msg("--send implied --no-draft")
+		}
 	}
 
 	// -o slack implies --copy

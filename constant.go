@@ -27,7 +27,8 @@ const (
 
 	colTitle = "title"
 
-	copilotReviewer = "copilot-pull-request-reviewer[bot]"
+	copilotReviewer   = "copilot-pull-request-reviewer[bot]"
+	sg2WizardReviewer = "sg2-wizard[bot]"
 )
 
 // GitHub API status values.
@@ -117,21 +118,24 @@ const (
 
 // Watch mode.
 const (
-	watchMinInterval = 3 * time.Second                // floor: few results
-	watchMaxInterval = 30 * time.Second               // ceiling: many results
-	watchScalePer    = 500 * time.Millisecond         // additional delay per result
-	watchIdleDecay   = 1 * time.Hour                  // no interaction for this long → interval reaches watchIdleMax
-	watchIdleMax     = 60 * time.Second               // ceiling when fully idle
-	ansiClearScreen  = "\033[2J\033[H"                // clear screen + move cursor to top-left
-	ansiHideCursor   = "\033[?25l"                    // hide cursor
-	ansiShowCursor   = "\033[?25h"                    // show cursor
-	ansiAltScreenOn  = "\033[?1049h"                  // switch to alternate screen buffer
-	ansiAltScreenOff = "\033[?1049l"                  // switch back to main screen buffer
-	ansiDECXCPR      = "\033[?6n"                     // request extended cursor position (unambiguous)
-	ansiMoveTo1x1    = "\033[1;1H"                    // move cursor to row 1, col 1
-	ansiClearLine    = "\x1b[2K\r"                    // erase current line and return cursor to col 0
-	ansiSpinnerClear = ansiClearLine + ansiShowCursor // erase spinner line and restore cursor
+	watchMinInterval    = 3 * time.Second                // floor: few results
+	watchMaxInterval    = 30 * time.Second               // ceiling: many results
+	watchScalePer       = 500 * time.Millisecond         // additional delay per result
+	watchIdleDecay      = 1 * time.Hour                  // no interaction for this long → interval reaches watchIdleMax
+	watchIdleMax        = 60 * time.Second               // ceiling when fully idle
+	detailCheckInterval = 10 * time.Second               // poll interval for detail-view check refresh
+	ansiClearScreen     = "\033[2J\033[H"                // clear screen + move cursor to top-left
+	ansiHideCursor      = "\033[?25l"                    // hide cursor
+	ansiShowCursor      = "\033[?25h"                    // show cursor
+	ansiAltScreenOn     = "\033[?1049h"                  // switch to alternate screen buffer
+	ansiAltScreenOff    = "\033[?1049l"                  // switch back to main screen buffer
+	ansiDECXCPR         = "\033[?6n"                     // request extended cursor position (unambiguous)
+	ansiMoveTo1x1       = "\033[1;1H"                    // move cursor to row 1, col 1
+	ansiClearLine       = "\x1b[2K\r"                    // erase current line and return cursor to col 0
+	ansiSpinnerClear    = ansiClearLine + ansiShowCursor // erase spinner line and restore cursor
 )
+
+const ciStatusCompleted = "completed"
 
 // UI layout.
 const (

@@ -1,8 +1,14 @@
 package main
 
 import (
+	"maps"
 	"strings"
 )
+
+var defaultAuthorAliases = map[string]string{
+	strings.ToLower(copilotReviewer):   "Copilot",
+	strings.ToLower(sg2WizardReviewer): "SG2 Wizard",
+}
 
 // AuthorResolver resolves GitHub usernames to display names.
 type AuthorResolver struct {
@@ -16,6 +22,8 @@ func NewAuthorResolver(cfg *Config) *AuthorResolver {
 		names:    make(map[string]string),
 		hclNames: make(map[string]bool),
 	}
+
+	maps.Copy(r.names, defaultAuthorAliases)
 
 	// Load config authors first (lower priority)
 	for username, displayName := range cfg.Authors {
@@ -58,4 +66,10 @@ func (r *AuthorResolver) IsHCL(username string) bool {
 func (r *AuthorResolver) IsKnown(username string) bool {
 	_, ok := r.names[strings.ToLower(username)]
 	return ok
+}
+
+// IsAuthorBot returns true if the username is a known bot reviewer.
+func isAuthorBot(username string) bool {
+	lower := strings.ToLower(username)
+	return lower == strings.ToLower(copilotReviewer) || lower == strings.ToLower(sg2WizardReviewer)
 }

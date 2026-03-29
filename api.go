@@ -432,7 +432,11 @@ type PRFile struct {
 	Deletions int
 }
 
-func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, error) {
+func (a *ActionRunner) fetchPRDetail(
+	owner, repo string,
+	number int,
+	nodeID string,
+) (PRDetail, error) {
 	var detail PRDetail
 
 	// Fetch body.
@@ -440,9 +444,6 @@ func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, 
 	var pr struct {
 		Body           string `json:"body"`
 		MergeableState string `json:"mergeable_state"`
-		Head           struct {
-			SHA string `json:"sha"`
-		} `json:"head"`
 	}
 	if err := a.rest.Get(prPath, &pr); err != nil {
 		return detail, err
@@ -470,9 +471,13 @@ func (a *ActionRunner) fetchPRDetail(owner, repo string, number int) (PRDetail, 
 		}
 	}
 
-	// Fetch check runs.
-	if pr.Head.SHA != "" {
-		detail.Checks = a.fetchCheckRuns(owner, repo, pr.Head.SHA)
+	if nodeID != "" {
+		checks, err := a.fetchChecksGraphQL(nodeID)
+		if err != nil {
+			clog.Debug().Err(err).Str("node_id", nodeID).Msg("Failed to fetch detail checks")
+		} else {
+			detail.Checks = checks
+		}
 	}
 
 	// Fetch changed files.
@@ -688,34 +693,7 @@ const (
 	checkOrderSkipped           // 3
 )
 
-// fetchCheckRuns fetches individual CI check runs for a commit SHA.
-func (a *ActionRunner) fetchCheckRuns(owner, repo, sha string) []PRCheck {
-	checksPath := fmt.Sprintf("repos/%s/%s/commits/%s/check-runs", owner, repo, sha)
-	var result struct {
-		CheckRuns []struct {
-			Name        string     `json:"name"`
-			Status      string     `json:"status"`
-			Conclusion  string     `json:"conclusion"`
-			StartedAt   *time.Time `json:"started_at"`
-			CompletedAt *time.Time `json:"completed_at"`
-		} `json:"check_runs"`
-	}
-	if err := a.rest.Get(checksPath, &result); err != nil {
-		return nil
-	}
-	checks := make([]PRCheck, 0, len(result.CheckRuns))
-	for _, c := range result.CheckRuns {
-		var dur time.Duration
-		if c.StartedAt != nil && c.CompletedAt != nil {
-			dur = c.CompletedAt.Sub(*c.StartedAt)
-		}
-		checks = append(checks, PRCheck{
-			Name:       c.Name,
-			Status:     c.Status,
-			Conclusion: c.Conclusion,
-			Duration:   dur,
-		})
-	}
+func sortChecks(checks []PRCheck) {
 	slices.SortStableFunc(checks, func(a, b PRCheck) int {
 		if d := checkSortOrder(a) - checkSortOrder(b); d != 0 {
 			return d
@@ -725,13 +703,150 @@ func (a *ActionRunner) fetchCheckRuns(owner, repo, sha string) []PRCheck {
 		}
 		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 	})
-	return checks
+}
+
+func mapStatusContextState(state string) (string, string) {
+	switch strings.ToUpper(state) {
+	case valueCISuccess:
+		return ciStatusCompleted, ciStatusSuccess
+	case valueCIFailure, valueCIError:
+		return ciStatusCompleted, ciStatusFailure
+	case valueCIPending, valueCIExpected:
+		return ciStatusPending, ""
+	default:
+		return ciStatusPending, ""
+	}
+}
+
+func (a *ActionRunner) fetchChecksGraphQL(nodeID string) ([]PRCheck, error) {
+	if a.gql == nil {
+		return nil, fmt.Errorf("GraphQL client is not configured")
+	}
+
+	query := `query DetailChecks($id: ID!, $after: String) {
+		node(id: $id) {
+			... on PullRequest {
+				commits(last: 1) {
+					nodes {
+						commit {
+							statusCheckRollup {
+								contexts(first: 100, after: $after) {
+									pageInfo {
+										hasNextPage
+										endCursor
+									}
+									nodes {
+										__typename
+										... on CheckRun {
+											name
+											status
+											conclusion
+											startedAt
+											completedAt
+										}
+										... on StatusContext {
+											context
+											state
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}`
+
+	var (
+		after  *string
+		checks []PRCheck
+	)
+
+	for {
+		var result struct {
+			Node *struct {
+				Commits struct {
+					Nodes []struct {
+						Commit struct {
+							StatusCheckRollup *struct {
+								Contexts struct {
+									PageInfo struct {
+										HasNextPage bool    `json:"hasNextPage"`
+										EndCursor   *string `json:"endCursor"`
+									} `json:"pageInfo"`
+									Nodes []struct {
+										TypeName    string     `json:"__typename"`
+										Name        string     `json:"name"`
+										Status      string     `json:"status"`
+										Conclusion  string     `json:"conclusion"`
+										StartedAt   *time.Time `json:"startedAt"`
+										CompletedAt *time.Time `json:"completedAt"`
+										Context     string     `json:"context"`
+										State       string     `json:"state"`
+									} `json:"nodes"`
+								} `json:"contexts"`
+							} `json:"statusCheckRollup"`
+						} `json:"commit"`
+					} `json:"nodes"`
+				} `json:"commits"`
+			} `json:"node"`
+		}
+
+		if err := a.gql.Do(
+			query,
+			map[string]any{"id": nodeID, "after": after},
+			&result,
+		); err != nil {
+			return nil, err
+		}
+
+		if result.Node == nil || len(result.Node.Commits.Nodes) == 0 {
+			return nil, nil
+		}
+		rollup := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup
+		if rollup == nil {
+			return nil, nil
+		}
+
+		contexts := rollup.Contexts
+		for _, node := range contexts.Nodes {
+			switch node.TypeName {
+			case "CheckRun":
+				var dur time.Duration
+				if node.StartedAt != nil && node.CompletedAt != nil {
+					dur = node.CompletedAt.Sub(*node.StartedAt)
+				}
+				checks = append(checks, PRCheck{
+					Name:       node.Name,
+					Status:     strings.ToLower(node.Status),
+					Conclusion: strings.ToLower(node.Conclusion),
+					Duration:   dur,
+				})
+			case "StatusContext":
+				status, conclusion := mapStatusContextState(node.State)
+				checks = append(checks, PRCheck{
+					Name:       node.Context,
+					Status:     status,
+					Conclusion: conclusion,
+				})
+			}
+		}
+
+		if !contexts.PageInfo.HasNextPage || contexts.PageInfo.EndCursor == nil {
+			break
+		}
+		after = contexts.PageInfo.EndCursor
+	}
+
+	sortChecks(checks)
+	return checks, nil
 }
 
 // checkSortOrder returns a sort key for PRCheck: failures first, then
 // in-progress, then successes, then skipped/neutral last.
 func checkSortOrder(c PRCheck) int {
-	if c.Status != "completed" {
+	if c.Status != ciStatusCompleted {
 		return checkOrderInProgress
 	}
 	switch c.Conclusion {

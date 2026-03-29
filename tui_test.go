@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textinput"
@@ -483,9 +484,11 @@ func TestUpdateListViewSpaceOnlySelectsCurrent(t *testing.T) {
 
 func TestRefreshTickIgnoresStaleAndInFlight(t *testing.T) {
 	m := tuiModel{
-		autoRefresh: true,
-		refreshID:   1,
-		view:        tuiViewDetail,
+		autoRefresh:     true,
+		refreshID:       1,
+		view:            tuiViewDetail,
+		lastInteraction: time.Now(),
+		lastRefreshAt:   time.Now(),
 	}
 
 	model, cmd := m.updateDetailView(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -507,6 +510,171 @@ func TestRefreshTickIgnoresStaleAndInFlight(t *testing.T) {
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
 	require.True(t, bm.refreshing)
+}
+
+func TestExitDetailViewReschedulesWhenRefreshNotDue(t *testing.T) {
+	pr := testReviewPullRequest()
+	key := makePRKey(pr)
+	m := tuiModel{
+		rows:            []TableRow{{Item: PRRowModel{PR: pr}}},
+		items:           []PRRowModel{{PR: pr}},
+		view:            tuiViewDetail,
+		detailKey:       key,
+		detailLines:     []string{"line"},
+		autoRefresh:     true,
+		lastInteraction: time.Now(),
+		lastRefreshAt:   time.Now(),
+	}
+
+	model, cmd := m.updateDetailView(tea.KeyPressMsg{Code: tea.KeyEsc})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiViewList, bm.view)
+	require.Equal(t, prKey(""), bm.detailKey)
+	require.False(t, bm.refreshing)
+	require.Equal(t, 1, bm.detailRefreshID)
+	require.Equal(t, 1, bm.refreshID)
+}
+
+func TestExitDetailViewStartsImmediateRefreshWhenDue(t *testing.T) {
+	pr := testReviewPullRequest()
+	key := makePRKey(pr)
+	m := tuiModel{
+		rows:            []TableRow{{Item: PRRowModel{PR: pr}}},
+		items:           []PRRowModel{{PR: pr}},
+		view:            tuiViewDetail,
+		detailKey:       key,
+		detailLines:     []string{"line"},
+		autoRefresh:     true,
+		lastInteraction: time.Now(),
+		lastRefreshAt:   time.Now().Add(-2 * watchMaxInterval),
+	}
+
+	model, cmd := m.updateDetailView(tea.KeyPressMsg{Code: tea.KeyEsc})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiViewList, bm.view)
+	require.Equal(t, prKey(""), bm.detailKey)
+	require.True(t, bm.refreshing)
+	require.Equal(t, 1, bm.detailRefreshID)
+	require.Equal(t, 1, bm.refreshID)
+}
+
+func TestStaleDetailRefreshCompletionIgnoredAfterExitAndReopen(t *testing.T) {
+	pr := testReviewPullRequest()
+	key := makePRKey(pr)
+	m := tuiModel{
+		rows:            []TableRow{{Item: PRRowModel{PR: pr}}},
+		items:           []PRRowModel{{PR: pr}},
+		view:            tuiViewDetail,
+		detailKey:       key,
+		detail:          PRDetail{Checks: []PRCheck{{Name: "build", Status: ciStatusPending}}},
+		detailLines:     []string{"old"},
+		autoRefresh:     true,
+		lastInteraction: time.Now(),
+		lastRefreshAt:   time.Now(),
+	}
+
+	model, _ := m.updateDetailView(tea.KeyPressMsg{Code: tea.KeyEsc})
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+
+	bm.view = tuiViewDetail
+	bm.detailKey = key
+	bm.detail = PRDetail{Checks: []PRCheck{{Name: "build", Status: ciStatusPending}}}
+	bm.detailLines = []string{"old"}
+
+	model, cmd := bm.Update(detailChecksRefreshedMsg{
+		id:  0,
+		key: key,
+		checks: []PRCheck{{
+			Name:       "build",
+			Status:     ciStatusCompleted,
+			Conclusion: ciStatusSuccess,
+		}},
+	})
+
+	require.Nil(t, cmd)
+	after, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, ciStatusPending, after.detail.Checks[0].Status)
+}
+
+func TestDetailApproveUsesImmediateRefreshPathWhenDue(t *testing.T) {
+	pr := testReviewPullRequest()
+	pr.State = valueOpen
+	key := makePRKey(pr)
+	m := tuiModel{
+		rows:            []TableRow{{Item: PRRowModel{PR: pr}}},
+		items:           []PRRowModel{{PR: pr}},
+		view:            tuiViewDetail,
+		detailKey:       key,
+		detailLines:     []string{"line"},
+		actions:         &ActionRunner{},
+		autoRefresh:     true,
+		lastInteraction: time.Now(),
+		lastRefreshAt:   time.Now().Add(-2 * watchMaxInterval),
+	}
+
+	model, cmd := m.updateDetailView(tea.KeyPressMsg{Code: 'a', Text: "a"})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiViewList, bm.view)
+	require.Equal(t, tuiActionApprove, bm.confirmAction)
+	require.True(t, bm.refreshing)
+	require.Equal(t, prKey(""), bm.detailKey)
+}
+
+func TestExitDiffViewStartsImmediateRefreshWhenDue(t *testing.T) {
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		rows:            []TableRow{{Item: PRRowModel{PR: pr}}},
+		items:           []PRRowModel{{PR: pr}},
+		view:            tuiViewDiff,
+		diffKey:         makePRKey(pr),
+		diffLines:       []string{"diff"},
+		autoRefresh:     true,
+		lastInteraction: time.Now(),
+		lastRefreshAt:   time.Now().Add(-2 * watchMaxInterval),
+	}
+
+	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: tea.KeyEsc})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiViewList, bm.view)
+	require.True(t, bm.refreshing)
+	require.Equal(t, prKey(""), bm.diffKey)
+}
+
+func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
+	pr := testReviewPullRequest()
+	pr.Author.Login = "george"
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		detailKey: makePRKey(pr),
+		detail: PRDetail{
+			Reviews: []PRReview{{
+				User:  copilotReviewer,
+				State: "COMMENTED",
+			}},
+		},
+		resolver: NewAuthorResolver(&Config{}),
+		width:    80,
+	}
+
+	lines := m.renderDetailContent()
+	rendered := strings.Join(lines, "\n")
+
+	require.Contains(t, rendered, "🤖 Copilot")
+	require.NotContains(t, rendered, "💬 Copilot")
 }
 
 func TestViewDiffHandlesTinyViewport(t *testing.T) {
