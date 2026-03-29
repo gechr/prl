@@ -50,11 +50,6 @@ func currentClaudeReviewLauncher() claudeReviewLauncher {
 
 func hasClaudeReviewLauncher() bool { return currentClaudeReviewLauncher() != claudeLauncherNone }
 
-var (
-	styledOn  = lg.NewStyle().Foreground(lg.Color("118")).Render("on")
-	styledOff = lg.NewStyle().Foreground(lg.Color("197")).Render("off")
-)
-
 // filterChoiceTrue/False are canonical string values for bool filter choices.
 const (
 	filterChoiceTrue  = "true"
@@ -145,36 +140,36 @@ type tuiStyles struct {
 
 func newTuiStyles() tuiStyles {
 	return tuiStyles{
-		cursor:        lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
-		defaultChoice: lg.NewStyle().Foreground(lg.Color("75")).Faint(true),
-		selectedIndex: lg.NewStyle().Foreground(lg.Color("118")).Bold(true),
-		statusOK:      lg.NewStyle().Foreground(lg.Color("48")),
-		statusErr:     lg.NewStyle().Foreground(lg.Color("196")),
-		statusAction:  lg.NewStyle().Foreground(lg.Color("2")).Bold(true),
-		statusPending: lg.NewStyle().Foreground(lg.Color("214")).Bold(true),
-		helpText:      lg.NewStyle().Foreground(lg.Color("175")),
-		helpKey:       lg.NewStyle().Foreground(lg.Color("198")).Bold(true),
-		separator:     lg.NewStyle().Foreground(lg.Color("198")).Faint(true),
-		diffHead:      lg.NewStyle().Foreground(lg.Color("208")).Bold(true),
+		cursor:        styleAccent.Bold(true),
+		defaultChoice: styleDefault.Faint(true),
+		selectedIndex: styleHighlight.Bold(true),
+		statusOK:      styleOK,
+		statusErr:     styleDanger,
+		statusAction:  styleGreen.Bold(true),
+		statusPending: styleWarning.Bold(true),
+		helpText:      styleHelp,
+		helpKey:       styleAccent.Bold(true),
+		separator:     styleAccent.Faint(true),
+		diffHead:      styleHeading.Bold(true),
 		overlayBox: lg.NewStyle().
 			Border(lg.RoundedBorder()).
-			BorderForeground(lg.Color("198")).
+			BorderForeground(colorAccent).
 			Padding(tuiConfirmPadY, tuiConfirmPadX),
 		confirmYes: lg.NewStyle().
-			Background(lg.Color("48")).
-			Foreground(lg.Color("#000000")).
+			Background(colorOK).
+			Foreground(colorBlack).
 			Bold(true).
 			Padding(0, 1),
 		confirmYesDim: lg.NewStyle().
-			Foreground(lg.Color("48")).
+			Foreground(colorOK).
 			Padding(0, 1),
 		confirmNo: lg.NewStyle().
-			Background(lg.Color("196")).
-			Foreground(lg.Color("#000000")).
+			Background(colorDanger).
+			Foreground(colorBlack).
 			Bold(true).
 			Padding(0, 1),
 		confirmNoDim: lg.NewStyle().
-			Foreground(lg.Color("196")).
+			Foreground(colorDanger).
 			Padding(0, 1),
 	}
 }
@@ -205,7 +200,7 @@ func (m tuiModel) renderTuiIndex(num int, selected bool) string {
 	if m.p != nil && m.p.theme != nil {
 		return m.p.RenderDim(text)
 	}
-	return lg.NewStyle().Foreground(lg.Color("240")).Render(text)
+	return styleDim.Render(text)
 }
 
 // helpPair is a key-description pair for rendering help text.
@@ -261,6 +256,42 @@ func (a tuiAction) String() string {
 		return resultReviewRequested
 	case tuiActionUnsubscribed:
 		return resultUnsubscribed
+	default:
+		return resultUnknown
+	}
+}
+
+// Verb returns the imperative form of the action (e.g. "Force-merge").
+func (a tuiAction) Verb() string {
+	switch a {
+	case tuiActionApproved:
+		return "Approve"
+	case tuiActionAutomerged:
+		return "Automerge"
+	case tuiActionBranchUpdated:
+		return "Update branch"
+	case tuiActionClosed:
+		return "Close"
+	case tuiActionCommented:
+		return "Comment"
+	case tuiActionEnqueued:
+		return "Enqueue"
+	case tuiActionForceMerged:
+		return "Force-merge"
+	case tuiActionMarkedDraft:
+		return "Mark draft"
+	case tuiActionMarkedReady:
+		return "Mark ready"
+	case tuiActionMerged:
+		return "Merge"
+	case tuiActionOpened:
+		return "Open"
+	case tuiActionReopened:
+		return "Reopen"
+	case tuiActionReviewRequested:
+		return "Request review"
+	case tuiActionUnsubscribed:
+		return "Unsubscribe"
 	default:
 		return resultUnknown
 	}
@@ -1041,7 +1072,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		flashCmd := flashResult(&m, msg.action.String(), pr.Ref(), pr.URL, false)
 		if hint != nil {
-			cmd := lg.NewStyle().Bold(true).Foreground(lg.Color("198")).Render(hint.Hint)
+			cmd := styleAccent.Bold(true).Render(hint.Hint)
 			m.confirmAction = tuiActionInfo
 			m.confirmPrompt = "To also mute notifications, run:\n\n" + cmd
 			m.confirmCmd = nil
@@ -1369,7 +1400,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		prCopy := *pr
 		m.statusMsg = m.styles.statusPending.Render("Fetching") + " " +
-			lg.NewStyle().Foreground(lg.Color("117")).Render(prCopy.Ref()) + valueEllipsis
+			styleRef.Render(prCopy.Ref()) + valueEllipsis
 		m.statusErr = false
 		m.detailLoading = true
 		key := makePRKey(prCopy)
@@ -2878,13 +2909,7 @@ func (m tuiModel) viewList() tea.View {
 
 	// Filter bar.
 	if m.filterInput.Focused() || filterVal != "" {
-		b.WriteString(
-			lg.NewStyle().
-				Foreground(lg.Color("208")).
-				Bold(true).
-				Render("/") +
-				m.filterInput.View() + "\n",
-		)
+		b.WriteString(styleHeading.Bold(true).Render("/") + m.filterInput.View() + "\n")
 	}
 
 	// Separator line, with active tags embedded inline when present.
@@ -2925,7 +2950,7 @@ func (m tuiModel) viewDiff() tea.View {
 	viewport := m.diffContentViewport()
 
 	// PR title header.
-	headerStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("212"))
+	headerStyle := styleLabel.Bold(true)
 	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
 		pr := m.rows[idx].Item.PR
 		var headerLine string
@@ -2935,12 +2960,9 @@ func (m tuiModel) viewDiff() tea.View {
 				" "
 		}
 		ref := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
-		titleStyle := lg.NewStyle().Foreground(lg.Color("218"))
 		headerLine += xansi.SetHyperlink(pr.URL) +
-			headerStyle.Render(
-				ref,
-			) + lg.NewStyle().Foreground(lg.Color("255")).Render(" » ") +
-			titleStyle.Render(normalizeTUIDisplayText(pr.Title)) +
+			headerStyle.Render(ref) + styleText.Render(" » ") +
+			styleTitle.Render(normalizeTUIDisplayText(pr.Title)) +
 			xansi.ResetHyperlink()
 		if m.width > 0 && lg.Width(headerLine) > m.width {
 			headerLine = xansi.Truncate(headerLine, m.width-1, valueEllipsis)
@@ -3054,7 +3076,7 @@ func (m tuiModel) renderListSeparator(junctionCol ...int) string {
 }
 
 func (m tuiModel) renderTagSeparator(tags []string, col int) string {
-	filterTagStyle := lg.NewStyle().Foreground(lg.Color("116")).Faint(true)
+	filterTagStyle := styleFilterTag.Faint(true)
 	filterTagKeyStyle := filterTagStyle.Bold(true)
 	renderedTags := make([]string, 0, len(tags))
 	for _, tag := range tags {
@@ -3146,16 +3168,14 @@ func (m tuiModel) renderDetailContent() []string {
 	idx := m.resolveIndex(m.detailKey, -1)
 	if idx < 0 {
 		return []string{
-			lg.NewStyle().Foreground(lg.Color("240")).Render("Pull request no longer available."),
+			styleDim.Render("Pull request no longer available."),
 		}
 	}
 	pr := m.rows[idx].Item.PR
 
-	headerStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("175"))
-	dimStyle := lg.NewStyle().Foreground(lg.Color("240"))
-
-	labelStyle := lg.NewStyle().Bold(true).Foreground(lg.Color("48"))
-	valueStyle := lg.NewStyle().Foreground(lg.Color("255"))
+	headerStyle := styleHelp.Bold(true)
+	labelStyle := styleOK.Bold(true)
+	styleText := styleText
 
 	author := m.resolver.Resolve(pr.Author.Login)
 	var lines []string
@@ -3166,26 +3186,23 @@ func (m tuiModel) renderDetailContent() []string {
 	if author != pr.Author.Login {
 		authorDisplay += " (" + author + ")"
 	}
-	styledAuthor := xansi.SetHyperlink(
-		authorLink,
-	) + valueStyle.Render(
-		authorDisplay,
-	) + xansi.ResetHyperlink()
+	styledAuthor := xansi.SetHyperlink(authorLink) +
+		styleText.Render(authorDisplay) + xansi.ResetHyperlink()
 	lines = append(
 		lines,
 		detailIndent+labelStyle.Render(
 			" Title: ",
-		)+valueStyle.Render(
+		)+styleText.Render(
 			normalizeTUIDisplayText(pr.Title),
 		),
 	)
 	lines = append(lines, detailIndent+labelStyle.Render("Author: ")+styledAuthor)
-	styledURL := xansi.SetHyperlink(pr.URL) + valueStyle.Render(pr.URL) + xansi.ResetHyperlink()
+	styledURL := xansi.SetHyperlink(pr.URL) + styleText.Render(pr.URL) + xansi.ResetHyperlink()
 	lines = append(lines, detailIndent+labelStyle.Render("   URL: ")+styledURL)
 	lines = append(lines, detailIndent+labelStyle.Render("Status: ")+m.renderDetailStatus(pr))
 	if m.detail.MergeableState == valueBehind {
 		lines = append(lines, detailIndent+labelStyle.Render(" State: ")+
-			lg.NewStyle().Foreground(lg.Color("214")).Render("Branch out-of-date"))
+			styleWarning.Render("Branch out-of-date"))
 	}
 	lines = append(lines, "")
 
@@ -3239,9 +3256,9 @@ func (m tuiModel) renderDetailContent() []string {
 			}
 			line := fmt.Sprintf("%s%s %s", detailIndent, icon, c.Name)
 			if c.Duration > 0 {
-				line += " " + lg.NewStyle().
-					Foreground(lg.Color("245")).
-					Render(fmt.Sprintf("[%s]", c.Duration.Round(time.Second)))
+				line += " " + styleCheckDur.Render(
+					fmt.Sprintf("[%s]", c.Duration.Round(time.Second)),
+				)
 			}
 			lines = append(lines, normalizeTUIDisplayText(line))
 		}
@@ -3253,7 +3270,7 @@ func (m tuiModel) renderDetailContent() []string {
 		lines = append(lines, headerStyle.Render("Description"))
 		lines = append(lines, m.renderMarkdown(m.detail.Body)...)
 	} else {
-		lines = append(lines, dimStyle.Render("No description provided."))
+		lines = append(lines, styleDim.Render("No description provided."))
 	}
 
 	// Changed files.
@@ -3261,26 +3278,20 @@ func (m tuiModel) renderDetailContent() []string {
 		lines = append(lines, "")
 		lines = append(lines, headerStyle.Render("Files Changed"))
 		lines = append(lines, "")
-		addStyle := lg.NewStyle().Foreground(lg.Color("118"))
-		delStyle := lg.NewStyle().Foreground(lg.Color("197"))
-		modPrefixStyle := lg.NewStyle().Foreground(lg.Color("3")).Bold(true)
-		addPrefixStyle := lg.NewStyle().Foreground(lg.Color("2")).Bold(true)
-		delPrefixStyle := lg.NewStyle().Foreground(lg.Color("1")).Bold(true)
-		renPrefixStyle := lg.NewStyle().Foreground(lg.Color("5")).Bold(true)
 		for _, f := range m.detail.Files {
 			var prefix string
 			switch f.Status {
 			case "added":
-				prefix = addPrefixStyle.Render("A")
+				prefix = styleGreen.Bold(true).Render("A")
 			case "removed":
-				prefix = delPrefixStyle.Render("D")
+				prefix = styleRed.Bold(true).Render("D")
 			case "renamed":
-				prefix = renPrefixStyle.Render("R")
+				prefix = styleMagenta.Bold(true).Render("R")
 			default:
-				prefix = modPrefixStyle.Render("M")
+				prefix = styleYellow.Bold(true).Render("M")
 			}
-			stat := addStyle.Render(fmt.Sprintf("+%d", f.Additions)) +
-				" " + delStyle.Render(fmt.Sprintf("-%d", f.Deletions))
+			stat := styleAdd.Render(fmt.Sprintf("+%d", f.Additions)) +
+				" " + styleDelete.Render(fmt.Sprintf("-%d", f.Deletions))
 			lines = append(
 				lines,
 				fmt.Sprintf("%s%s %s  %s", detailIndent, prefix, f.Filename, stat),
@@ -3294,26 +3305,26 @@ func (m tuiModel) renderDetailContent() []string {
 
 func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 	if pr.IsDraft {
-		return lg.NewStyle().Foreground(lg.Color("250")).Render("Draft")
+		return styleDraftLbl.Render("Draft")
 	}
 	state := strings.ToLower(pr.State)
 	if state == valueMerged {
-		return lg.NewStyle().Foreground(lg.Color("141")).Render("Merged")
+		return styleMerged.Render("Merged")
 	}
 	if state == "closed" {
-		return lg.NewStyle().Foreground(lg.Color("197")).Render("Closed")
+		return styleClosed.Render("Closed")
 	}
 	switch pr.MergeStatus {
 	case MergeStatusReady:
-		return lg.NewStyle().Foreground(lg.Color("2")).Render("Ready to merge")
+		return styleGreen.Render("Ready to merge")
 	case MergeStatusCIPending:
-		return lg.NewStyle().Foreground(lg.Color("214")).Render("CI pending")
+		return styleWarning.Render("CI pending")
 	case MergeStatusCIFailed:
-		return lg.NewStyle().Foreground(lg.Color("197")).Render("CI failed")
+		return styleClosed.Render("CI failed")
 	case MergeStatusBlocked:
-		return lg.NewStyle().Foreground(lg.Color("214")).Render("Needs review")
+		return styleWarning.Render("Needs review")
 	case MergeStatusUnknown:
-		return lg.NewStyle().Foreground(lg.Color("240")).Render("Unknown")
+		return styleDim.Render("Unknown")
 	}
 	return ""
 }
@@ -3660,7 +3671,7 @@ func runBatchAction(
 // that remains visible until replaced by the action result.
 func flashPending(m *tuiModel, verb string, pr *PullRequest) {
 	m.statusMsg = m.styles.statusPending.Render(verb) + " " +
-		lg.NewStyle().Foreground(lg.Color("117")).Render(pr.Ref()) + valueEllipsis
+		styleRef.Render(pr.Ref()) + valueEllipsis
 	m.statusErr = false
 }
 
@@ -3670,7 +3681,7 @@ func flashResult(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
 	if isErr {
 		m.statusMsg = fmt.Sprintf("%s %s", action, ref)
 	} else {
-		styledRef := lg.NewStyle().Foreground(lg.Color("117")).Render(ref)
+		styledRef := styleRef.Render(ref)
 		if url != "" {
 			styledRef = xansi.SetHyperlink(url) + styledRef + xansi.ResetHyperlink()
 		}
@@ -3699,12 +3710,12 @@ func renderBatchFailurePrompt(msg batchActionMsg) string {
 
 	const maxFailures = 5
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s had failures:\n\n", msg.action.String())
+	fmt.Fprintf(&b, "%s\n\n", styleDanger.Bold(true).Render(msg.action.Verb()+" failed:"))
 	limit := min(len(msg.failures), maxFailures)
 	for i := range limit {
 		failure := msg.failures[i]
 		if failure.ref != "" {
-			ref := lg.NewStyle().Bold(true).Foreground(lg.Color("117")).Render(failure.ref)
+			ref := styleRef.Bold(true).Render(failure.ref)
 			if failure.url != "" {
 				ref = xansi.SetHyperlink(failure.url) + ref + xansi.ResetHyperlink()
 			}
@@ -4063,8 +4074,6 @@ func (m tuiModel) renderListHelp() string {
 }
 
 func (m tuiModel) renderFilterSyntaxHints() string {
-	syntaxKey := lg.NewStyle().Foreground(lg.Color("208")).Bold(true)
-	syntaxDesc := lg.NewStyle().Foreground(lg.Color("216"))
 	syntaxPairs := []struct{ key, desc string }{
 		{"^", "start"},
 		{"$", "end"},
@@ -4072,7 +4081,7 @@ func (m tuiModel) renderFilterSyntaxHints() string {
 	}
 	var parts []string
 	for _, p := range syntaxPairs {
-		parts = append(parts, syntaxKey.Render(p.key)+" "+syntaxDesc.Render(p.desc))
+		parts = append(parts, styleHeading.Bold(true).Render(p.key)+" "+styleFilter.Render(p.desc))
 	}
 	return " " + strings.Join(parts, "  ")
 }
@@ -4086,7 +4095,7 @@ func (m tuiModel) filterHelpPipeCol() int {
 
 func (m tuiModel) renderFilterHelp() string {
 	pairs := []helpPair{
-		{tuiKeyArrows, "prev/next"},
+		{tuiKeysArrows, "prev/next"},
 		{tuiKeyEnter, "apply"},
 		{tuiKeyEsc, "exit"},
 	}
@@ -4097,7 +4106,7 @@ func (m tuiModel) renderFilterHelp() string {
 
 func (m tuiModel) diffHelpPairs() []helpPair {
 	pairs := []helpPair{
-		{tuiKeyArrows, tuiHelpScroll},
+		{tuiKeysArrows, tuiHelpScroll},
 	}
 	pr := m.prForKey(m.diffKey)
 	state := m.prStateForKey(m.diffKey)
@@ -4154,7 +4163,7 @@ func (m tuiModel) renderDiffHelp() string {
 
 func (m tuiModel) detailHelpPairs() []helpPair {
 	pairs := []helpPair{
-		{tuiKeyArrows, tuiHelpScroll},
+		{tuiKeysArrows, tuiHelpScroll},
 		{tuiKeybindDiff, tuiHelpDiff},
 	}
 	pr := m.prForKey(m.detailKey)
@@ -4198,11 +4207,11 @@ func (m tuiModel) renderDetailHelp() string {
 
 func (m tuiModel) renderHelpOverlay() string {
 	pairs := []helpPair{
-		{tuiKeyArrows + " · j/k", tuiDescNavigate},
-		{tuiKeyJumpFirstLast, tuiDescJumpFirstLast},
+		{tuiKeysVimUpDown, tuiDescNavigate},
+		{tuiKeysJumpFirstLast, tuiDescJumpFirstLast},
 		{tuiKeyEnter, tuiDescShow},
 		{tuiKeySpace, tuiDescSelect},
-		{"shift+" + tuiKeyArrows, tuiDescExtendSelection},
+		{tuiKeysArrowsUpDown, tuiDescExtendSelection},
 		{tuiKeybindSelectAll, tuiDescSelectAll},
 		{tuiKeybindInvertSelection, tuiDescInvertSelection},
 		{tuiKeybindFilter, tuiDescFilter},
@@ -4280,9 +4289,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		}
 		b.WriteString("\n")
 	}
-	dismiss := m.styles.helpText.Bold(true).
-		Foreground(lg.Color("210")).
-		Render("Press any key to dismiss")
+	dismiss := styleDismiss.Bold(true).Render("Press any key to dismiss")
 	pad := (totalWidth - lg.Width(dismiss)) / 2 //nolint:mnd // center
 	if pad > 0 {
 		b.WriteString("\n" + strings.Repeat(" ", pad) + dismiss)
@@ -4335,20 +4342,14 @@ func (m tuiModel) renderOptionsOverlay() string {
 			isDefault := i == m.defaultFilterChoice(row)
 			switch {
 			case selected:
-				line.WriteString(
-					lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(c.label),
-				)
+				line.WriteString(styleTitle.Bold(true).Render(c.label))
 			case isDefault:
 				line.WriteString(m.styles.defaultChoice.Render(c.label))
 			case locked:
 				if selected {
-					line.WriteString(
-						lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(c.label),
-					)
+					line.WriteString(styleTitle.Bold(true).Render(c.label))
 				} else {
-					line.WriteString(
-						lg.NewStyle().Faint(true).Foreground(lg.Color("240")).Render(c.label),
-					)
+					line.WriteString(styleDim.Faint(true).Render(c.label))
 				}
 			default:
 				line.WriteString(lg.NewStyle().Faint(true).Render(c.label))
@@ -4525,7 +4526,7 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 	m = m.clearConfirm()
 	if verb != "" {
 		if subject != "" {
-			styledSubject := lg.NewStyle().Foreground(lg.Color("117")).Render(subject)
+			styledSubject := styleRef.Render(subject)
 			if url != "" {
 				styledSubject = xansi.SetHyperlink(url) + styledSubject + xansi.ResetHyperlink()
 			}
@@ -4560,12 +4561,12 @@ func newConfirmInput() textarea.Model {
 	ci.MinHeight = tuiConfirmInputMinHeight
 	ci.MaxHeight = tuiConfirmInputMaxHeight
 	ciStyles := ci.Styles()
-	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("255"))
-	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242"))
+	ciStyles.Focused.Text = styleText
+	ciStyles.Focused.Placeholder = styleSubtle
 	ciStyles.Focused.CursorLine = lg.NewStyle()
-	ciStyles.Blurred.Text = lg.NewStyle().Foreground(lg.Color("242"))
+	ciStyles.Blurred.Text = styleSubtle
 	ciStyles.Blurred.CursorLine = lg.NewStyle()
-	ciStyles.Cursor.Color = lg.Color("255")
+	ciStyles.Cursor.Color = colorText
 	ci.SetStyles(ciStyles)
 	return ci
 }
@@ -4709,7 +4710,7 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	m.showRefreshStatus = true
 	m.spinnerTick = 0
 	m.spinnerID++
-	m.statusMsg = lg.NewStyle().Foreground(lg.Color("218")).Bold(true).Render("Applying…")
+	m.statusMsg = styleTitle.Bold(true).Render("Applying…")
 	m.statusErr = false
 
 	// Recompute cursor/offset since viewport may change (filter indicator line).
@@ -4734,8 +4735,8 @@ func (m tuiModel) renderConfirmModal() string {
 	if m.confirmCmd == nil && m.confirmCmdFn == nil {
 		// Info-only modal - single OK button.
 		buttons = lg.NewStyle().
-			Background(lg.Color("218")).
-			Foreground(lg.Color("#000000")).
+			Background(colorTitle).
+			Foreground(colorBlack).
 			Padding(0, 1).
 			Bold(true).
 			Render("OK")
@@ -4760,9 +4761,7 @@ func (m tuiModel) renderConfirmModal() string {
 			label = "Comment"
 		}
 		b.WriteString("\n\n")
-		b.WriteString(
-			lg.NewStyle().Foreground(lg.Color("218")).Bold(true).Render(label),
-		)
+		b.WriteString(styleTitle.Bold(true).Render(label))
 		b.WriteString("\n")
 		b.WriteString(m.confirmInput.View())
 		b.WriteString("\n\n")
@@ -4793,10 +4792,9 @@ func (m tuiModel) renderEmptyOverlay() string {
 	key := m.styles.helpKey
 	box := lg.NewStyle().
 		Border(lg.RoundedBorder()).
-		BorderForeground(lg.Color("198")).
+		BorderForeground(colorAccent).
 		Padding(1, tuiConfirmPadX)
 	if m.filterInput.Value() != "" {
-		filter := lg.NewStyle().Foreground(lg.Color("216"))
 		// Truncate the filter value so the overlay doesn't overflow.
 		prefix := "No pull requests match \""
 		suffix := "\""
@@ -4806,7 +4804,7 @@ func (m tuiModel) renderEmptyOverlay() string {
 			query = query[:maxQuery-1] + valueEllipsis
 		}
 		line1 := dim.Render(prefix) +
-			filter.Render(query) + dim.Render(suffix)
+			styleFilter.Render(query) + dim.Render(suffix)
 		line2 := dim.Render("Refine your search, or press ") +
 			key.Render("esc") + dim.Render(" to clear the filter")
 		return box.Render(line1 + "\n\n" + line2)
@@ -4855,7 +4853,7 @@ func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
 
 // styledRef returns a bold, hyperlinked PR ref for use in confirm prompts.
 func styledRef(pr *PullRequest) string {
-	ref := lg.NewStyle().Bold(true).Foreground(lg.Color("117")).Render(pr.Ref())
+	ref := styleRef.Bold(true).Render(pr.Ref())
 	return xansi.SetHyperlink(pr.URL) + ref + xansi.ResetHyperlink()
 }
 
@@ -4917,12 +4915,6 @@ func overlayCenter(bg, fg string, width, height int) string {
 
 	return strings.Join(bgLines, "\n")
 }
-
-// cursorLineBG is the ANSI escape to set the cursor line background color.
-const cursorLineBG = "\x1b[48;2;40;10;30m"
-
-// cursorLineSelectedBG is the ANSI escape for selected (checked) row backgrounds.
-const cursorLineSelectedBG = "\x1b[48;2;10;30;15m"
 
 // injectLineBackground wraps a line with a background color that persists
 // through any embedded ANSI SGR codes. It re-applies the background after
@@ -5474,11 +5466,10 @@ func runTui(
 
 	fi := textinput.New()
 	fi.Prompt = ""
-	filterStyle := lg.NewStyle().Foreground(lg.Color("216"))
 	fiStyles := fi.Styles()
-	fiStyles.Focused.Text = filterStyle
-	fiStyles.Blurred.Text = filterStyle
-	fiStyles.Cursor.Color = lg.Color("216")
+	fiStyles.Focused.Text = styleFilter
+	fiStyles.Blurred.Text = styleFilter
+	fiStyles.Cursor.Color = colorFilter
 	fi.SetStyles(fiStyles)
 
 	ci := newConfirmInput()

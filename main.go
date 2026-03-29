@@ -301,10 +301,7 @@ func buildSpinner(cfg SpinnerConfig) spinner {
 	return spinner{frames: frames, interval: style.interval}
 }
 
-var noResults = "\n  " + lipgloss.NewStyle().
-	Bold(true).
-	Foreground(lipgloss.Color("8")).
-	Render("[no results]")
+var noResults = "\n  " + styleDraft.Bold(true).Render("[no results]")
 
 // watchInterval returns a refresh duration scaled by result count:
 // fewer results refresh faster, more results refresh slower to conserve API calls.

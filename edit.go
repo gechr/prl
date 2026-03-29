@@ -34,15 +34,15 @@ type editStyles struct {
 
 func newEditStyles() editStyles {
 	return editStyles{
-		header:      lg.NewStyle().Foreground(lg.Color("208")).Bold(true),
-		label:       lg.NewStyle().Foreground(lg.Color("212")).Bold(true),
-		dimLabel:    lg.NewStyle().Foreground(lg.Color("242")),
-		focusedText: lg.NewStyle().Foreground(lg.Color("48")),
-		blurredText: lg.NewStyle().Foreground(lg.Color("242")),
-		helpText:    lg.NewStyle().Foreground(lg.Color("242")),
-		helpKey:     lg.NewStyle().Foreground(lg.Color("248")),
-		counter:     lg.NewStyle().Foreground(lg.Color("242")),
-		dirty:       lg.NewStyle().Foreground(lg.Color("226")).Bold(true),
+		header:      styleHeading.Bold(true),
+		label:       styleLabel.Bold(true),
+		dimLabel:    styleSubtle,
+		focusedText: styleOK,
+		blurredText: styleSubtle,
+		helpText:    styleSubtle,
+		helpKey:     styleHelpKeyDm,
+		counter:     styleSubtle,
+		dirty:       styleDirty.Bold(true),
 	}
 }
 
@@ -105,7 +105,7 @@ func newTextInput(styles editStyles, value string) textinput.Model {
 	tiStyles.Blurred.Text = styles.blurredText
 	tiStyles.Cursor.Shape = tea.CursorBlock
 	tiStyles.Cursor.Blink = true
-	tiStyles.Cursor.Color = lg.Color("48")
+	tiStyles.Cursor.Color = colorOK
 
 	ti := textinput.New()
 	ti.Prompt = ""
@@ -119,12 +119,12 @@ func newTextInput(styles editStyles, value string) textinput.Model {
 func newTextArea(styles editStyles, value string) textarea.Model {
 	taStyles := textarea.DefaultDarkStyles()
 	taStyles.Focused.Text = styles.focusedText
-	taStyles.Focused.CursorLine = lg.NewStyle().Foreground(lg.Color("252"))
+	taStyles.Focused.CursorLine = styleCursorLine
 	taStyles.Blurred.CursorLine = styles.blurredText
 	taStyles.Blurred.Text = styles.blurredText
 	taStyles.Cursor.Shape = tea.CursorBlock
 	taStyles.Cursor.Blink = true
-	taStyles.Cursor.Color = lg.Color("48")
+	taStyles.Cursor.Color = colorOK
 
 	ta := textarea.New()
 	ta.Prompt = ""

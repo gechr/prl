@@ -557,7 +557,7 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 }
 
 func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
-	line := lg.NewStyle().Foreground(lg.Color("196")).Render("+abcdef")
+	line := styleDanger.Render("+abcdef")
 
 	rows := wrapDiffLines(line, 4)
 
@@ -573,7 +573,7 @@ func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
 
 func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 	pr := testReviewPullRequest()
-	diff := lg.NewStyle().Foreground(lg.Color("196")).Render("+abcdef")
+	diff := styleDanger.Render("+abcdef")
 	m := tuiModel{
 		rows:       []TableRow{{Item: PRRowModel{PR: pr}}},
 		diff:       diff,
@@ -600,7 +600,7 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 
 func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	pr := testReviewPullRequest()
-	diff := lg.NewStyle().Foreground(lg.Color("196")).Render("+" + strings.Repeat("a", 85))
+	diff := styleDanger.Render("+" + strings.Repeat("a", 85))
 	diffLines := wrapDiffLines(diff, 80)
 	m := tuiModel{
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
@@ -621,7 +621,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 }
 
 func TestTruncateDisplayLinePreservesUTF8(t *testing.T) {
-	line := lg.NewStyle().Foreground(lg.Color("196")).Render("ééé")
+	line := styleDanger.Render("ééé")
 
 	truncated := truncateDisplayLine(line, 1)
 
@@ -1071,7 +1071,7 @@ func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
 	require.Contains(
 		t,
 		overlay,
-		lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(valueMerged),
+		styleTitle.Bold(true).Render(valueMerged),
 	)
 	require.Contains(t, overlay, lg.NewStyle().Faint(true).Render("  (CLI)"))
 }
@@ -1113,7 +1113,7 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 	require.Contains(
 		t,
 		overlay,
-		lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(valueOpen),
+		styleTitle.Bold(true).Render(valueOpen),
 	)
 
 	m.optionsReset[filterRowState] = true
@@ -1122,7 +1122,7 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 	require.Contains(
 		t,
 		overlay,
-		lg.NewStyle().Bold(true).Foreground(lg.Color("218")).Render(valueOpen),
+		styleTitle.Bold(true).Render(valueOpen),
 	)
 
 	m.optionsValues[filterRowState] = filterChoiceIndex(filterRowState, valueClosed)

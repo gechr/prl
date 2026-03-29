@@ -19,28 +19,20 @@ func (prlHuhTheme) Theme(isDark bool) *huh.Styles {
 	t.Focused.Base = lipgloss.NewStyle()
 	t.Blurred.Base = lipgloss.NewStyle()
 
-	// Header: orange bold (--header.foreground=208 --header.bold).
-	t.Focused.Title = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("208")).
-		Bold(true)
+	// Header: orange bold.
+	t.Focused.Title = styleHeading.Bold(true)
 
-	// Cursor: ❯ in hot pink (--cursor='❯ ' --cursor.foreground=212).
-	t.Focused.MultiSelectSelector = lipgloss.NewStyle().
-		SetString("❯ ").
-		Foreground(lipgloss.Color("212"))
+	// Cursor: ❯ in orchid.
+	t.Focused.MultiSelectSelector = styleLabel.SetString("❯ ")
 
-	// Unselected prefix: ○ (--unselected-prefix='○ ' --cursor-prefix='○ ').
-	t.Focused.UnselectedPrefix = lipgloss.NewStyle().
-		SetString("○ ")
+	// Unselected prefix: ○.
+	t.Focused.UnselectedPrefix = lipgloss.NewStyle().SetString("○ ")
 
-	// Selected prefix: ● in spring green (--selected-prefix='● ').
-	t.Focused.SelectedPrefix = lipgloss.NewStyle().
-		SetString("● ").
-		Foreground(lipgloss.Color("48"))
+	// Selected prefix: ● in spring green.
+	t.Focused.SelectedPrefix = styleOK.SetString("● ")
 
-	// Selected option text: spring green (--selected.foreground=48).
-	t.Focused.SelectedOption = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("48"))
+	// Selected option text: spring green.
+	t.Focused.SelectedOption = styleOK
 
 	return t
 }
