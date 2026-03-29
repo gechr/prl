@@ -161,9 +161,9 @@ const (
 
 	tuiClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
 
-	tuiConfirmInputWidth     = 65
+	tuiConfirmInputWidth     = 70
 	tuiConfirmInputMinHeight = 2
-	tuiConfirmInputMaxHeight = 15
+	tuiConfirmInputMaxHeight = 30
 	tuiConfirmPadX           = 4
 	tuiConfirmPadY           = 2
 	tuiOptionsPadX           = 2

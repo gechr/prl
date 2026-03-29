@@ -4556,7 +4556,9 @@ func newConfirmInput() textarea.Model {
 	ci.Placeholder = "Leave blank to close without comment"
 	ci.ShowLineNumbers = false
 	ci.SetWidth(tuiConfirmInputWidth)
-	ci.SetHeight(tuiConfirmInputMinHeight)
+	ci.DynamicHeight = true
+	ci.MinHeight = tuiConfirmInputMinHeight
+	ci.MaxHeight = tuiConfirmInputMaxHeight
 	ciStyles := ci.Styles()
 	ciStyles.Focused.Text = lg.NewStyle().Foreground(lg.Color("255"))
 	ciStyles.Focused.Placeholder = lg.NewStyle().Foreground(lg.Color("242"))
@@ -4566,25 +4568,6 @@ func newConfirmInput() textarea.Model {
 	ciStyles.Cursor.Color = lg.Color("255")
 	ci.SetStyles(ciStyles)
 	return ci
-}
-
-// resizeConfirmInput adjusts the textarea height to fit the content.
-func (m *tuiModel) resizeConfirmInput() {
-	width := m.confirmInput.Width()
-	if width <= 0 {
-		width = tuiConfirmInputWidth
-	}
-	visual := 0
-	for line := range strings.SplitSeq(m.confirmInput.Value(), "\n") {
-		if len(line) == 0 {
-			visual++
-		} else {
-			visual += (len(line) + width - 1) / width
-		}
-	}
-	visual++ // cursor visibility
-	h := max(tuiConfirmInputMinHeight, min(visual, tuiConfirmInputMaxHeight))
-	m.confirmInput.SetHeight(h)
 }
 
 func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -4608,7 +4591,6 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.confirmInput, cmd = m.confirmInput.Update(msg)
-			m.resizeConfirmInput()
 			return m, cmd
 		}
 	}
@@ -4851,7 +4833,6 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmInputLabel = ""
 	m.confirmInput.Blur()
 	m.confirmInput.SetValue("")
-	m.confirmInput.SetHeight(tuiConfirmInputMinHeight)
 	return m
 }
 
@@ -4862,7 +4843,6 @@ func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmHasInput = true
 	m.confirmInputLabel = "Prompt"
 	m.confirmInput.SetValue(defaultClaudeReviewPrompt(pr))
-	m.resizeConfirmInput()
 	m.confirmPrompt = "Launch Claude review for " + styledRef(&prCopy) + "?"
 	m.confirmCmdFn = func(prompt string) tea.Cmd {
 		return func() tea.Msg {
