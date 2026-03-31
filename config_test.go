@@ -34,3 +34,27 @@ func TestSaveConfigKeyClearsPersistedSortWithoutPanic(t *testing.T) {
 	require.True(t, strings.HasSuffix(string(data), "\n"))
 	require.False(t, strings.HasSuffix(string(data), "\n\n"))
 }
+
+func TestLoadConfigRejectsInvalidClaudeReviewPromptPlaceholder(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`tui:
+  review:
+    claude:
+      prompt: "Review {unknownPlaceholder}"
+`),
+			0o600,
+		),
+	)
+
+	_, err = loadConfig()
+	require.ErrorContains(t, err, "invalid tui.review.claude.prompt")
+	require.ErrorContains(t, err, "unknown placeholder(s): unknownPlaceholder")
+}

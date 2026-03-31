@@ -61,8 +61,8 @@ func TestBuildClaudeReviewAppleScriptUnsupported(t *testing.T) {
 }
 
 func TestPrepareClaudeReviewConfirmUsesYesNo(t *testing.T) {
-	m := tuiModel{confirmInput: newConfirmInput()}
 	pr := testReviewPullRequest()
+	m := tuiModel{confirmInput: newConfirmInput()}
 
 	m = m.prepareClaudeReviewConfirm(pr, 0)
 
@@ -71,7 +71,134 @@ func TestPrepareClaudeReviewConfirmUsesYesNo(t *testing.T) {
 	require.True(t, m.confirmYes)
 	require.True(t, m.confirmHasInput)
 	require.Equal(t, "Prompt", m.confirmInputLabel)
-	require.Contains(t, m.confirmInput.Value(), "Perform a comprehensive code review")
+	require.Len(t, m.confirmOptions, 1)
+	require.Equal(t, claudeReviewModelOptionLabel, m.confirmOptions[0].label)
+	require.Equal(t, string(defaultClaudeReviewModel), m.selectedConfirmOptionValue(0))
+	require.Equal(t, tuiClaudeConfirmInputWidth, m.confirmInput.Width())
+	require.False(t, m.confirmOptFocus)
+	require.True(t, m.confirmInput.Focused())
+	require.Equal(t, claudeReviewPrompt(pr, nil), m.confirmInput.Value())
+}
+
+func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareClaudeReviewConfirm(testReviewPullRequest(), 0)
+
+	require.False(t, m.confirmOptFocus)
+	require.True(t, m.confirmInput.Focused())
+
+	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmInput.Focused())
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.Nil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, string(claudeReviewModelSonnet), bm.selectedConfirmOptionValue(0))
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	require.NotNil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
+}
+
+func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareClaudeReviewConfirm(testReviewPullRequest(), 0)
+
+	rendered := m.renderConfirmOptions()
+	stripped := ansi.Strip(rendered)
+
+	require.Equal(
+		t,
+		"Model\nsonnet  opus\n\n",
+		stripped,
+	)
+	require.Equal(t, 0, strings.Count(rendered, cursorLineBG))
+}
+
+func TestBuildClaudeReviewCommandUsesSelectedModel(t *testing.T) {
+	pr := testReviewPullRequest()
+
+	cmd := buildClaudeReviewCommand(pr, "review prompt", claudeReviewModelSonnet)
+	require.Equal(t, 1, strings.Count(cmd, "--model=sonnet"))
+	require.Equal(t, 0, strings.Count(cmd, "--model=opus"))
+
+	cmd = buildClaudeReviewCommand(pr, "review prompt", "")
+	require.Equal(t, 1, strings.Count(cmd, "--model=opus"))
+}
+
+func TestDefaultClaudeReviewPromptUsesParagraphs(t *testing.T) {
+	pr := testReviewPullRequest()
+
+	prompt := claudeReviewPrompt(pr, nil)
+	require.Equal(
+		t,
+		fmt.Sprintf(
+			`Perform a comprehensive code review of PR #%d in %s.
+
+The PR branch is checked out.
+
+First read the PR context with:
+gh pr view %[1]d --repo %[2]s
+
+Then get the diff with:
+gh api repos/%[2]s/pulls/%[1]d -H 'Accept: application/vnd.github.v3.diff'
+
+Focus on: correctness, edge cases, error handling, performance, readability, and style.
+
+Be thorough but concise.`,
+			pr.Number,
+			pr.Repository.NameWithOwner,
+		),
+		prompt,
+	)
+}
+
+func TestClaudeReviewPromptUsesConfigTemplate(t *testing.T) {
+	pr := testReviewPullRequest()
+	pr.Title = "Improve Claude review prompts"
+
+	cfg := &Config{
+		TUI: TUIConfig{
+			Review: TUIReviewConfig{
+				Claude: TUIReviewClaudeConfig{
+					Prompt: `Review PR {prNumber} in {orgWithRepo}.
+Repo: {repo}
+Org: {org}
+Ref: {prRef}
+URL: {prURL}
+Title: {title}`,
+				},
+			},
+		},
+	}
+
+	require.Equal(
+		t,
+		`Review PR 42 in gechr/prl.
+Repo: prl
+Org: gechr
+Ref: gechr/prl#42
+URL: https://github.com/gechr/prl/pull/42
+Title: Improve Claude review prompts`,
+		claudeReviewPrompt(pr, cfg),
+	)
 }
 
 func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
@@ -86,10 +213,12 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	}
 
 	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	require.NotNil(t, cmd) // Focus cmd for the prompt textarea
+	require.NotNil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, "review", bm.confirmAction)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
 
 	model, cmd = m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModAlt})
 	require.NotNil(t, cmd)

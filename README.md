@@ -184,6 +184,14 @@ default:
   sort: updated     # name, created, or updated
   state: open       # open, closed, merged, or all
 
+tui:
+  review:
+    claude:
+      prompt: |
+        Review PR #{prNumber} in {orgWithRepo}.
+
+        URL: {prURL}
+
 code_dir: ~/code/github/my-org
 terraform_repository_dir: ~/code/github/my-org/tf-github
 terraform_membership_dir: ~/code/github/my-org/tf-membership-v2
@@ -205,6 +213,8 @@ authors:
   jdoe: Jane Doe
   asmith: Alice Smith
 ```
+
+Available Claude review prompt placeholders: `{prNumber}`, `{repo}`, `{org}`, `{orgWithRepo}`, `{prURL}`, `{prRef}`, `{title}`.
 
 Setting `code_dir` automatically derives `terraform_repository_dir` (`<code_dir>/tf-github`) and `terraform_membership_dir` (`<code_dir>/tf-membership-v2`) unless they are set explicitly.
 

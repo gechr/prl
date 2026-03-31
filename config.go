@@ -30,37 +30,38 @@ func configPath() (string, error) {
 
 // Configuration key constants.
 const (
-	keyAuthors              = "authors"
-	keyCodeDir              = "code_dir"
-	keyDefaultAuthors       = "default.authors"
-	keyDefaultBots          = "default.bots"
-	keyDefaultLimit         = "default.limit"
-	keyDefaultMatch         = "default.match"
-	keyDefaultMergeMethod   = "default.merge_method"
-	keyDefaultOrganizations = "default.organizations"
-	keyDefaultOutput        = "default.output"
-	keyDefaultReverse       = "default.reverse"
-	keyDefaultSort          = "default.sort"
-	keyDefaultState         = "default.state"
-	keyIgnoredOrganizations = "ignored_organizations"
-	keySlackRecipients      = "output.slack.recipients"
-	keySlackSkipRepos       = "output.slack.skip_repos"
-	keySlackTwoApprover     = "output.slack.two_approver_repos"
-	keyTeamAliases          = "team_aliases"
-	keyTerraformMemberDir   = "terraform_membership_dir"
-	keyTerraformRepoDir     = "terraform_repository_dir"
-	keySpinnerStyle         = "spinner.style"
-	keySpinnerColors        = "spinner.colors"
-	keyTUIAutoRefresh       = "tui.refresh.enabled"
-	keyTUIFilterArchived    = "tui.filters.archived"
-	keyTUIFilterBots        = "tui.filters.bots"
-	keyTUIFilterCI          = "tui.filters.ci"
-	keyTUIFilterDraft       = "tui.filters.draft"
-	keyTUIFilterReview      = "tui.filters.review"
-	keyTUIFilterState       = "tui.filters.state"
-	keyTUISortKey           = "tui.sort.key"
-	keyTUISortOrder         = "tui.sort.order"
-	keyVCS                  = "vcs"
+	keyAuthors               = "authors"
+	keyCodeDir               = "code_dir"
+	keyDefaultAuthors        = "default.authors"
+	keyDefaultBots           = "default.bots"
+	keyDefaultLimit          = "default.limit"
+	keyDefaultMatch          = "default.match"
+	keyDefaultMergeMethod    = "default.merge_method"
+	keyDefaultOrganizations  = "default.organizations"
+	keyDefaultOutput         = "default.output"
+	keyDefaultReverse        = "default.reverse"
+	keyDefaultSort           = "default.sort"
+	keyDefaultState          = "default.state"
+	keyIgnoredOrganizations  = "ignored_organizations"
+	keySlackRecipients       = "output.slack.recipients"
+	keySlackSkipRepos        = "output.slack.skip_repos"
+	keySlackTwoApprover      = "output.slack.two_approver_repos"
+	keyTeamAliases           = "team_aliases"
+	keyTerraformMemberDir    = "terraform_membership_dir"
+	keyTerraformRepoDir      = "terraform_repository_dir"
+	keySpinnerStyle          = "spinner.style"
+	keySpinnerColors         = "spinner.colors"
+	keyTUIAutoRefresh        = "tui.refresh.enabled"
+	keyTUIReviewClaudePrompt = "tui.review.claude.prompt"
+	keyTUIFilterArchived     = "tui.filters.archived"
+	keyTUIFilterBots         = "tui.filters.bots"
+	keyTUIFilterCI           = "tui.filters.ci"
+	keyTUIFilterDraft        = "tui.filters.draft"
+	keyTUIFilterReview       = "tui.filters.review"
+	keyTUIFilterState        = "tui.filters.state"
+	keyTUISortKey            = "tui.sort.key"
+	keyTUISortOrder          = "tui.sort.order"
+	keyVCS                   = "vcs"
 )
 
 // Defaults holds default values that can be overridden by CLI flags.
@@ -120,9 +121,18 @@ type TUIFiltersConfig struct {
 	Review   string `koanf:"review"`
 }
 
+type TUIReviewClaudeConfig struct {
+	Prompt string `koanf:"prompt"`
+}
+
+type TUIReviewConfig struct {
+	Claude TUIReviewClaudeConfig `koanf:"claude"`
+}
+
 // TUIConfig holds TUI-specific configuration.
 type TUIConfig struct {
 	AutoRefresh TUIAutoRefreshConfig `koanf:"refresh"`
+	Review      TUIReviewConfig      `koanf:"review"`
 	Filters     TUIFiltersConfig     `koanf:"filters"`
 	Sort        TUISortConfig        `koanf:"sort"`
 }
@@ -161,37 +171,38 @@ type Config struct {
 
 func defaultConfig() map[string]any {
 	return map[string]any{
-		keyAuthors:              map[string]string{},
-		keyVCS:                  vcsGit,
-		keyCodeDir:              "",
-		keyDefaultAuthors:       []string{valueAtMe},
-		keyDefaultBots:          true,
-		keyDefaultLimit:         defaultLimit,
-		keyDefaultMatch:         "title",
-		keyDefaultMergeMethod:   "squash",
-		keyDefaultOrganizations: []string{},
-		keyDefaultOutput:        valueTable,
-		keyDefaultReverse:       false,
-		keyDefaultSort:          valueName,
-		keyDefaultState:         valueOpen,
-		keyIgnoredOrganizations: []string{},
-		keySlackRecipients:      slackRecipients{},
-		keySlackSkipRepos:       []string{},
-		keySlackTwoApprover:     []string{},
-		keyTeamAliases:          map[string]string{},
-		keyTerraformMemberDir:   "",
-		keySpinnerStyle:         defaultSpinner,
-		keyTUIAutoRefresh:       true,
-		keyTUIFilterArchived:    nil,
-		keyTUIFilterBots:        nil,
-		keyTUIFilterCI:          "",
-		keyTUIFilterDraft:       nil,
-		keyTUIFilterReview:      "",
-		keyTUIFilterState:       "",
-		keyTUISortKey:           "",
-		keyTUISortOrder:         "",
-		keySpinnerColors:        defaultSpinnerColors,
-		keyTerraformRepoDir:     "",
+		keyAuthors:               map[string]string{},
+		keyVCS:                   vcsGit,
+		keyCodeDir:               "",
+		keyDefaultAuthors:        []string{valueAtMe},
+		keyDefaultBots:           true,
+		keyDefaultLimit:          defaultLimit,
+		keyDefaultMatch:          "title",
+		keyDefaultMergeMethod:    "squash",
+		keyDefaultOrganizations:  []string{},
+		keyDefaultOutput:         valueTable,
+		keyDefaultReverse:        false,
+		keyDefaultSort:           valueName,
+		keyDefaultState:          valueOpen,
+		keyIgnoredOrganizations:  []string{},
+		keySlackRecipients:       slackRecipients{},
+		keySlackSkipRepos:        []string{},
+		keySlackTwoApprover:      []string{},
+		keyTeamAliases:           map[string]string{},
+		keyTerraformMemberDir:    "",
+		keySpinnerStyle:          defaultSpinner,
+		keyTUIAutoRefresh:        true,
+		keyTUIReviewClaudePrompt: defaultClaudeReviewPromptTemplate(),
+		keyTUIFilterArchived:     nil,
+		keyTUIFilterBots:         nil,
+		keyTUIFilterCI:           "",
+		keyTUIFilterDraft:        nil,
+		keyTUIFilterReview:       "",
+		keyTUIFilterState:        "",
+		keyTUISortKey:            "",
+		keyTUISortOrder:          "",
+		keySpinnerColors:         defaultSpinnerColors,
+		keyTerraformRepoDir:      "",
 	}
 }
 
@@ -279,6 +290,9 @@ func loadConfig() (*Config, error) {
 		default:
 			return nil, fmt.Errorf("invalid tui.filters.review %q", cfg.TUI.Filters.Review)
 		}
+	}
+	if err := validateClaudeReviewPromptTemplate(cfg.TUI.Review.Claude.Prompt); err != nil {
+		return nil, fmt.Errorf("invalid tui.review.claude.prompt: %w", err)
 	}
 
 	// Expand ~ and $ENV in directory paths
@@ -432,6 +446,15 @@ func withSingleTrailingNewline(content string) string {
 	return strings.TrimRight(content, "\n") + "\n"
 }
 
+func indentBlock(content string, indent int) string {
+	prefix := strings.Repeat(" ", indent)
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
+}
+
 // mergeIntoAncestor finds the top-level ancestor of a dotted key in the YAML
 // AST, unmarshals it, deep-sets the missing suffix, re-marshals only that
 // top-level subtree, and splices it back via ReplaceWithReader. The rest of
@@ -498,7 +521,10 @@ func mergeIntoAncestor(f *goyamlast.File, key string, value any) bool {
 	return true
 }
 
-var defaultConfigYAML = fmt.Sprintf(`# prl configuration
+var defaultConfigYAML = func() string {
+	const promptBlockIndent = 8
+
+	return fmt.Sprintf(`# prl configuration
 # See: prl --help
 
 # Default query parameters applied when the corresponding flag is not set.
@@ -551,6 +577,14 @@ tui:
   refresh:
     # Automatically refresh results in the background.
     enabled: true
+
+  review:
+    claude:
+      # Default prompt for Claude review.
+      # Available placeholders:
+      #   %[10]s
+      prompt: |
+%[9]s
 
   # Persisted filter overrides for TUI mode.
   # Set via the filter menu (alt+f) in the TUI.
@@ -619,15 +653,18 @@ output:
     # Example: two_approver_repos: ["my-org/critical-service"]
     two_approver_repos: []
 `,
-	valueAtMe,
-	defaultLimit,
-	valueTable,
-	valueName,
-	valueOpen,
-	vcsGit,
-	defaultSpinner,
-	`"`+strings.Join(defaultSpinnerColors, `", "`)+`"`,
-)
+		valueAtMe,
+		defaultLimit,
+		valueTable,
+		valueName,
+		valueOpen,
+		vcsGit,
+		defaultSpinner,
+		`"`+strings.Join(defaultSpinnerColors, `", "`)+`"`,
+		indentBlock(defaultClaudeReviewPromptTemplate(), promptBlockIndent),
+		"`{prNumber}`, `{repo}`, `{org}`, `{orgWithRepo}`, `{prURL}`, `{prRef}`, `{title}`",
+	)
+}()
 
 func initConfig() error {
 	cp, err := configPath()

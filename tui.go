@@ -50,6 +50,30 @@ func currentClaudeReviewLauncher() claudeReviewLauncher {
 
 func hasClaudeReviewLauncher() bool { return currentClaudeReviewLauncher() != claudeLauncherNone }
 
+type claudeReviewModel string
+
+const (
+	claudeReviewModelSonnet  claudeReviewModel = "sonnet"
+	claudeReviewModelOpus    claudeReviewModel = "opus"
+	defaultClaudeReviewModel                   = claudeReviewModelOpus
+
+	claudeReviewModelOptionLabel = "Model"
+)
+
+var claudeReviewModelChoices = []filterChoice{
+	{label: "sonnet", value: string(claudeReviewModelSonnet)},
+	{label: "opus", value: string(claudeReviewModelOpus)},
+}
+
+func normalizeClaudeReviewModel(model claudeReviewModel) claudeReviewModel {
+	switch model {
+	case claudeReviewModelSonnet, claudeReviewModelOpus:
+		return model
+	default:
+		return defaultClaudeReviewModel
+	}
+}
+
 // filterChoiceTrue/False are canonical string values for bool filter choices.
 const (
 	filterChoiceTrue  = "true"
@@ -107,6 +131,18 @@ var filterOptionDefs = [...]filterOptionDef{
 		{"none", valueReviewFilterNone},
 		{"all", ""},
 	}},
+}
+
+type confirmSubmission struct {
+	Input   string
+	Options map[string]string
+}
+
+func (s confirmSubmission) Option(label string) string {
+	if s.Options == nil {
+		return ""
+	}
+	return s.Options[label]
 }
 
 // tuiView tracks which view is active in the interactive TUI.
@@ -525,16 +561,20 @@ type tuiModel struct {
 	jumpID    int // timeout generation
 
 	// Pending confirmation (e.g. close/merge).
-	confirmAction     string               // "close", "merge", "diff"
-	confirmPrompt     string               // prompt text for modal
-	confirmSubject    string               // target description for progress (e.g. "data-team#8", "3 PRs")
-	confirmURL        string               // optional URL for hyperlinking the subject in progress
-	confirmCmd        tea.Cmd              // command to run on confirmation
-	confirmCmdFn      func(string) tea.Cmd // command factory when confirmHasInput (receives input value)
-	confirmYes        bool                 // true = Yes selected, false = No selected
-	confirmHasInput   bool                 // true when modal includes a text input
-	confirmInputLabel string               // label above the textarea (default: "Comment")
-	confirmInput      textarea.Model       // optional text input (e.g. close comment)
+	confirmAction     string  // "close", "merge", "diff"
+	confirmPrompt     string  // prompt text for modal
+	confirmSubject    string  // target description for progress (e.g. "data-team#8", "3 PRs")
+	confirmURL        string  // optional URL for hyperlinking the subject in progress
+	confirmCmd        tea.Cmd // command to run on confirmation
+	confirmCmdFn      func(confirmSubmission) tea.Cmd
+	confirmYes        bool              // true = Yes selected, false = No selected
+	confirmHasInput   bool              // true when modal includes a text input
+	confirmInputLabel string            // label above the textarea (default: "Comment")
+	confirmInput      textarea.Model    // optional text input (e.g. close comment)
+	confirmOptions    []filterOptionDef // optional selectable rows shown in confirm modal
+	confirmOptValues  []int             // selected choice per confirm option row
+	confirmOptCursor  int               // focused confirm option row
+	confirmOptFocus   bool              // true when confirm option rows have focus
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -757,6 +797,47 @@ func filterChoiceIndex(row filterRow, value string) int {
 		}
 	}
 	return 0
+}
+
+func choiceIndex(choices []filterChoice, value string) int {
+	for i, c := range choices {
+		if c.value == value {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m tuiModel) hasConfirmOptions() bool { return len(m.confirmOptions) > 0 }
+
+func (m tuiModel) selectedConfirmOptionValue(row int) string {
+	if row < 0 || row >= len(m.confirmOptions) {
+		return ""
+	}
+	choices := m.confirmOptions[row].choices
+	if len(choices) == 0 {
+		return ""
+	}
+	idx := 0
+	if row < len(m.confirmOptValues) {
+		idx = min(max(m.confirmOptValues[row], 0), len(choices)-1)
+	}
+	return choices[idx].value
+}
+
+func (m tuiModel) buildConfirmSubmission() confirmSubmission {
+	submission := confirmSubmission{
+		Input: strings.TrimSpace(m.confirmInput.Value()),
+	}
+	if !m.hasConfirmOptions() {
+		return submission
+	}
+
+	submission.Options = make(map[string]string, len(m.confirmOptions))
+	for i, def := range m.confirmOptions {
+		submission.Options[def.label] = m.selectedConfirmOptionValue(i)
+	}
+	return submission
 }
 
 func (m tuiModel) defaultStateValue() string {
@@ -1881,7 +1962,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmURL = targets[0].pr.URL
 			m.confirmPrompt = "Close " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
-			m.confirmCmdFn = func(comment string) tea.Cmd {
+			m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
+				comment := submission.Input
 				return func() tea.Msg {
 					owner, repo := prOwnerRepo(t.pr)
 					err := actions.closePR(owner, repo, t.pr.Number, comment, false)
@@ -1896,7 +1978,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("Close %d PRs?", len(targets))
-			m.confirmCmdFn = func(comment string) tea.Cmd {
+			m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
+				comment := submission.Input
 				return func() tea.Msg {
 					return runBatchAction(
 						actions,
@@ -1962,7 +2045,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmHasInput = true
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&prCopy) + "?"
-		m.confirmCmdFn = func(comment string) tea.Cmd {
+		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
+			comment := submission.Input
 			return func() tea.Msg {
 				owner, repo := prOwnerRepo(prCopy)
 				err := actions.comment(owner, repo, prCopy.Number, comment)
@@ -2015,9 +2099,9 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		idx := m.cursor
 		prCopy := *pr
-		prompt := defaultClaudeReviewPrompt(prCopy)
+		prompt := claudeReviewPrompt(prCopy, m.cfg)
 		return m, func() tea.Msg {
-			err := launchClaudeReview(prCopy, prompt)
+			err := launchClaudeReview(prCopy, prompt, defaultClaudeReviewModel)
 			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 
@@ -2457,7 +2541,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmHasInput = true
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Close " + styledRef(&pr) + "?"
-		m.confirmCmdFn = func(comment string) tea.Cmd {
+		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
+			comment := submission.Input
 			return func() tea.Msg {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.closePR(owner, repo, pr.Number, comment, false)
@@ -2507,7 +2592,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmHasInput = true
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&pr) + "?"
-		m.confirmCmdFn = func(comment string) tea.Cmd {
+		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
+			comment := submission.Input
 			return func() tea.Msg {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.comment(owner, repo, pr.Number, comment)
@@ -2879,7 +2965,8 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmHasInput = true
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&pr) + "?"
-		m.confirmCmdFn = func(comment string) tea.Cmd {
+		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
+			comment := submission.Input
 			return func() tea.Msg {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.comment(owner, repo, pr.Number, comment)
@@ -4687,7 +4774,7 @@ var confirmActionVerb = map[string]string{
 func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.confirmHasInput && m.confirmCmdFn != nil {
-		cmd = m.confirmCmdFn(strings.TrimSpace(m.confirmInput.Value()))
+		cmd = m.confirmCmdFn(m.buildConfirmSubmission())
 	} else {
 		cmd = m.confirmCmd
 	}
@@ -4730,11 +4817,35 @@ func newConfirmInput() textarea.Model {
 	ciStyles.Focused.Text = styleText
 	ciStyles.Focused.Placeholder = styleSubtle
 	ciStyles.Focused.CursorLine = lg.NewStyle()
-	ciStyles.Blurred.Text = styleSubtle
-	ciStyles.Blurred.CursorLine = lg.NewStyle()
+	ciStyles.Blurred.Text = styleText
+	ciStyles.Blurred.CursorLine = styleText
 	ciStyles.Cursor.Color = colorText
 	ci.SetStyles(ciStyles)
 	return ci
+}
+
+func (m tuiModel) focusConfirmOptions() tuiModel {
+	if !m.hasConfirmOptions() {
+		return m
+	}
+	m.confirmOptFocus = true
+	m.confirmInput.Blur()
+	return m
+}
+
+func (m tuiModel) focusConfirmInput() (tuiModel, tea.Cmd) {
+	m.confirmOptFocus = false
+	if !m.confirmHasInput {
+		return m, nil
+	}
+	return m, m.confirmInput.Focus()
+}
+
+func (m tuiModel) confirmInputWidth() int {
+	if m.confirmAction == tuiActionReview {
+		return tuiClaudeConfirmInputWidth
+	}
+	return tuiConfirmInputWidth
 }
 
 func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -4752,6 +4863,10 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case tuiKeyEsc:
 			return m.confirmDismiss()
+		case tuiKeyTab, tuiKeyShiftTab:
+			if m.hasConfirmOptions() {
+				return m.focusConfirmOptions(), nil
+			}
 		case tuiKeybindConfirmSubmit:
 			m.confirmYes = true
 			return m.confirmAccept()
@@ -4760,6 +4875,50 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmInput, cmd = m.confirmInput.Update(msg)
 			return m, cmd
 		}
+	}
+	if m.confirmOptFocus && m.hasConfirmOptions() {
+		switch msg.String() {
+		case tuiKeybindVimDown, tuiKeyDown:
+			m.confirmOptCursor = min(m.confirmOptCursor+1, len(m.confirmOptions)-1)
+		case tuiKeybindVimUp, tuiKeyUp:
+			m.confirmOptCursor = max(m.confirmOptCursor-1, 0)
+		case tuiKeybindVimRight, tuiKeyRight:
+			n := len(m.confirmOptions[m.confirmOptCursor].choices)
+			if n > 0 {
+				m.confirmOptValues[m.confirmOptCursor] = min(
+					m.confirmOptValues[m.confirmOptCursor]+1,
+					n-1,
+				)
+			}
+		case tuiKeySpace:
+			n := len(m.confirmOptions[m.confirmOptCursor].choices)
+			if n > 0 {
+				m.confirmOptValues[m.confirmOptCursor] = (m.confirmOptValues[m.confirmOptCursor] + 1) % n
+			}
+		case tuiKeybindVimLeft, tuiKeyLeft:
+			m.confirmOptValues[m.confirmOptCursor] = max(
+				m.confirmOptValues[m.confirmOptCursor]-1,
+				0,
+			)
+		case tuiKeyTab, tuiKeyShiftTab:
+			if m.confirmHasInput {
+				return m.focusConfirmInput()
+			}
+		case tuiKeybindConfirmSubmit, tuiKeybindConfirmYes:
+			m.confirmYes = true
+			return m.confirmAccept()
+		case tuiKeybindConfirmNo, tuiKeybindQuit, tuiKeyEsc:
+			return m.confirmDismiss()
+		case tuiKeyEnter:
+			if m.confirmHasInput {
+				return m.focusConfirmInput()
+			}
+			m.confirmYes = true
+			return m.confirmAccept()
+		default:
+			return m, nil
+		}
+		return m, nil
 	}
 	switch msg.String() {
 	case tuiKeyLeft, tuiKeyRight, tuiKeybindVimLeft, tuiKeybindVimRight, tuiKeySpace, tuiKeyTab:
@@ -4918,17 +5077,14 @@ func (m tuiModel) renderConfirmModal() string {
 			label = "Comment"
 		}
 		b.WriteString("\n\n")
-		b.WriteString(styleTitle.Bold(true).Render(label))
+		b.WriteString(m.renderConfirmOptions())
+		b.WriteString(m.styles.helpKey.Render(label))
 		b.WriteString("\n")
 		b.WriteString(m.confirmInput.View())
 		b.WriteString("\n\n")
-		helpKey := m.styles.helpKey
-		helpText := m.styles.helpText
-		hint := helpKey.Render(tuiKeybindConfirmSubmit) + " " + helpText.Render("submit") + "  " +
-			helpKey.Render("esc") + " " + helpText.Render("cancel")
-		b.WriteString(hint)
+		b.WriteString(m.renderConfirmInputHints())
 		// Fix width so the border stays aligned as the textarea grows.
-		boxWidth := tuiConfirmInputWidth + tuiConfirmPadX*2 //nolint:mnd // border + padding
+		boxWidth := m.confirmInputWidth() + tuiConfirmPadX*2 //nolint:mnd // border + padding
 		return m.styles.overlayBox.Width(boxWidth).Render(b.String())
 	}
 
@@ -4942,6 +5098,62 @@ func (m tuiModel) renderConfirmModal() string {
 		centered = strings.Repeat(" ", pad) + buttons
 	}
 	return m.styles.overlayBox.Render(content + centered)
+}
+
+func (m tuiModel) renderConfirmOptions() string {
+	if !m.hasConfirmOptions() {
+		return ""
+	}
+	return m.renderConfirmOptionsHeader()
+}
+
+func (m tuiModel) renderConfirmOptionsHeader() string {
+	var b strings.Builder
+	for i, def := range m.confirmOptions {
+		b.WriteString(m.styles.helpKey.Render(def.label))
+		b.WriteString("\n")
+
+		var choicesLine strings.Builder
+		for j, choice := range def.choices {
+			if j > 0 {
+				choicesLine.WriteString("  ")
+			}
+			if i < len(m.confirmOptValues) && m.confirmOptValues[i] == j {
+				choicesLine.WriteString(styleTitle.Bold(true).Render(choice.label))
+			} else {
+				choicesLine.WriteString(lg.NewStyle().Faint(true).Render(choice.label))
+			}
+		}
+		rendered := choicesLine.String()
+		if m.confirmOptFocus && i == m.confirmOptCursor {
+			b.WriteString(injectLineBackground(rendered, m.confirmInputWidth(), cursorLineBG))
+		} else {
+			b.WriteString(rendered)
+		}
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+func (m tuiModel) renderConfirmInputHints() string {
+	helpKey := m.styles.helpKey
+	helpText := m.styles.helpText
+
+	secondLine := []string{
+		helpKey.Render(tuiKeybindConfirmSubmit) + " " + helpText.Render("submit"),
+		helpKey.Render(tuiKeyEsc) + " " + helpText.Render("cancel"),
+	}
+	if !m.hasConfirmOptions() {
+		return strings.Join(secondLine, "  ")
+	}
+
+	firstLine := []string{
+		helpKey.Render(tuiKeyTab) + " " + helpText.Render("next"),
+		helpKey.Render(tuiKeyShiftTab) + " " + helpText.Render("prev"),
+		helpKey.Render("←/→") + " " + helpText.Render("select"),
+		helpKey.Render(tuiKeySpace) + " " + helpText.Render("cycle"),
+	}
+	return strings.Join(firstLine, "  ") + "\n" + strings.Join(secondLine, "  ")
 }
 
 func (m tuiModel) renderEmptyOverlay() string {
@@ -4986,6 +5198,11 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmCmdFn = nil
 	m.confirmHasInput = false
 	m.confirmInputLabel = ""
+	m.confirmOptions = nil
+	m.confirmOptValues = nil
+	m.confirmOptCursor = 0
+	m.confirmOptFocus = false
+	m.confirmInput.SetWidth(tuiConfirmInputWidth)
 	m.confirmInput.Blur()
 	m.confirmInput.SetValue("")
 	return m
@@ -4997,11 +5214,26 @@ func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmYes = true
 	m.confirmHasInput = true
 	m.confirmInputLabel = "Prompt"
-	m.confirmInput.SetValue(defaultClaudeReviewPrompt(pr))
+	m.confirmOptions = []filterOptionDef{{
+		label:   claudeReviewModelOptionLabel,
+		choices: claudeReviewModelChoices,
+	}}
+	m.confirmOptValues = []int{
+		choiceIndex(claudeReviewModelChoices, string(defaultClaudeReviewModel)),
+	}
+	m.confirmOptCursor = 0
+	m.confirmOptFocus = false
+	m.confirmInput.SetWidth(m.confirmInputWidth())
+	_ = m.confirmInput.Focus()
+	m.confirmInput.SetValue(claudeReviewPrompt(pr, m.cfg))
 	m.confirmPrompt = "Launch Claude review for " + styledRef(&prCopy) + "?"
-	m.confirmCmdFn = func(prompt string) tea.Cmd {
+	m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
+		prompt := submission.Input
+		model := normalizeClaudeReviewModel(
+			claudeReviewModel(submission.Option(claudeReviewModelOptionLabel)),
+		)
 		return func() tea.Msg {
-			err := launchClaudeReview(prCopy, prompt)
+			err := launchClaudeReview(prCopy, prompt, model)
 			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 	}
@@ -5206,13 +5438,16 @@ func highlightWithChroma(raw string) string {
 // launchClaudeReview opens a new terminal tab, clones the PR there, and
 // launches a Claude session in that tab. Cloning happens in the new tab
 // so SSH prompts and progress are visible to the user.
-func launchClaudeReview(pr PullRequest, prompt string) error {
+func launchClaudeReview(pr PullRequest, prompt string, model claudeReviewModel) error {
 	launcher := currentClaudeReviewLauncher()
 	if launcher == claudeLauncherNone {
 		return fmt.Errorf("unsupported terminal %q", os.Getenv("TERM_PROGRAM"))
 	}
 
-	script, err := buildClaudeReviewAppleScript(launcher, buildClaudeReviewCommand(pr, prompt))
+	script, err := buildClaudeReviewAppleScript(
+		launcher,
+		buildClaudeReviewCommand(pr, prompt, normalizeClaudeReviewModel(model)),
+	)
 	if err != nil {
 		return err
 	}
@@ -5229,19 +5464,7 @@ func launchClaudeReview(pr PullRequest, prompt string) error {
 	return nil
 }
 
-func defaultClaudeReviewPrompt(pr PullRequest) string {
-	nwo := pr.Repository.NameWithOwner
-	return fmt.Sprintf(
-		"Perform a comprehensive code review of PR #%d in %s. "+
-			"The PR branch is checked out. First read the PR context with: gh pr view %[1]d --repo %[2]s "+
-			"Then get the diff with: gh api repos/%[2]s/pulls/%[1]d -H 'Accept: application/vnd.github.v3.diff' "+
-			"Focus on: correctness, edge cases, error handling, performance, readability, and style. "+
-			"Be thorough but concise.",
-		pr.Number, nwo,
-	)
-}
-
-func buildClaudeReviewCommand(pr PullRequest, prompt string) string {
+func buildClaudeReviewCommand(pr PullRequest, prompt string, model claudeReviewModel) string {
 	nwo := pr.Repository.NameWithOwner
 
 	// Clone repo and checkout the PR ref in the new tab so the user sees
@@ -5254,11 +5477,13 @@ func buildClaudeReviewCommand(pr PullRequest, prompt string) string {
 		cacheHome = os.Getenv("HOME") + "/.cache"
 	}
 	reviewDir := fmt.Sprintf("%s/prl/reviews/%s/%d", cacheHome, pr.Repository.Name, pr.Number)
+	modelArg := "--model=" + string(normalizeClaudeReviewModel(model))
 	return fmt.Sprintf(
-		"/usr/bin/trash %[1]q 2>/dev/null; /bin/mkdir -p %[1]q && cd %[1]q && git clone --quiet --depth 1 %[2]q . && git fetch origin refs/pull/%[3]d/head:pr-%[3]d --no-tags && git checkout pr-%[3]d && claude --allowedTools 'Bash(gh:*)' --system-prompt %[4]q %[5]q",
+		"/usr/bin/trash %[1]q 2>/dev/null; /bin/mkdir -p %[1]q && cd %[1]q && git clone --quiet --depth 1 %[2]q . && git fetch origin refs/pull/%[3]d/head:pr-%[3]d --no-tags && git checkout pr-%[3]d && claude %[4]s --allowedTools 'Bash(gh:*)' --system-prompt %[5]q %[6]q",
 		reviewDir,
 		remote,
 		pr.Number,
+		modelArg,
 		"You are an expert code reviewer. Be thorough, precise, and actionable.",
 		prompt,
 	)

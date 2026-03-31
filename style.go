@@ -140,6 +140,9 @@ func (p *prl) prMergeStyle(pr PullRequest) lg.Style {
 		return p.prStateStyle(pr.State)
 	}
 	if pr.IsDraft {
+		if pr.MergeStatus == MergeStatusCIFailed {
+			return styleRed.Faint(true)
+		}
 		return styleDraft
 	}
 	switch pr.MergeStatus {

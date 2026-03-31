@@ -165,13 +165,14 @@ const (
 
 	tuiClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
 
-	tuiConfirmInputWidth     = 70
-	tuiConfirmInputMinHeight = 2
-	tuiConfirmInputMaxHeight = 30
-	tuiConfirmPadX           = 4
-	tuiConfirmPadY           = 2
-	tuiOptionsPadX           = 2
-	tuiOptionsPadY           = 1
+	tuiConfirmInputWidth       = 70
+	tuiClaudeConfirmInputWidth = 90
+	tuiConfirmInputMinHeight   = 2
+	tuiConfirmInputMaxHeight   = 30
+	tuiConfirmPadX             = 4
+	tuiConfirmPadY             = 2
+	tuiOptionsPadX             = 2
+	tuiOptionsPadY             = 1
 
 	tuiJumpTimeout    = 500 * time.Millisecond
 	tuiStatusFlash    = 5 * time.Second
@@ -195,6 +196,7 @@ const (
 	tuiKeyRight       = "right"
 	tuiKeySpace       = "space"
 	tuiKeyTab         = "tab"
+	tuiKeyShiftTab    = tuiModShift + tuiKeyTab
 	tuiKeyUp          = "up"
 
 	// Keybindings: actions.
