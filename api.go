@@ -43,6 +43,12 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 		return nil
 	}
 
+	if cli.Approve && a.gql != nil {
+		if err := ensureReviewDecisions(a.gql, prs); err != nil {
+			clog.Debug().Err(err).Msg("Failed to preload review decisions")
+		}
+	}
+
 	// Phase 1: Comments (if --comment without --close)
 	if cli.Comment != "" && !cli.Close {
 		if err := a.runParallel(prs, func(pr PullRequest) error {
@@ -121,7 +127,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 	}
 
 	if cli.Approve {
-		if err := a.approve(owner, repo, pr.Number); err != nil {
+		if err := a.approvePR(pr); err != nil {
 			errs = append(errs, fmt.Sprintf("approve %s: %v", pr.URL, err))
 		} else {
 			clog.Info().
@@ -273,32 +279,25 @@ func (a *ActionRunner) comment(owner, repo string, number int, body string) erro
 	return a.rest.Post(path, jsonBody(map[string]string{"body": body}), nil)
 }
 
-func (a *ActionRunner) approve(owner, repo string, number int) error {
+func (a *ActionRunner) approvePR(pr PullRequest) error {
+	owner, repo := prOwnerRepo(pr)
+
 	// Skip if the PR's overall review decision is already APPROVED.
-	if a.gql != nil {
-		var result struct {
-			Repository struct {
-				PullRequest struct {
-					ReviewDecision string `json:"reviewDecision"`
-				} `json:"pullRequest"`
-			} `json:"repository"`
-		}
-		query := `query($owner: String!, $repo: String!, $number: Int!) {
-			repository(owner: $owner, name: $repo) {
-				pullRequest(number: $number) {
-					reviewDecision
-				}
-			}
-		}`
-		vars := map[string]any{"owner": owner, "repo": repo, "number": number}
-		if err := a.gql.Do(query, vars, &result); err == nil {
-			if result.Repository.PullRequest.ReviewDecision == valueReviewApproved {
+	if pr.reviewDecisionLoaded && pr.ReviewDecision == valueReviewApproved {
+		return nil
+	}
+
+	if !pr.reviewDecisionLoaded && a.gql != nil && pr.NodeID != "" {
+		snapshot := []PullRequest{pr}
+		if err := ensureReviewDecisions(a.gql, snapshot); err == nil {
+			pr = snapshot[0]
+			if pr.reviewDecisionLoaded && pr.ReviewDecision == valueReviewApproved {
 				return nil
 			}
 		}
 	}
 
-	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, pr.Number)
 	return a.rest.Post(path, jsonBody(map[string]string{"event": "APPROVE"}), nil)
 }
 
@@ -320,24 +319,26 @@ func (a *ActionRunner) closePR(
 	}
 
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
-	if err := a.rest.Patch(path, jsonBody(map[string]string{"state": "closed"}), nil); err != nil {
+	var prData struct {
+		Head struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
+	}
+	var closeResult any
+	if deleteBranch {
+		closeResult = &prData
+	}
+	if err := a.rest.Patch(
+		path,
+		jsonBody(map[string]string{"state": "closed"}),
+		closeResult,
+	); err != nil {
 		return fmt.Errorf("close PR: %w", err)
 	}
-
-	if deleteBranch {
-		var prData struct {
-			Head struct {
-				Ref string `json:"ref"`
-			} `json:"head"`
-		}
-		if err := a.rest.Get(path, &prData); err != nil {
-			return fmt.Errorf("get head ref: %w", err)
-		}
-		if prData.Head.Ref != "" {
-			refPath := fmt.Sprintf("repos/%s/%s/git/refs/heads/%s", owner, repo, prData.Head.Ref)
-			if err := a.rest.Delete(refPath, nil); err != nil {
-				return fmt.Errorf("delete branch: %w", err)
-			}
+	if deleteBranch && prData.Head.Ref != "" {
+		refPath := fmt.Sprintf("repos/%s/%s/git/refs/heads/%s", owner, repo, prData.Head.Ref)
+		if err := a.rest.Delete(refPath, nil); err != nil {
+			return fmt.Errorf("delete branch: %w", err)
 		}
 	}
 
@@ -439,27 +440,74 @@ func (a *ActionRunner) fetchPRDetail(
 ) (PRDetail, error) {
 	var detail PRDetail
 
-	// Fetch body.
-	prPath := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
-	var pr struct {
-		Body           string `json:"body"`
-		MergeableState string `json:"mergeable_state"`
-	}
-	if err := a.rest.Get(prPath, &pr); err != nil {
-		return detail, err
-	}
-	detail.Body = pr.Body
-	detail.MergeableState = pr.MergeableState
+	var (
+		pr struct {
+			Body           string `json:"body"`
+			MergeableState string `json:"mergeable_state"`
+		}
+		reviews []struct {
+			User  struct{ Login string } `json:"user"`
+			State string                 `json:"state"`
+		}
+		files []struct {
+			Filename  string `json:"filename"`
+			Status    string `json:"status"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+		}
+		checks   []PRCheck
+		prErr    error
+		revErr   error
+		filesErr error
+	)
+
+	var wg sync.WaitGroup
+
+	// Fetch body + mergeable state.
+	wg.Go(func() {
+		prPath := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
+		prErr = a.rest.Get(prPath, &pr)
+	})
 
 	// Fetch reviews.
-	reviewPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)
-	var reviews []struct {
-		User  struct{ Login string } `json:"user"`
-		State string                 `json:"state"`
+	wg.Go(func() {
+		reviewPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)
+		revErr = a.rest.Get(reviewPath, &reviews)
+	})
+
+	// Fetch changed files.
+	wg.Go(func() {
+		filesPath := fmt.Sprintf("repos/%s/%s/pulls/%d/files", owner, repo, number)
+		filesErr = a.rest.Get(filesPath, &files)
+	})
+
+	// Fetch checks (GraphQL, optional).
+	if nodeID != "" {
+		wg.Go(func() {
+			var err error
+			checks, err = a.fetchChecksGraphQL(nodeID)
+			if err != nil {
+				clog.Debug().Err(err).Str("node_id", nodeID).Msg("Failed to fetch detail checks")
+			}
+		})
 	}
-	if err := a.rest.Get(reviewPath, &reviews); err != nil {
-		return detail, err
+
+	wg.Wait()
+
+	if prErr != nil {
+		return detail, prErr
 	}
+	if revErr != nil {
+		return detail, revErr
+	}
+	if filesErr != nil {
+		return detail, filesErr
+	}
+
+	detail.Body = pr.Body
+	detail.MergeableState = pr.MergeableState
+	detail.Checks = checks
+
 	// Keep only the latest review per user.
 	seen := make(map[string]int)
 	for _, r := range reviews {
@@ -471,26 +519,6 @@ func (a *ActionRunner) fetchPRDetail(
 		}
 	}
 
-	if nodeID != "" {
-		checks, err := a.fetchChecksGraphQL(nodeID)
-		if err != nil {
-			clog.Debug().Err(err).Str("node_id", nodeID).Msg("Failed to fetch detail checks")
-		} else {
-			detail.Checks = checks
-		}
-	}
-
-	// Fetch changed files.
-	filesPath := fmt.Sprintf("repos/%s/%s/pulls/%d/files", owner, repo, number)
-	var files []struct {
-		Filename  string `json:"filename"`
-		Status    string `json:"status"`
-		Additions int    `json:"additions"`
-		Deletions int    `json:"deletions"`
-	}
-	if err := a.rest.Get(filesPath, &files); err != nil {
-		return detail, err
-	}
 	detail.Files = make([]PRFile, len(files))
 	for i, f := range files {
 		detail.Files[i] = PRFile{

@@ -26,9 +26,16 @@ type cloneTarget struct {
 // It uses the SSH remote format (git@github.com:org/repo) and the VCS
 // configured via PRL_VCS (default: git).
 // When a repo has exactly one PR, the PR's head branch is checked out via --branch.
-func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string) error {
+func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool) error {
 	ctx := context.Background()
-	targets := buildCloneTargets(rest, prs)
+	var gql *api.GraphQLClient
+	if client, err := newGraphQLClient(withDebug(debug)); err == nil {
+		gql = client
+	} else {
+		clog.Debug().Err(err).Msg("Skipping GraphQL branch resolution")
+	}
+
+	targets := buildCloneTargets(rest, gql, prs)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -42,11 +49,19 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string) error {
 	// prLink returns the clog key, URL, and display label for a target.
 	// Single-PR targets render as pr=repo#123 linking to the PR;
 	// multi-PR targets render as repo=repo linking to the repo.
-	prLink := func(t cloneTarget) (key, url, label string) {
+	prLink := func(t cloneTarget) (string, string, string) {
 		repoURL := "https://github.com/" + t.NameWithOwner
 		name := displayName(t.NameWithOwner)
 		if t.Number > 0 {
-			return "pr", fmt.Sprintf("%s/pull/%d", repoURL, t.Number), fmt.Sprintf("%s#%d", name, t.Number)
+			return "pr", fmt.Sprintf(
+					"%s/pull/%d",
+					repoURL,
+					t.Number,
+				), fmt.Sprintf(
+					"%s#%d",
+					name,
+					t.Number,
+				)
 		}
 		return "repo", repoURL, name
 	}
@@ -160,8 +175,108 @@ func runClone(ctx context.Context, remote, branch, dir string, useJJ bool) error
 	return nil
 }
 
-// buildCloneTargets groups PRs by repo and resolves branch names for single-PR repos in parallel.
-func buildCloneTargets(rest *api.RESTClient, prs []PullRequest) []cloneTarget {
+func fetchHeadBranchesGraphQL(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+) (map[string]string, error) {
+	if gql == nil || len(prs) == 0 {
+		return map[string]string{}, nil
+	}
+
+	ids := make([]string, 0, len(prs))
+	repoByID := make(map[string]string, len(prs))
+	for _, pr := range prs {
+		if pr.NodeID == "" {
+			continue
+		}
+		ids = append(ids, pr.NodeID)
+		repoByID[pr.NodeID] = pr.Repository.NameWithOwner
+	}
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+
+	var result struct {
+		Nodes []struct {
+			ID          string `json:"id"`
+			HeadRefName string `json:"headRefName"`
+		} `json:"nodes"`
+	}
+
+	if err := gql.Do(
+		`query HeadRefNames($ids: [ID!]!) {
+			nodes(ids: $ids) {
+				... on PullRequest {
+					id
+					headRefName
+				}
+			}
+		}`,
+		map[string]any{"ids": ids},
+		&result,
+	); err != nil {
+		return nil, fmt.Errorf("querying head branch names: %w", err)
+	}
+
+	branches := make(map[string]string, len(result.Nodes))
+	for _, node := range result.Nodes {
+		nwo := repoByID[node.ID]
+		if nwo == "" {
+			continue
+		}
+		branches[nwo] = node.HeadRefName
+	}
+	return branches, nil
+}
+
+func fetchMissingHeadBranchesREST(
+	rest *api.RESTClient,
+	prs []PullRequest,
+	branches map[string]string,
+) {
+	type branchResult struct {
+		nwo    string
+		branch string
+	}
+
+	var missing []PullRequest
+	for _, pr := range prs {
+		if branches[pr.Repository.NameWithOwner] == "" {
+			missing = append(missing, pr)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	var wg sync.WaitGroup
+	results := make(chan branchResult, len(missing))
+
+	for _, pr := range missing {
+		wg.Add(1)
+		go func(pr PullRequest) {
+			defer wg.Done()
+			results <- branchResult{
+				nwo:    pr.Repository.NameWithOwner,
+				branch: fetchHeadBranch(rest, pr.Repository.NameWithOwner, pr.Number),
+			}
+		}(pr)
+	}
+
+	wg.Wait()
+	close(results)
+
+	for result := range results {
+		branches[result.nwo] = result.branch
+	}
+}
+
+// buildCloneTargets groups PRs by repo and resolves branch names for single-PR repos.
+func buildCloneTargets(
+	rest *api.RESTClient,
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+) []cloneTarget {
 	// Group PRs by NameWithOwner
 	grouped := make(map[string][]PullRequest)
 	var order []string
@@ -174,37 +289,25 @@ func buildCloneTargets(rest *api.RESTClient, prs []PullRequest) []cloneTarget {
 	}
 	sort.Strings(order)
 
-	// Identify which repos need branch resolution
-	type branchResult struct {
-		nwo    string
-		branch string
-	}
-
-	var wg sync.WaitGroup
-	results := make(chan branchResult, len(order))
-
+	singlePRs := make([]PullRequest, 0, len(order))
 	for _, nwo := range order {
 		repoPRs := grouped[nwo]
 		if len(repoPRs) == 1 {
-			wg.Add(1)
-			go func(nameWithOwner string, number int) {
-				defer wg.Done()
-				results <- branchResult{
-					nwo:    nameWithOwner,
-					branch: fetchHeadBranch(rest, nameWithOwner, number),
-				}
-			}(nwo, repoPRs[0].Number)
+			singlePRs = append(singlePRs, repoPRs[0])
 		}
 	}
 
-	wg.Wait()
-	close(results)
-
-	// Collect branch results into a map
-	branches := make(map[string]string)
-	for r := range results {
-		branches[r.nwo] = r.branch
+	branches := make(map[string]string, len(singlePRs))
+	if gql != nil {
+		resolved, err := fetchHeadBranchesGraphQL(gql, singlePRs)
+		if err != nil {
+			clog.Debug().Err(err).Msg("Failed to fetch head branches via GraphQL")
+		} else {
+			branches = resolved
+		}
 	}
+
+	fetchMissingHeadBranchesREST(rest, singlePRs, branches)
 
 	targets := make([]cloneTarget, 0, len(order))
 	for _, nwo := range order {

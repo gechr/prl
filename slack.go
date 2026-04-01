@@ -177,8 +177,10 @@ func slackRecipientForRepo(repo string, recipients slackRecipients) string {
 // Automerge status is enriched on-demand for accurate reactions.
 func sendSlack(cli *CLI, cfg *Config, prs []PullRequest) (string, error) {
 	// Enrich automerge status so renderSlack can compute reactions.
-	if gql, err := newGraphQLClient(withDebug(cli.Debug)); err == nil {
-		_ = enrichAutomerge(gql, prs)
+	if !allAutomergeLoaded(prs) {
+		if gql, err := newGraphQLClient(withDebug(cli.Debug)); err == nil {
+			_ = enrichAutomerge(gql, prs)
+		}
 	}
 
 	if cli.SendTo != "" {

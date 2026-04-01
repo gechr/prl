@@ -57,6 +57,101 @@ func TestFilterByDrift(t *testing.T) {
 	require.Len(t, got, 1, "filterByDrift(=0)")
 }
 
+func TestAllAutomergeLoaded(t *testing.T) {
+	prs := []PullRequest{
+		{automergeLoaded: true},
+		{automergeLoaded: true},
+	}
+	require.True(t, allAutomergeLoaded(prs))
+
+	prs[1].automergeLoaded = false
+	require.False(t, allAutomergeLoaded(prs))
+}
+
+func TestFilterByAutomergeState(t *testing.T) {
+	prs := []PullRequest{
+		{URL: "https://example.com/1", Automerge: true},
+		{URL: "https://example.com/2", Automerge: false},
+		{URL: "https://example.com/3", Automerge: true},
+	}
+
+	enabled := filterByAutomergeState(prs, true)
+	require.Len(t, enabled, 2)
+	require.Equal(t, "https://example.com/1", enabled[0].URL)
+	require.Equal(t, "https://example.com/3", enabled[1].URL)
+
+	disabled := filterByAutomergeState(prs, false)
+	require.Len(t, disabled, 1)
+	require.Equal(t, "https://example.com/2", disabled[0].URL)
+}
+
+func TestAllReviewDecisionsLoaded(t *testing.T) {
+	prs := []PullRequest{
+		{reviewDecisionLoaded: true},
+		{reviewDecisionLoaded: true},
+	}
+	require.True(t, allReviewDecisionsLoaded(prs))
+
+	prs[0].reviewDecisionLoaded = false
+	require.False(t, allReviewDecisionsLoaded(prs))
+}
+
+func TestApplyReviewDecisions(t *testing.T) {
+	prs := []PullRequest{
+		{NodeID: "pr-1"},
+		{NodeID: "pr-2"},
+	}
+
+	applyReviewDecisions(prs, map[string]string{
+		"pr-1": valueReviewApproved,
+		"pr-2": valueReviewChanges,
+	})
+
+	require.Equal(t, valueReviewApproved, prs[0].ReviewDecision)
+	require.True(t, prs[0].reviewDecisionLoaded)
+	require.Equal(t, valueReviewChanges, prs[1].ReviewDecision)
+	require.True(t, prs[1].reviewDecisionLoaded)
+}
+
+func TestFilterByTimelineActorsLoaded(t *testing.T) {
+	prs := []PullRequest{
+		{
+			NodeID: "pr-1",
+			URL:    "https://example.com/1",
+		},
+		{
+			NodeID: "pr-2",
+			URL:    "https://example.com/2",
+		},
+		{
+			NodeID: "pr-3",
+			URL:    "https://example.com/3",
+		},
+	}
+
+	actors := timelineActors{
+		closed: map[string]string{
+			"pr-1": "alice",
+			"pr-2": "bob",
+			"pr-3": "alice",
+		},
+		merged: map[string]string{
+			"pr-1": "carol",
+			"pr-2": "carol",
+			"pr-3": "dave",
+		},
+	}
+
+	filtered := filterByTimelineActorsLoaded(
+		prs,
+		map[string]bool{"alice": true},
+		map[string]bool{"carol": true},
+		actors,
+	)
+	require.Len(t, filtered, 1)
+	require.Equal(t, "pr-1", filtered[0].NodeID)
+}
+
 func TestSortPRs(t *testing.T) {
 	now := time.Now().UTC()
 	prs := []PullRequest{

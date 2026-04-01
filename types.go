@@ -52,20 +52,24 @@ type Label struct {
 
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
-	Automerge   bool        `json:"automerge"`
-	Author      Author      `json:"author"`
-	CreatedAt   time.Time   `json:"createdAt"`
-	IsDraft     bool        `json:"draft"`
-	Labels      []Label     `json:"labels"`
-	MergeStatus MergeStatus `json:"mergeStatus"`
-	NodeID      string      `json:"-"`
-	Number      int         `json:"number"`
-	Repository  Repository  `json:"repository"`
-	State       string      `json:"state"`
-	Title       string      `json:"title"`
-	TitleRaw    string      `json:"-"`
-	UpdatedAt   time.Time   `json:"updatedAt"`
-	URL         string      `json:"url"`
+	Automerge      bool        `json:"automerge"`
+	Author         Author      `json:"author"`
+	CreatedAt      time.Time   `json:"createdAt"`
+	IsDraft        bool        `json:"draft"`
+	Labels         []Label     `json:"labels"`
+	MergeStatus    MergeStatus `json:"mergeStatus"`
+	NodeID         string      `json:"-"`
+	Number         int         `json:"number"`
+	ReviewDecision string      `json:"-"`
+	Repository     Repository  `json:"repository"`
+	State          string      `json:"state"`
+	Title          string      `json:"title"`
+	TitleRaw       string      `json:"-"`
+	UpdatedAt      time.Time   `json:"updatedAt"`
+	URL            string      `json:"url"`
+
+	automergeLoaded      bool
+	reviewDecisionLoaded bool
 }
 
 // refSingleOrg is set when all results belong to a single org,

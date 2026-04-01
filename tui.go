@@ -1743,8 +1743,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		setupConfirmBatch(&m, targets, tuiActionApprove, tuiActionApproved, "Approve",
 			func(a *ActionRunner, pr PullRequest) error {
-				owner, repo := prOwnerRepo(pr)
-				return a.approve(owner, repo, pr.Number)
+				return a.approvePR(pr)
 			})
 		return m, nil
 
@@ -1755,8 +1754,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, batchCmd(m.actions, targets, tuiActionApproved,
 			func(a *ActionRunner, pr PullRequest) error {
-				owner, repo := prOwnerRepo(pr)
-				return a.approve(owner, repo, pr.Number)
+				return a.approvePR(pr)
 			})
 
 	case tuiKeybindDiff:
@@ -1855,7 +1853,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
 				owner, repo := prOwnerRepo(t.pr)
-				if err := actions.approve(owner, repo, t.pr.Number); err != nil {
+				if err := actions.approvePR(t.pr); err != nil {
 					return actionMsg{
 						index:  t.index,
 						key:    makePRKey(t.pr),
@@ -1881,7 +1879,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					tuiActionMerged,
 					func(a *ActionRunner, pr PullRequest) error {
 						owner, repo := prOwnerRepo(pr)
-						if err := a.approve(owner, repo, pr.Number); err != nil {
+						if err := a.approvePR(pr); err != nil {
 							return err
 						}
 						_, err := a.mergeOrAutomerge(owner, repo, pr)
@@ -2497,8 +2495,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		flashPending(&m, statusApproving, &pr)
 		actions := m.actions
 		approveCmd := func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			err := actions.approve(owner, repo, pr.Number)
+			err := actions.approvePR(pr)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
 		// If there's a next item in queue, prefetch it in parallel with the approve.
@@ -2696,7 +2693,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
-			if err := actions.approve(owner, repo, pr.Number); err != nil {
+			if err := actions.approvePR(pr); err != nil {
 				return actionMsg{
 					index:  idx,
 					key:    makePRKey(pr),
@@ -2866,8 +2863,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmYes = true
 		m.confirmPrompt = "Approve " + styledRef(&pr) + "?"
 		m.confirmCmd = func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			err := actions.approve(owner, repo, pr.Number)
+			err := actions.approvePR(pr)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		}
 		return m, refreshCmd
@@ -2885,8 +2881,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		actions := m.actions
 		refreshCmd := m.exitDetailView()
 		return m, tea.Batch(refreshCmd, func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			err := actions.approve(owner, repo, pr.Number)
+			err := actions.approvePR(pr)
 			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
 		})
 	case tuiKeybindMerge:

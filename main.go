@@ -497,28 +497,13 @@ func buildOutput(
 		}
 	}
 
-	// Post-fetch filter: --closed-by
-	if len(cli.ClosedBy.Values) > 0 {
+	// Post-fetch filters: --closed-by, --merged-by
+	if len(cli.ClosedBy.Values) > 0 || len(cli.MergedBy.Values) > 0 {
 		g, gqlErr := getGQL()
 		if gqlErr != nil {
 			return "", nil, gqlErr
 		}
-		prs, err = filterByClosedBy(rest, g, prs, cli.ClosedBy.Values)
-		if err != nil {
-			return "", nil, err
-		}
-		if len(prs) == 0 {
-			return "", nil, nil
-		}
-	}
-
-	// Post-fetch filter: --merged-by
-	if len(cli.MergedBy.Values) > 0 {
-		g, gqlErr := getGQL()
-		if gqlErr != nil {
-			return "", nil, gqlErr
-		}
-		prs, err = filterByMergedBy(rest, g, prs, cli.MergedBy.Values)
+		prs, err = filterByTimelineActors(rest, g, prs, cli.ClosedBy.Values, cli.MergedBy.Values)
 		if err != nil {
 			return "", nil, err
 		}
@@ -676,28 +661,13 @@ func runOnce(
 		}
 	}
 
-	// Post-fetch filter: --closed-by
-	if len(cli.ClosedBy.Values) > 0 {
+	// Post-fetch filters: --closed-by, --merged-by
+	if len(cli.ClosedBy.Values) > 0 || len(cli.MergedBy.Values) > 0 {
 		g, gqlErr := getGQL()
 		if gqlErr != nil {
 			return "", gqlErr
 		}
-		prs, err = filterByClosedBy(rest, g, prs, cli.ClosedBy.Values)
-		if err != nil {
-			return "", err
-		}
-		if len(prs) == 0 {
-			return "", nil
-		}
-	}
-
-	// Post-fetch filter: --merged-by
-	if len(cli.MergedBy.Values) > 0 {
-		g, gqlErr := getGQL()
-		if gqlErr != nil {
-			return "", gqlErr
-		}
-		prs, err = filterByMergedBy(rest, g, prs, cli.MergedBy.Values)
+		prs, err = filterByTimelineActors(rest, g, prs, cli.ClosedBy.Values, cli.MergedBy.Values)
 		if err != nil {
 			return "", err
 		}
@@ -819,7 +789,7 @@ func runOnce(
 		if stopSpinner != nil {
 			stopSpinner()
 		}
-		return "", cloneRepos(rest, prs, cfg.VCS)
+		return "", cloneRepos(rest, prs, cfg.VCS, cli.Debug)
 	}
 
 	// Non-interactive actions: pass PRs directly
@@ -869,7 +839,7 @@ func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow
 
 	// Clone repos
 	if cli.Clone {
-		return cloneRepos(rest, selectedPRs, cfg.VCS)
+		return cloneRepos(rest, selectedPRs, cfg.VCS, cli.Debug)
 	}
 
 	// Run actions first (approve, merge, close, etc.)
@@ -906,6 +876,7 @@ func runActions(cli *CLI, rest *api.RESTClient, prs []PullRequest) error {
 	if cli.Merge != nil {
 		for i := range prs {
 			prs[i].Automerge = *cli.Merge
+			prs[i].automergeLoaded = true
 		}
 	}
 	return nil

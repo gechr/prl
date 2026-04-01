@@ -65,7 +65,8 @@ func requireOwnAuthor(rest *api.RESTClient, authors []string) error {
 // only when the CLI flags require one.
 func newActionRunner(cli *CLI, rest *api.RESTClient) (*ActionRunner, error) {
 	var gql *api.GraphQLClient
-	if cli.ForceMerge || cli.MarkDraft || cli.MarkReady || cli.Merge != nil || cli.Unsubscribe {
+	if cli.Approve || cli.ForceMerge || cli.MarkDraft || cli.MarkReady || cli.Merge != nil ||
+		cli.Unsubscribe {
 		var err error
 		gql, err = newGraphQLClient(withDebug(cli.Debug))
 		if err != nil {

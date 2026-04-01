@@ -10,6 +10,11 @@ import (
 	"github.com/gechr/clog"
 )
 
+type timelineActors struct {
+	closed map[string]string
+	merged map[string]string
+}
+
 // applyFilters applies local filters (bots, drift) and sorts PRs.
 func applyFilters(cli *CLI, prs []PullRequest) ([]PullRequest, error) {
 	if cli.NoBot {
@@ -82,16 +87,18 @@ func filterByDrift(prs []PullRequest, op string, threshold int64) []PullRequest 
 	return result
 }
 
-// filterByAutomerge queries automerge status via GraphQL and filters PRs.
-// When wantEnabled is true, only PRs WITH automerge are kept (for --no-merge).
-// When wantEnabled is false, only PRs WITHOUT automerge are kept (for --merge).
-func filterByAutomerge(
-	gql *api.GraphQLClient,
-	prs []PullRequest,
-	wantEnabled bool,
-) ([]PullRequest, error) {
+func allAutomergeLoaded(prs []PullRequest) bool {
+	for _, pr := range prs {
+		if !pr.automergeLoaded {
+			return false
+		}
+	}
+	return len(prs) > 0
+}
+
+func fetchAutomergeStatus(gql *api.GraphQLClient, prs []PullRequest) (map[string]bool, error) {
 	if len(prs) == 0 {
-		return prs, nil
+		return map[string]bool{}, nil
 	}
 
 	ids := make([]string, len(prs))
@@ -128,14 +135,25 @@ func filterByAutomerge(
 		enabled[node.ID] = node.AutomergeRequest != nil
 	}
 
+	return enabled, nil
+}
+
+func applyAutomergeStatus(prs []PullRequest, enabled map[string]bool) {
+	for i := range prs {
+		prs[i].Automerge = enabled[prs[i].NodeID]
+		prs[i].automergeLoaded = true
+	}
+}
+
+func filterByAutomergeState(prs []PullRequest, wantEnabled bool) []PullRequest {
 	filtered := make([]PullRequest, 0, len(prs))
 	for _, pr := range prs {
-		if enabled[pr.NodeID] == wantEnabled {
+		if pr.Automerge == wantEnabled {
 			filtered = append(filtered, pr)
 		} else {
 			clog.Debug().
 				Link("pr", pr.URL, pr.Ref()).
-				Bool("automerge", enabled[pr.NodeID]).
+				Bool("automerge", pr.Automerge).
 				Msg("Filtered out")
 		}
 	}
@@ -146,7 +164,127 @@ func filterByAutomerge(
 		Bool("want-automerge", wantEnabled).
 		Msg("Automerge filter applied")
 
-	return filtered, nil
+	return filtered
+}
+
+func allReviewDecisionsLoaded(prs []PullRequest) bool {
+	for _, pr := range prs {
+		if !pr.reviewDecisionLoaded {
+			return false
+		}
+	}
+	return len(prs) > 0
+}
+
+func fetchReviewDecisions(gql *api.GraphQLClient, prs []PullRequest) (map[string]string, error) {
+	if len(prs) == 0 {
+		return map[string]string{}, nil
+	}
+
+	ids := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		if pr.NodeID == "" {
+			continue
+		}
+		ids = append(ids, pr.NodeID)
+	}
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+
+	var result struct {
+		Nodes []struct {
+			ID             string  `json:"id"`
+			ReviewDecision *string `json:"reviewDecision"`
+		} `json:"nodes"`
+	}
+
+	if err := gql.Do(
+		`query ReviewDecisions($ids: [ID!]!) {
+			nodes(ids: $ids) {
+				... on PullRequest {
+					id
+					reviewDecision
+				}
+			}
+		}`,
+		map[string]any{"ids": ids},
+		&result,
+	); err != nil {
+		return nil, fmt.Errorf("querying review decisions: %w", err)
+	}
+
+	decisions := make(map[string]string, len(ids))
+	for _, node := range result.Nodes {
+		if node.ReviewDecision != nil {
+			decisions[node.ID] = *node.ReviewDecision
+			continue
+		}
+		decisions[node.ID] = ""
+	}
+	for _, id := range ids {
+		if _, ok := decisions[id]; !ok {
+			decisions[id] = ""
+		}
+	}
+
+	return decisions, nil
+}
+
+func applyReviewDecisions(prs []PullRequest, decisions map[string]string) {
+	for i := range prs {
+		decision, ok := decisions[prs[i].NodeID]
+		if !ok {
+			continue
+		}
+		prs[i].ReviewDecision = decision
+		prs[i].reviewDecisionLoaded = true
+	}
+}
+
+func ensureReviewDecisions(gql *api.GraphQLClient, prs []PullRequest) error {
+	if len(prs) == 0 || allReviewDecisionsLoaded(prs) {
+		return nil
+	}
+
+	missing := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.reviewDecisionLoaded || pr.NodeID == "" {
+			continue
+		}
+		missing = append(missing, pr)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	decisions, err := fetchReviewDecisions(gql, missing)
+	if err != nil {
+		return err
+	}
+	applyReviewDecisions(prs, decisions)
+	return nil
+}
+
+// filterByAutomerge queries automerge status via GraphQL and filters PRs.
+// When wantEnabled is true, only PRs WITH automerge are kept (for --no-merge).
+// When wantEnabled is false, only PRs WITHOUT automerge are kept (for --merge).
+func filterByAutomerge(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	wantEnabled bool,
+) ([]PullRequest, error) {
+	if len(prs) == 0 {
+		return prs, nil
+	}
+	if !allAutomergeLoaded(prs) {
+		enabled, err := fetchAutomergeStatus(gql, prs)
+		if err != nil {
+			return nil, err
+		}
+		applyAutomergeStatus(prs, enabled)
+	}
+	return filterByAutomergeState(prs, wantEnabled), nil
 }
 
 // applyTimelineFilters applies --closed-by and --merged-by post-fetch filters.
@@ -164,77 +302,94 @@ func applyTimelineFilters(rest *api.RESTClient, cli *CLI, prs []PullRequest) []P
 		clog.Debug().Err(err).Msg("skipping timeline filters")
 		return prs
 	}
-	if len(cli.ClosedBy.Values) > 0 {
-		if filtered, fErr := filterByClosedBy(rest, gql, prs, cli.ClosedBy.Values); fErr == nil {
-			prs = filtered
-		} else {
-			clog.Debug().Err(fErr).Msg("closed-by filter failed")
-		}
+	filtered, fErr := filterByTimelineActors(
+		rest,
+		gql,
+		prs,
+		cli.ClosedBy.Values,
+		cli.MergedBy.Values,
+	)
+	if fErr != nil {
+		clog.Debug().Err(fErr).Msg("timeline filters failed")
+		return prs
 	}
-	if len(cli.MergedBy.Values) > 0 {
-		if filtered, fErr := filterByMergedBy(rest, gql, prs, cli.MergedBy.Values); fErr == nil {
-			prs = filtered
-		} else {
-			clog.Debug().Err(fErr).Msg("merged-by filter failed")
-		}
-	}
-	return prs
+	return filtered
 }
 
-// filterByClosedBy keeps only PRs closed by one of the specified logins.
-func filterByClosedBy(
-	rest *api.RESTClient, gql *api.GraphQLClient, prs []PullRequest, logins []string,
-) ([]PullRequest, error) {
-	return filterByTimelineActor(rest, gql, prs, logins, timelineFilter{
-		itemType:  "CLOSED_EVENT",
-		fragment:  "ClosedEvent",
-		queryName: "ClosedBy",
-		label:     "closed-by",
-	})
-}
-
-// filterByMergedBy keeps only PRs merged by one of the specified logins.
-func filterByMergedBy(
-	rest *api.RESTClient, gql *api.GraphQLClient, prs []PullRequest, logins []string,
-) ([]PullRequest, error) {
-	return filterByTimelineActor(rest, gql, prs, logins, timelineFilter{
-		itemType:  "MERGED_EVENT",
-		fragment:  "MergedEvent",
-		queryName: "MergedBy",
-		label:     "merged-by",
-	})
-}
-
-type timelineFilter struct {
-	itemType  string // e.g. "CLOSED_EVENT"
-	fragment  string // e.g. "ClosedEvent"
-	queryName string // GraphQL query name
-	label     string // log label
-}
-
-// filterByTimelineActor is the shared implementation for closed-by and merged-by filters.
-func filterByTimelineActor(
-	rest *api.RESTClient,
-	gql *api.GraphQLClient,
-	prs []PullRequest,
-	logins []string,
-	tf timelineFilter,
-) ([]PullRequest, error) {
-	if len(prs) == 0 || len(logins) == 0 {
-		return prs, nil
+func resolveTimelineLogins(rest *api.RESTClient, logins []string) (map[string]bool, error) {
+	if len(logins) == 0 {
+		return map[string]bool{}, nil
 	}
 
 	resolved := make(map[string]bool, len(logins))
-	for _, l := range logins {
-		if l == valueAtMe {
-			login, err := getCurrentLogin(rest)
-			if err != nil {
-				return nil, fmt.Errorf("resolving %s: %w", valueAtMe, err)
+	var currentLogin string
+	var haveCurrentLogin bool
+
+	for _, login := range logins {
+		if strings.EqualFold(login, valueAtMe) {
+			if !haveCurrentLogin {
+				var err error
+				currentLogin, err = getCurrentLogin(rest)
+				if err != nil {
+					return nil, fmt.Errorf("resolving %s: %w", valueAtMe, err)
+				}
+				haveCurrentLogin = true
 			}
-			resolved[strings.ToLower(login)] = true
-		} else {
-			resolved[strings.ToLower(l)] = true
+			resolved[strings.ToLower(currentLogin)] = true
+			continue
 		}
+		resolved[strings.ToLower(login)] = true
+	}
+
+	return resolved, nil
+}
+
+func filterByTimelineActorsLoaded(
+	prs []PullRequest,
+	closedAllowed map[string]bool,
+	mergedAllowed map[string]bool,
+	actors timelineActors,
+) []PullRequest {
+	filtered := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if len(closedAllowed) > 0 && !closedAllowed[actors.closed[pr.NodeID]] {
+			clog.Debug().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("actor", actors.closed[pr.NodeID]).
+				Msg("Filtered by closed-by")
+			continue
+		}
+		if len(mergedAllowed) > 0 && !mergedAllowed[actors.merged[pr.NodeID]] {
+			clog.Debug().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("actor", actors.merged[pr.NodeID]).
+				Msg("Filtered by merged-by")
+			continue
+		}
+		filtered = append(filtered, pr)
+	}
+	return filtered
+}
+
+// filterByTimelineActors batches closed-by and merged-by actor lookups into one GraphQL query.
+func filterByTimelineActors(
+	rest *api.RESTClient,
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	closedLogins []string,
+	mergedLogins []string,
+) ([]PullRequest, error) {
+	if len(prs) == 0 || (len(closedLogins) == 0 && len(mergedLogins) == 0) {
+		return prs, nil
+	}
+
+	closedAllowed, err := resolveTimelineLogins(rest, closedLogins)
+	if err != nil {
+		return nil, err
+	}
+	mergedAllowed, err := resolveTimelineLogins(rest, mergedLogins)
+	if err != nil {
+		return nil, err
 	}
 
 	ids := make([]string, len(prs))
@@ -244,108 +399,92 @@ func filterByTimelineActor(
 
 	var result struct {
 		Nodes []struct {
-			ID            string `json:"id"`
-			TimelineItems struct {
+			ID     string `json:"id"`
+			Closed struct {
 				Nodes []struct {
 					Actor struct {
 						Login string `json:"login"`
 					} `json:"actor"`
 				} `json:"nodes"`
-			} `json:"timelineItems"`
+			} `json:"closed"`
+			Merged struct {
+				Nodes []struct {
+					Actor struct {
+						Login string `json:"login"`
+					} `json:"actor"`
+				} `json:"nodes"`
+			} `json:"merged"`
 		} `json:"nodes"`
 	}
 
+	var fields []string
+	if len(closedAllowed) > 0 {
+		fields = append(fields, `closed: timelineItems(itemTypes: [CLOSED_EVENT], last: 1) {
+			nodes {
+				... on ClosedEvent {
+					actor { login }
+				}
+			}
+		}`)
+	}
+	if len(mergedAllowed) > 0 {
+		fields = append(fields, `merged: timelineItems(itemTypes: [MERGED_EVENT], last: 1) {
+			nodes {
+				... on MergedEvent {
+					actor { login }
+				}
+			}
+		}`)
+	}
+
 	query := fmt.Sprintf(
-		`query %s($ids: [ID!]!) {
+		`query TimelineActors($ids: [ID!]!) {
 			nodes(ids: $ids) {
 				... on PullRequest {
 					id
-					timelineItems(itemTypes: %s, last: 1) {
-						nodes {
-							... on %s {
-								actor { login }
-							}
-						}
-					}
+					%s
 				}
 			}
-		}`, tf.queryName, tf.itemType, tf.fragment)
+		}`, strings.Join(fields, "\n"))
 
 	if err := gql.Do(query, map[string]any{"ids": ids}, &result); err != nil {
-		return nil, fmt.Errorf("querying %s: %w", tf.label, err)
+		return nil, fmt.Errorf("querying timeline actors: %w", err)
 	}
 
-	actors := make(map[string]string, len(result.Nodes))
+	actors := timelineActors{
+		closed: make(map[string]string, len(result.Nodes)),
+		merged: make(map[string]string, len(result.Nodes)),
+	}
 	for _, node := range result.Nodes {
-		if len(node.TimelineItems.Nodes) > 0 {
-			actors[node.ID] = strings.ToLower(node.TimelineItems.Nodes[0].Actor.Login)
+		if len(node.Closed.Nodes) > 0 {
+			actors.closed[node.ID] = strings.ToLower(node.Closed.Nodes[0].Actor.Login)
+		}
+		if len(node.Merged.Nodes) > 0 {
+			actors.merged[node.ID] = strings.ToLower(node.Merged.Nodes[0].Actor.Login)
 		}
 	}
 
-	filtered := make([]PullRequest, 0, len(prs))
-	for _, pr := range prs {
-		if resolved[actors[pr.NodeID]] {
-			filtered = append(filtered, pr)
-		} else {
-			clog.Debug().
-				Link("pr", pr.URL, pr.Ref()).
-				Str("actor", actors[pr.NodeID]).
-				Msgf("Filtered by %s", tf.label)
-		}
-	}
-
+	filtered := filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
 	clog.Debug().
 		Int("before", len(prs)).
 		Int("after", len(filtered)).
-		Msgf("%s filter applied", tf.label)
+		Bool("closed-by", len(closedAllowed) > 0).
+		Bool("merged-by", len(mergedAllowed) > 0).
+		Msg("Timeline filters applied")
 
 	return filtered, nil
 }
 
 // enrichAutomerge queries automerge status via GraphQL and sets Automerge on each PR.
 func enrichAutomerge(gql *api.GraphQLClient, prs []PullRequest) error {
-	if len(prs) == 0 {
+	if len(prs) == 0 || allAutomergeLoaded(prs) {
 		return nil
 	}
-
-	ids := make([]string, len(prs))
-	for i, pr := range prs {
-		ids[i] = pr.NodeID
+	enabled, err := fetchAutomergeStatus(gql, prs)
+	if err != nil {
+		return err
 	}
-
-	var result struct {
-		Nodes []struct {
-			ID               string `json:"id"`
-			AutomergeRequest *struct {
-				EnabledAt string `json:"enabledAt"`
-			} `json:"autoMergeRequest"`
-		} `json:"nodes"`
-	}
-
-	if err := gql.Do(
-		`query AutomergeStatus($ids: [ID!]!) {
-			nodes(ids: $ids) {
-				... on PullRequest {
-					id
-					autoMergeRequest { enabledAt }
-				}
-			}
-		}`,
-		map[string]any{"ids": ids},
-		&result,
-	); err != nil {
-		return fmt.Errorf("querying automerge status: %w", err)
-	}
-
-	enabled := make(map[string]bool, len(result.Nodes))
-	for _, node := range result.Nodes {
-		enabled[node.ID] = node.AutomergeRequest != nil
-	}
-
-	for i := range prs {
-		prs[i].Automerge = enabled[prs[i].NodeID]
-	}
-
+	applyAutomergeStatus(prs, enabled)
 	return nil
 }
 
@@ -376,9 +515,12 @@ func enrichMergeStatus(gql *api.GraphQLClient, prs []PullRequest) {
 
 	var result struct {
 		Nodes []struct {
-			ID             string  `json:"id"`
-			ReviewDecision *string `json:"reviewDecision"`
-			Commits        struct {
+			ID               string  `json:"id"`
+			ReviewDecision   *string `json:"reviewDecision"`
+			AutomergeRequest *struct {
+				EnabledAt string `json:"enabledAt"`
+			} `json:"autoMergeRequest"`
+			Commits struct {
 				Nodes []struct {
 					Commit struct {
 						StatusCheckRollup *struct {
@@ -396,6 +538,7 @@ func enrichMergeStatus(gql *api.GraphQLClient, prs []PullRequest) {
 				... on PullRequest {
 					id
 					reviewDecision
+					autoMergeRequest { enabledAt }
 					commits(last: 1) {
 						nodes {
 							commit {
@@ -438,8 +581,17 @@ func enrichMergeStatus(gql *api.GraphQLClient, prs []PullRequest) {
 			status = MergeStatusBlocked
 		}
 
+		automerge := node.AutomergeRequest != nil
+		reviewDecision := ""
+		if node.ReviewDecision != nil {
+			reviewDecision = *node.ReviewDecision
+		}
 		for _, idx := range indices {
 			prs[idx].MergeStatus = status
+			prs[idx].Automerge = automerge
+			prs[idx].automergeLoaded = true
+			prs[idx].ReviewDecision = reviewDecision
+			prs[idx].reviewDecisionLoaded = true
 		}
 	}
 }
