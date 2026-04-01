@@ -13,7 +13,28 @@ var claudeReviewPromptPlaceholderPattern = regexp.MustCompile(`\{([a-zA-Z][a-zA-
 
 const claudeReviewPromptSubmatchCount = 2
 
-func claudeReviewPromptPlaceholderNames() []string {
+type reviewProvider string
+
+const (
+	reviewProviderUnknown reviewProvider = ""
+	reviewProviderClaude  reviewProvider = "claude"
+	reviewProviderCodex   reviewProvider = "codex"
+	defaultReviewProvider                = reviewProviderClaude
+)
+
+func normalizeReviewProvider(provider string) reviewProvider {
+	normalized := reviewProvider(strings.ToLower(provider))
+	switch normalized {
+	case reviewProviderClaude, reviewProviderCodex:
+		return normalized
+	case reviewProviderUnknown:
+		return reviewProviderUnknown
+	default:
+		return reviewProviderUnknown
+	}
+}
+
+func reviewPromptPlaceholderNames() []string {
 	return []string{
 		"prNumber",
 		"repo",
@@ -25,7 +46,7 @@ func claudeReviewPromptPlaceholderNames() []string {
 	}
 }
 
-func defaultClaudeReviewPromptTemplate() string {
+func defaultReviewPromptTemplate(_ reviewProvider) string {
 	return "Perform a comprehensive code review of PR #{prNumber} in {orgWithRepo}.\n\n" +
 		"The PR branch is checked out.\n\n" +
 		"First read the PR context with:\n" +
@@ -36,27 +57,41 @@ func defaultClaudeReviewPromptTemplate() string {
 		"Be thorough but concise."
 }
 
-func claudeReviewPromptTemplate(cfg *Config) string {
-	if cfg != nil && cfg.TUI.Review.Claude.Prompt != "" {
-		return cfg.TUI.Review.Claude.Prompt
+func reviewPromptTemplate(cfg *Config, provider reviewProvider) string {
+	if cfg != nil {
+		switch provider {
+		case reviewProviderClaude:
+			if cfg.TUI.Review.Providers.Claude.Prompt != "" {
+				return cfg.TUI.Review.Providers.Claude.Prompt
+			}
+		case reviewProviderCodex:
+			if cfg.TUI.Review.Providers.Codex.Prompt != "" {
+				return cfg.TUI.Review.Providers.Codex.Prompt
+			}
+		case reviewProviderUnknown:
+			return defaultReviewPromptTemplate(defaultReviewProvider)
+		}
 	}
-	return defaultClaudeReviewPromptTemplate()
+	return defaultReviewPromptTemplate(provider)
 }
 
-func claudeReviewPrompt(pr PullRequest, cfg *Config) string {
-	prompt, err := renderClaudeReviewPrompt(claudeReviewPromptTemplate(cfg), pr)
+func reviewPrompt(pr PullRequest, cfg *Config, provider reviewProvider) string {
+	prompt, err := renderReviewPrompt(reviewPromptTemplate(cfg, provider), pr)
 	if err == nil {
 		return prompt
 	}
 
-	clog.Warn().Err(err).Msg("Invalid Claude review prompt template; falling back to default")
-	prompt, _ = renderClaudeReviewPrompt(defaultClaudeReviewPromptTemplate(), pr)
+	clog.Warn().
+		Err(err).
+		Str("provider", string(provider)).
+		Msg("Invalid AI review prompt template; falling back to default")
+	prompt, _ = renderReviewPrompt(defaultReviewPromptTemplate(provider), pr)
 	return prompt
 }
 
-func validateClaudeReviewPromptTemplate(template string) error {
-	allowed := make(map[string]struct{}, len(claudeReviewPromptPlaceholderNames()))
-	for _, name := range claudeReviewPromptPlaceholderNames() {
+func validateReviewPromptTemplate(template string) error {
+	allowed := make(map[string]struct{}, len(reviewPromptPlaceholderNames()))
+	for _, name := range reviewPromptPlaceholderNames() {
 		allowed[name] = struct{}{}
 	}
 
@@ -82,12 +117,12 @@ func validateClaudeReviewPromptTemplate(template string) error {
 	return fmt.Errorf(
 		"unknown placeholder(s): %s (available: %s)",
 		strings.Join(names, ", "),
-		strings.Join(claudeReviewPromptPlaceholderNames(), ", "),
+		strings.Join(reviewPromptPlaceholderNames(), ", "),
 	)
 }
 
-func renderClaudeReviewPrompt(template string, pr PullRequest) (string, error) {
-	if err := validateClaudeReviewPromptTemplate(template); err != nil {
+func renderReviewPrompt(template string, pr PullRequest) (string, error) {
+	if err := validateReviewPromptTemplate(template); err != nil {
 		return "", err
 	}
 

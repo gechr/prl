@@ -60,24 +60,33 @@ func TestBuildClaudeReviewAppleScriptUnsupported(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported terminal")
 }
 
-func TestPrepareClaudeReviewConfirmUsesYesNo(t *testing.T) {
+func TestPrepareAIReviewConfirmUsesYesNo(t *testing.T) {
 	pr := testReviewPullRequest()
 	m := tuiModel{confirmInput: newConfirmInput()}
 
-	m = m.prepareClaudeReviewConfirm(pr, 0)
+	m = m.prepareAIReviewConfirm(pr, 0)
 
 	require.Equal(t, "review", m.confirmAction)
 	require.NotNil(t, m.confirmCmdFn)
 	require.True(t, m.confirmYes)
 	require.True(t, m.confirmHasInput)
 	require.Equal(t, "Prompt", m.confirmInputLabel)
-	require.Len(t, m.confirmOptions, 1)
-	require.Equal(t, claudeReviewModelOptionLabel, m.confirmOptions[0].label)
-	require.Equal(t, string(defaultClaudeReviewModel), m.selectedConfirmOptionValue(0))
-	require.Equal(t, tuiClaudeConfirmInputWidth, m.confirmInput.Width())
-	require.False(t, m.confirmOptFocus)
-	require.True(t, m.confirmInput.Focused())
-	require.Equal(t, claudeReviewPrompt(pr, nil), m.confirmInput.Value())
+	require.Len(t, m.confirmOptions, 3)
+	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
+	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
+	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
+	require.Equal(t, string(defaultReviewProvider), m.selectedConfirmOptionValue(0))
+	require.Equal(t, defaultReviewModel(defaultReviewProvider), m.selectedConfirmOptionValue(1))
+	require.Equal(
+		t,
+		defaultReviewEffort(defaultReviewProvider, defaultReviewModel(defaultReviewProvider)),
+		m.selectedConfirmOptionValue(2),
+	)
+	require.Equal(t, tuiAIReviewConfirmInputWid, m.confirmInput.Width())
+	require.True(t, m.confirmOptFocus)
+	require.False(t, m.confirmInput.Focused())
+	require.Equal(t, 0, m.confirmOptCursor)
+	require.Equal(t, reviewPrompt(pr, nil, defaultReviewProvider), m.confirmInput.Value())
 }
 
 func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
@@ -85,10 +94,10 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 		confirmInput: newConfirmInput(),
 		styles:       newTuiStyles(),
 	}
-	m = m.prepareClaudeReviewConfirm(testReviewPullRequest(), 0)
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
 
-	require.False(t, m.confirmOptFocus)
-	require.True(t, m.confirmInput.Focused())
+	require.True(t, m.confirmOptFocus)
+	require.False(t, m.confirmInput.Focused())
 
 	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
 	require.Nil(t, cmd)
@@ -97,21 +106,24 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, bm.confirmOptFocus)
 	require.False(t, bm.confirmInput.Focused())
+	require.Equal(t, 1, bm.confirmOptCursor)
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyLeft})
 	require.Nil(t, cmd)
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, string(claudeReviewModelSonnet), bm.selectedConfirmOptionValue(0))
+	require.Equal(t, string(defaultReviewProvider), bm.selectedConfirmOptionValue(0))
+	require.Equal(t, claudeReviewModelSonnet, bm.selectedConfirmOptionValue(1))
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	require.NotNil(t, cmd)
+	require.Nil(t, cmd)
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.confirmOptFocus)
-	require.True(t, bm.confirmInput.Focused())
+	require.True(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmInput.Focused())
+	require.Equal(t, 0, bm.confirmOptCursor)
 }
 
 func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
@@ -119,34 +131,57 @@ func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
 		confirmInput: newConfirmInput(),
 		styles:       newTuiStyles(),
 	}
-	m = m.prepareClaudeReviewConfirm(testReviewPullRequest(), 0)
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
 
 	rendered := m.renderConfirmOptions()
 	stripped := ansi.Strip(rendered)
 
 	require.Equal(
 		t,
-		"Model\nsonnet  opus\n\n",
+		"Provider\nclaude  codex\n\nModel\nsonnet  opus\n\nEffort\nlow  medium  high  max  auto\n\n",
 		stripped,
 	)
 	require.Equal(t, 0, strings.Count(rendered, cursorLineBG))
+	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewModelOpus))
+	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewEffortMedium))
 }
 
-func TestBuildClaudeReviewCommandUsesSelectedModel(t *testing.T) {
+func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	pr := testReviewPullRequest()
 
-	cmd := buildClaudeReviewCommand(pr, "review prompt", claudeReviewModelSonnet)
+	cmd := buildAIReviewCommand(
+		pr,
+		"review prompt",
+		reviewProviderClaude,
+		claudeReviewModelSonnet,
+		claudeReviewEffortHigh,
+	)
 	require.Equal(t, 1, strings.Count(cmd, "--model=sonnet"))
 	require.Equal(t, 0, strings.Count(cmd, "--model=opus"))
+	require.Equal(t, 1, strings.Count(cmd, "--effort=high"))
 
-	cmd = buildClaudeReviewCommand(pr, "review prompt", "")
+	cmd = buildAIReviewCommand(pr, "review prompt", reviewProviderClaude, "", "")
 	require.Equal(t, 1, strings.Count(cmd, "--model=opus"))
+	require.Equal(t, 1, strings.Count(cmd, "--effort=medium"))
+
+	cmd = buildAIReviewCommand(
+		pr,
+		"review prompt",
+		reviewProviderCodex,
+		codexReviewModel54Mini,
+		codexReviewEffortXHigh,
+	)
+	require.Contains(
+		t,
+		cmd,
+		`codex -m "gpt-5.4-mini" -c model_reasoning_effort="xhigh" "review prompt"`,
+	)
 }
 
-func TestDefaultClaudeReviewPromptUsesParagraphs(t *testing.T) {
+func TestDefaultAIReviewPromptUsesParagraphs(t *testing.T) {
 	pr := testReviewPullRequest()
 
-	prompt := claudeReviewPrompt(pr, nil)
+	prompt := reviewPrompt(pr, nil, reviewProviderClaude)
 	require.Equal(
 		t,
 		fmt.Sprintf(
@@ -170,20 +205,22 @@ Be thorough but concise.`,
 	)
 }
 
-func TestClaudeReviewPromptUsesConfigTemplate(t *testing.T) {
+func TestReviewPromptUsesConfigTemplate(t *testing.T) {
 	pr := testReviewPullRequest()
-	pr.Title = "Improve Claude review prompts"
+	pr.Title = "Improve AI review prompts"
 
 	cfg := &Config{
 		TUI: TUIConfig{
 			Review: TUIReviewConfig{
-				Claude: TUIReviewClaudeConfig{
-					Prompt: `Review PR {prNumber} in {orgWithRepo}.
+				Providers: TUIReviewProvidersConfig{
+					Claude: TUIReviewProviderConfig{
+						Prompt: `Review PR {prNumber} in {orgWithRepo}.
 Repo: {repo}
 Org: {org}
 Ref: {prRef}
 URL: {prURL}
 Title: {title}`,
+					},
 				},
 			},
 		},
@@ -196,8 +233,8 @@ Repo: prl
 Org: gechr
 Ref: gechr/prl#42
 URL: https://github.com/gechr/prl/pull/42
-Title: Improve Claude review prompts`,
-		claudeReviewPrompt(pr, cfg),
+Title: Improve AI review prompts`,
+		reviewPrompt(pr, cfg, reviewProviderClaude),
 	)
 }
 
@@ -213,12 +250,12 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	}
 
 	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	require.NotNil(t, cmd)
+	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, "review", bm.confirmAction)
-	require.False(t, bm.confirmOptFocus)
-	require.True(t, bm.confirmInput.Focused())
+	require.True(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmInput.Focused())
 
 	model, cmd = m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModAlt})
 	require.NotNil(t, cmd)
@@ -236,10 +273,163 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 
 	overlay := m.renderHelpOverlay()
 
-	require.Contains(t, overlay, "Launch Claude review")
+	require.Contains(t, overlay, "Launch AI review")
 	require.Contains(t, overlay, "alt+r")
-	require.Contains(t, overlay, "Launch Claude review (no confirm)")
+	require.Contains(t, overlay, "Launch AI review (no confirm)")
 	require.Contains(t, overlay, "shift+↑↓")
+}
+
+func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+
+	bm := m
+
+	model, cmd := bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Nil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, string(reviewProviderCodex), bm.selectedConfirmOptionValue(0))
+	require.Equal(t, defaultReviewModel(reviewProviderCodex), bm.selectedConfirmOptionValue(1))
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: codexReviewModel54, value: codexReviewModel54},
+			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
+			{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
+		},
+		bm.confirmOptions[1].choices,
+	)
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: codexReviewEffortLow, value: codexReviewEffortLow},
+			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+		},
+		bm.confirmOptions[2].choices,
+	)
+}
+
+func TestRenderConfirmOptionsHighlightsActiveRowInGreen(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+	m.confirmOptFocus = true
+	m.confirmOptCursor = 1
+
+	rendered := m.renderConfirmOptions()
+
+	require.NotContains(t, rendered, cursorLineBG)
+	require.Contains(t, rendered, m.styles.helpKey.Render("Model"))
+	require.Contains(t, rendered, styleHighlight.Bold(true).Render(claudeReviewModelOpus))
+	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelSonnet))
+}
+
+func TestUpdateConfirmOverlayTabLoopsAcrossOptions(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+
+	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 1, bm.confirmOptCursor)
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, 2, bm.confirmOptCursor)
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.NotNil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
+	require.Nil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.confirmOptFocus)
+	require.Equal(t, 0, bm.confirmOptCursor)
+}
+
+func TestUpdateConfirmOverlayUpDownCanFocusPrompt(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+
+	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyUp})
+	require.NotNil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
+	require.Nil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
+
+	bm = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+	bm = bm.focusConfirmOptions()
+	bm.confirmOptCursor = len(bm.confirmOptions) - 1
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
+	require.NotNil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
+}
+
+func TestUpdateConfirmOverlayPromptDoesNotExitOnArrowKeys(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+	m, cmd := m.focusConfirmInput()
+	require.NotNil(t, cmd)
+
+	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyUp})
+	require.NotNil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
+	require.NotNil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmInput.Focused())
 }
 
 func TestRenderHelpOverlayAlignsExtendedSelectionKey(t *testing.T) {

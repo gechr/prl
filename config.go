@@ -52,7 +52,11 @@ const (
 	keySpinnerStyle          = "spinner.style"
 	keySpinnerColors         = "spinner.colors"
 	keyTUIAutoRefresh        = "tui.refresh.enabled"
-	keyTUIReviewClaudePrompt = "tui.review.claude.prompt"
+	keyTUIReviewDefaultEff   = "tui.review.default.effort"
+	keyTUIReviewDefaultModel = "tui.review.default.model"
+	keyTUIReviewDefaultProv  = "tui.review.default.provider"
+	keyTUIReviewClaudePrompt = "tui.review.providers.claude.prompt"
+	keyTUIReviewCodexPrompt  = "tui.review.providers.codex.prompt"
 	keyTUIFilterArchived     = "tui.filters.archived"
 	keyTUIFilterBots         = "tui.filters.bots"
 	keyTUIFilterCI           = "tui.filters.ci"
@@ -121,12 +125,24 @@ type TUIFiltersConfig struct {
 	Review   string `koanf:"review"`
 }
 
-type TUIReviewClaudeConfig struct {
+type TUIReviewProviderConfig struct {
 	Prompt string `koanf:"prompt"`
 }
 
+type TUIReviewProvidersConfig struct {
+	Claude TUIReviewProviderConfig `koanf:"claude"`
+	Codex  TUIReviewProviderConfig `koanf:"codex"`
+}
+
+type TUIReviewDefaultConfig struct {
+	Provider string `koanf:"provider"`
+	Model    string `koanf:"model"`
+	Effort   string `koanf:"effort"`
+}
+
 type TUIReviewConfig struct {
-	Claude TUIReviewClaudeConfig `koanf:"claude"`
+	Default   TUIReviewDefaultConfig   `koanf:"default"`
+	Providers TUIReviewProvidersConfig `koanf:"providers"`
 }
 
 // TUIConfig holds TUI-specific configuration.
@@ -171,28 +187,35 @@ type Config struct {
 
 func defaultConfig() map[string]any {
 	return map[string]any{
-		keyAuthors:               map[string]string{},
-		keyVCS:                   vcsGit,
-		keyCodeDir:               "",
-		keyDefaultAuthors:        []string{valueAtMe},
-		keyDefaultBots:           true,
-		keyDefaultLimit:          defaultLimit,
-		keyDefaultMatch:          "title",
-		keyDefaultMergeMethod:    "squash",
-		keyDefaultOrganizations:  []string{},
-		keyDefaultOutput:         valueTable,
-		keyDefaultReverse:        false,
-		keyDefaultSort:           valueName,
-		keyDefaultState:          valueOpen,
-		keyIgnoredOrganizations:  []string{},
-		keySlackRecipients:       slackRecipients{},
-		keySlackSkipRepos:        []string{},
-		keySlackTwoApprover:      []string{},
-		keyTeamAliases:           map[string]string{},
-		keyTerraformMemberDir:    "",
-		keySpinnerStyle:          defaultSpinner,
-		keyTUIAutoRefresh:        true,
-		keyTUIReviewClaudePrompt: defaultClaudeReviewPromptTemplate(),
+		keyAuthors:              map[string]string{},
+		keyVCS:                  vcsGit,
+		keyCodeDir:              "",
+		keyDefaultAuthors:       []string{valueAtMe},
+		keyDefaultBots:          true,
+		keyDefaultLimit:         defaultLimit,
+		keyDefaultMatch:         "title",
+		keyDefaultMergeMethod:   "squash",
+		keyDefaultOrganizations: []string{},
+		keyDefaultOutput:        valueTable,
+		keyDefaultReverse:       false,
+		keyDefaultSort:          valueName,
+		keyDefaultState:         valueOpen,
+		keyIgnoredOrganizations: []string{},
+		keySlackRecipients:      slackRecipients{},
+		keySlackSkipRepos:       []string{},
+		keySlackTwoApprover:     []string{},
+		keyTeamAliases:          map[string]string{},
+		keyTerraformMemberDir:   "",
+		keySpinnerStyle:         defaultSpinner,
+		keyTUIAutoRefresh:       true,
+		keyTUIReviewDefaultEff: defaultReviewEffort(
+			defaultReviewProvider,
+			defaultReviewModel(defaultReviewProvider),
+		),
+		keyTUIReviewDefaultProv:  string(defaultReviewProvider),
+		keyTUIReviewDefaultModel: defaultReviewModel(defaultReviewProvider),
+		keyTUIReviewClaudePrompt: defaultReviewPromptTemplate(reviewProviderClaude),
+		keyTUIReviewCodexPrompt:  defaultReviewPromptTemplate(reviewProviderCodex),
 		keyTUIFilterArchived:     nil,
 		keyTUIFilterBots:         nil,
 		keyTUIFilterCI:           "",
@@ -291,8 +314,47 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("invalid tui.filters.review %q", cfg.TUI.Filters.Review)
 		}
 	}
-	if err := validateClaudeReviewPromptTemplate(cfg.TUI.Review.Claude.Prompt); err != nil {
-		return nil, fmt.Errorf("invalid tui.review.claude.prompt: %w", err)
+	provider := normalizeReviewProvider(cfg.TUI.Review.Default.Provider)
+	if provider == reviewProviderUnknown {
+		return nil, fmt.Errorf(
+			"invalid tui.review.default.provider %q",
+			cfg.TUI.Review.Default.Provider,
+		)
+	}
+	cfg.TUI.Review.Default.Provider = string(provider)
+
+	model := cfg.TUI.Review.Default.Model
+	if model == "" {
+		model = defaultReviewModel(provider)
+	}
+	if !isValidReviewModel(provider, model) {
+		return nil, fmt.Errorf(
+			"invalid tui.review.default.model %q for provider %q",
+			cfg.TUI.Review.Default.Model,
+			provider,
+		)
+	}
+	cfg.TUI.Review.Default.Model = model
+
+	effort := cfg.TUI.Review.Default.Effort
+	if effort == "" {
+		effort = defaultReviewEffort(provider, model)
+	}
+	if !isValidReviewEffort(provider, model, effort) {
+		return nil, fmt.Errorf(
+			"invalid tui.review.default.effort %q for provider %q model %q",
+			cfg.TUI.Review.Default.Effort,
+			provider,
+			model,
+		)
+	}
+	cfg.TUI.Review.Default.Effort = effort
+
+	if err := validateReviewPromptTemplate(cfg.TUI.Review.Providers.Claude.Prompt); err != nil {
+		return nil, fmt.Errorf("invalid tui.review.providers.claude.prompt: %w", err)
+	}
+	if err := validateReviewPromptTemplate(cfg.TUI.Review.Providers.Codex.Prompt); err != nil {
+		return nil, fmt.Errorf("invalid tui.review.providers.codex.prompt: %w", err)
 	}
 
 	// Expand ~ and $ENV in directory paths
@@ -522,7 +584,7 @@ func mergeIntoAncestor(f *goyamlast.File, key string, value any) bool {
 }
 
 var defaultConfigYAML = func() string {
-	const promptBlockIndent = 8
+	const promptBlockIndent = 10
 
 	return fmt.Sprintf(`# prl configuration
 # See: prl --help
@@ -579,12 +641,27 @@ tui:
     enabled: true
 
   review:
-    claude:
-      # Default prompt for Claude review.
-      # Available placeholders:
-      #   %[10]s
-      prompt: |
+    default:
+      # Default AI review provider and model.
+      # Providers: claude, codex
+      provider: claude
+      model: opus
+      effort: medium
+
+    providers:
+      claude:
+        # Default prompt for Claude AI review.
+        # Available placeholders:
+        #   %[10]s
+        prompt: |
 %[9]s
+
+      codex:
+        # Default prompt for Codex AI review.
+        # Available placeholders:
+        #   %[10]s
+        prompt: |
+%[11]s
 
   # Persisted filter overrides for TUI mode.
   # Set via the filter menu (alt+f) in the TUI.
@@ -661,8 +738,9 @@ output:
 		vcsGit,
 		defaultSpinner,
 		`"`+strings.Join(defaultSpinnerColors, `", "`)+`"`,
-		indentBlock(defaultClaudeReviewPromptTemplate(), promptBlockIndent),
+		indentBlock(defaultReviewPromptTemplate(reviewProviderClaude), promptBlockIndent),
 		"`{prNumber}`, `{repo}`, `{org}`, `{orgWithRepo}`, `{prURL}`, `{prRef}`, `{title}`",
+		indentBlock(defaultReviewPromptTemplate(reviewProviderCodex), promptBlockIndent),
 	)
 }()
 

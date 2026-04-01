@@ -163,10 +163,10 @@ const (
 	tuiActionUnassign     = "unassign"
 	tuiActionUpdateBranch = "update-branch"
 
-	tuiClaudeReviewUnsupported = "Claude review is only supported in Ghostty and iTerm2 for now!"
+	tuiAIReviewUnsupported = "AI review is only supported in Ghostty and iTerm2 for now!"
 
 	tuiConfirmInputWidth       = 70
-	tuiClaudeConfirmInputWidth = 90
+	tuiAIReviewConfirmInputWid = 90
 	tuiConfirmInputMinHeight   = 2
 	tuiConfirmInputMaxHeight   = 30
 	tuiConfirmPadX             = 4
@@ -300,8 +300,8 @@ const (
 	tuiDescOptions          = "Options"
 	tuiDescQuit             = "Quit"
 	tuiDescRefresh          = "Toggle auto-refresh"
-	tuiDescReview           = "Launch Claude review"
-	tuiDescReviewNoConfirm  = "Launch Claude review (no confirm)"
+	tuiDescReview           = "Launch AI review"
+	tuiDescReviewNoConfirm  = "Launch AI review (no confirm)"
 	tuiDescSelect           = "Toggle selection"
 	tuiDescSelectAll        = "Select all/none"
 	tuiDescSendSlack        = "Send to Slack"

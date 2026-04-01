@@ -47,14 +47,68 @@ func TestLoadConfigRejectsInvalidClaudeReviewPromptPlaceholder(t *testing.T) {
 			cp,
 			[]byte(`tui:
   review:
-    claude:
-      prompt: "Review {unknownPlaceholder}"
+    providers:
+      claude:
+        prompt: "Review {unknownPlaceholder}"
 `),
 			0o600,
 		),
 	)
 
 	_, err = loadConfig()
-	require.ErrorContains(t, err, "invalid tui.review.claude.prompt")
+	require.ErrorContains(t, err, "invalid tui.review.providers.claude.prompt")
 	require.ErrorContains(t, err, "unknown placeholder(s): unknownPlaceholder")
+}
+
+func TestLoadConfigRejectsInvalidReviewDefaultModelForProvider(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`tui:
+  review:
+    default:
+      provider: codex
+      model: opus
+`),
+			0o600,
+		),
+	)
+
+	_, err = loadConfig()
+	require.ErrorContains(t, err, `invalid tui.review.default.model "opus" for provider "codex"`)
+}
+
+func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`tui:
+  review:
+    default:
+      provider: codex
+      model: gpt-5.4
+      effort: max
+`),
+			0o600,
+		),
+	)
+
+	_, err = loadConfig()
+	require.ErrorContains(
+		t,
+		err,
+		`invalid tui.review.default.effort "max" for provider "codex" model "gpt-5.4"`,
+	)
 }

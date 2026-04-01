@@ -50,28 +50,153 @@ func currentClaudeReviewLauncher() claudeReviewLauncher {
 
 func hasClaudeReviewLauncher() bool { return currentClaudeReviewLauncher() != claudeLauncherNone }
 
-type claudeReviewModel string
-
 const (
-	claudeReviewModelSonnet  claudeReviewModel = "sonnet"
-	claudeReviewModelOpus    claudeReviewModel = "opus"
-	defaultClaudeReviewModel                   = claudeReviewModelOpus
+	reviewProviderOptionLabel = "Provider"
+	reviewModelOptionLabel    = "Model"
+	reviewEffortOptionLabel   = "Effort"
 
-	claudeReviewModelOptionLabel = "Model"
+	reviewProviderOptionRow = 0
+	reviewModelOptionRow    = 1
+	reviewEffortOptionRow   = 2
+
+	claudeReviewModelSonnet = "sonnet"
+	claudeReviewModelOpus   = "opus"
+	codexReviewModel54      = "gpt-5.4"
+	codexReviewModel54Mini  = "gpt-5.4-mini"
+	codexReviewModel53Codex = "gpt-5.3-codex"
+
+	claudeReviewEffortLow    = "low"
+	claudeReviewEffortMedium = "medium"
+	claudeReviewEffortHigh   = "high"
+	claudeReviewEffortMax    = "max"
+	claudeReviewEffortAuto   = "auto"
+	codexReviewEffortLow     = "low"
+	codexReviewEffortMedium  = "medium"
+	codexReviewEffortHigh    = "high"
+	codexReviewEffortXHigh   = "xhigh"
 )
 
-var claudeReviewModelChoices = []filterChoice{
-	{label: "sonnet", value: string(claudeReviewModelSonnet)},
-	{label: "opus", value: string(claudeReviewModelOpus)},
+var reviewProviderChoices = []filterChoice{
+	{label: string(reviewProviderClaude), value: string(reviewProviderClaude)},
+	{label: string(reviewProviderCodex), value: string(reviewProviderCodex)},
 }
 
-func normalizeClaudeReviewModel(model claudeReviewModel) claudeReviewModel {
-	switch model {
-	case claudeReviewModelSonnet, claudeReviewModelOpus:
-		return model
-	default:
-		return defaultClaudeReviewModel
+var claudeReviewModelChoices = []filterChoice{
+	{label: claudeReviewModelSonnet, value: claudeReviewModelSonnet},
+	{label: claudeReviewModelOpus, value: claudeReviewModelOpus},
+}
+
+var codexReviewModelChoices = []filterChoice{
+	{label: codexReviewModel54, value: codexReviewModel54},
+	{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
+	{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
+}
+
+var claudeReviewEffortChoices = []filterChoice{
+	{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
+	{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
+	{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+	{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
+	{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
+}
+
+var codexReviewEffortChoices = []filterChoice{
+	{label: codexReviewEffortLow, value: codexReviewEffortLow},
+	{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+	{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+	{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+}
+
+func reviewModelChoices(provider reviewProvider) []filterChoice {
+	switch provider {
+	case reviewProviderUnknown:
+		return claudeReviewModelChoices
+	case reviewProviderCodex:
+		return codexReviewModelChoices
+	case reviewProviderClaude:
+		return claudeReviewModelChoices
 	}
+	return claudeReviewModelChoices
+}
+
+func defaultReviewModel(provider reviewProvider) string {
+	switch provider {
+	case reviewProviderUnknown:
+		return defaultReviewModel(defaultReviewProvider)
+	case reviewProviderCodex:
+		return codexReviewModel54
+	case reviewProviderClaude:
+		return claudeReviewModelOpus
+	}
+	return defaultReviewModel(defaultReviewProvider)
+}
+
+func reviewEffortChoices(provider reviewProvider, model string) []filterChoice {
+	switch provider {
+	case reviewProviderClaude:
+		return claudeReviewEffortChoices
+	case reviewProviderCodex:
+		switch normalizeReviewModel(provider, model) {
+		case codexReviewModel54, codexReviewModel54Mini, codexReviewModel53Codex:
+			return codexReviewEffortChoices
+		default:
+			return codexReviewEffortChoices
+		}
+	case reviewProviderUnknown:
+		return reviewEffortChoices(defaultReviewProvider, defaultReviewModel(defaultReviewProvider))
+	default:
+		return reviewEffortChoices(defaultReviewProvider, defaultReviewModel(defaultReviewProvider))
+	}
+}
+
+func defaultReviewEffort(provider reviewProvider, model string) string {
+	switch provider {
+	case reviewProviderClaude:
+		return claudeReviewEffortMedium
+	case reviewProviderCodex:
+		switch normalizeReviewModel(provider, model) {
+		case codexReviewModel54, codexReviewModel54Mini, codexReviewModel53Codex:
+			return codexReviewEffortMedium
+		default:
+			return codexReviewEffortMedium
+		}
+	case reviewProviderUnknown:
+		return defaultReviewEffort(defaultReviewProvider, defaultReviewModel(defaultReviewProvider))
+	default:
+		return defaultReviewEffort(defaultReviewProvider, defaultReviewModel(defaultReviewProvider))
+	}
+}
+
+func isValidReviewModel(provider reviewProvider, model string) bool {
+	for _, choice := range reviewModelChoices(provider) {
+		if choice.value == model {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidReviewEffort(provider reviewProvider, model, effort string) bool {
+	for _, choice := range reviewEffortChoices(provider, model) {
+		if choice.value == effort {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeReviewModel(provider reviewProvider, model string) string {
+	if isValidReviewModel(provider, model) {
+		return model
+	}
+	return defaultReviewModel(provider)
+}
+
+func normalizeReviewEffort(provider reviewProvider, model, effort string) string {
+	if isValidReviewEffort(provider, model, effort) {
+		return effort
+	}
+	return defaultReviewEffort(provider, model)
 }
 
 // filterChoiceTrue/False are canonical string values for bool filter choices.
@@ -453,8 +578,8 @@ type batchResult struct {
 // clearStatusMsg clears the status bar after a timeout.
 type clearStatusMsg struct{ id int }
 
-// claudeReviewMsg is sent when the Claude review clone+launch completes.
-type claudeReviewMsg struct {
+// aiReviewMsg is sent when the AI review clone+launch completes.
+type aiReviewMsg struct {
 	index int
 	key   prKey // stable lookup after refresh
 	err   error
@@ -575,6 +700,7 @@ type tuiModel struct {
 	confirmOptValues  []int             // selected choice per confirm option row
 	confirmOptCursor  int               // focused confirm option row
 	confirmOptFocus   bool              // true when confirm option rows have focus
+	confirmReviewPR   *PullRequest      // selected PR when the confirm modal is for AI review
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -838,6 +964,79 @@ func (m tuiModel) buildConfirmSubmission() confirmSubmission {
 		submission.Options[def.label] = m.selectedConfirmOptionValue(i)
 	}
 	return submission
+}
+
+func configuredReviewProvider(cfg *Config) reviewProvider {
+	if cfg == nil {
+		return defaultReviewProvider
+	}
+	if provider := normalizeReviewProvider(
+		cfg.TUI.Review.Default.Provider,
+	); provider != reviewProviderUnknown {
+		return provider
+	}
+	return defaultReviewProvider
+}
+
+func configuredReviewModel(cfg *Config, provider reviewProvider) string {
+	if cfg == nil {
+		return defaultReviewModel(provider)
+	}
+	return normalizeReviewModel(provider, cfg.TUI.Review.Default.Model)
+}
+
+func configuredReviewEffort(cfg *Config, provider reviewProvider, model string) string {
+	if cfg == nil {
+		return defaultReviewEffort(provider, model)
+	}
+	return normalizeReviewEffort(provider, model, cfg.TUI.Review.Default.Effort)
+}
+
+func (m tuiModel) selectedReviewProvider() reviewProvider {
+	provider := normalizeReviewProvider(m.selectedConfirmOptionValue(0))
+	if provider != reviewProviderUnknown {
+		return provider
+	}
+	return configuredReviewProvider(m.cfg)
+}
+
+func (m tuiModel) syncReviewConfirmOptions(previousProvider reviewProvider) tuiModel {
+	if m.confirmAction != tuiActionReview || len(m.confirmOptions) < 3 {
+		return m
+	}
+
+	currentProvider := m.selectedReviewProvider()
+	currentModel := m.selectedConfirmOptionValue(reviewModelOptionRow)
+	m.confirmOptions[reviewModelOptionRow].choices = reviewModelChoices(currentProvider)
+	if len(m.confirmOptValues) < len(m.confirmOptions) {
+		m.confirmOptValues = append(
+			m.confirmOptValues,
+			make([]int, len(m.confirmOptions)-len(m.confirmOptValues))...)
+	}
+	m.confirmOptValues[reviewModelOptionRow] = choiceIndex(
+		m.confirmOptions[reviewModelOptionRow].choices,
+		normalizeReviewModel(currentProvider, currentModel),
+	)
+	currentModel = m.selectedConfirmOptionValue(reviewModelOptionRow)
+	currentEffort := m.selectedConfirmOptionValue(reviewEffortOptionRow)
+	m.confirmOptions[reviewEffortOptionRow].choices = reviewEffortChoices(
+		currentProvider,
+		currentModel,
+	)
+	m.confirmOptValues[reviewEffortOptionRow] = choiceIndex(
+		m.confirmOptions[reviewEffortOptionRow].choices,
+		normalizeReviewEffort(currentProvider, currentModel, currentEffort),
+	)
+
+	if m.confirmReviewPR != nil && previousProvider != reviewProviderUnknown &&
+		previousProvider != currentProvider {
+		oldPrompt := reviewPrompt(*m.confirmReviewPR, m.cfg, previousProvider)
+		if m.confirmInput.Value() == oldPrompt {
+			m.confirmInput.SetValue(reviewPrompt(*m.confirmReviewPR, m.cfg, currentProvider))
+		}
+	}
+
+	return m
 }
 
 func (m tuiModel) defaultStateValue() string {
@@ -1418,9 +1617,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampDetailScroll()
 		return m, m.scheduleDetailRefresh()
 
-	case claudeReviewMsg:
+	case aiReviewMsg:
 		if msg.err != nil {
-			return m, flashResult(&m, "Claude failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, flashResult(&m, "AI review failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
 		idx := m.resolveIndex(msg.key, msg.index)
 		if idx < 0 {
@@ -1429,7 +1628,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		return m, flashResult(
 			&m,
-			"Claude review launched",
+			"AI review launched",
 			pr.Ref(),
 			pr.URL,
 			false,
@@ -2041,6 +2240,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmURL = prCopy.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&prCopy) + "?"
 		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
@@ -2062,7 +2262,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !hasClaudeReviewLauncher() {
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
-			m.confirmPrompt = tuiClaudeReviewUnsupported
+			m.confirmPrompt = tuiAIReviewUnsupported
 			m.confirmCmd = nil
 			return m, nil
 		}
@@ -2076,14 +2276,14 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		idx := m.cursor
 		prCopy := *pr
-		m = m.prepareClaudeReviewConfirm(prCopy, idx)
-		return m, m.confirmInput.Focus()
+		m = m.prepareAIReviewConfirm(prCopy, idx)
+		return m, nil
 
 	case tuiKeybindReviewNoConfirm:
 		if !hasClaudeReviewLauncher() {
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
-			m.confirmPrompt = tuiClaudeReviewUnsupported
+			m.confirmPrompt = tuiAIReviewUnsupported
 			m.confirmCmd = nil
 			return m, nil
 		}
@@ -2097,10 +2297,13 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		idx := m.cursor
 		prCopy := *pr
-		prompt := claudeReviewPrompt(prCopy, m.cfg)
+		provider := configuredReviewProvider(m.cfg)
+		model := configuredReviewModel(m.cfg, provider)
+		effort := configuredReviewEffort(m.cfg, provider, model)
+		prompt := reviewPrompt(prCopy, m.cfg, provider)
 		return m, func() tea.Msg {
-			err := launchClaudeReview(prCopy, prompt, defaultClaudeReviewModel)
-			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
+			err := launchAIReview(prCopy, prompt, provider, model, effort)
+			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 
 	case tuiKeybindSlack:
@@ -2536,6 +2739,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmURL = pr.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Close " + styledRef(&pr) + "?"
 		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
@@ -2587,6 +2791,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmURL = pr.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&pr) + "?"
 		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
@@ -3062,7 +3267,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			refreshCmd := m.exitDetailView()
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
-			m.confirmPrompt = tuiClaudeReviewUnsupported
+			m.confirmPrompt = tuiAIReviewUnsupported
 			m.confirmCmd = nil
 			return m, refreshCmd
 		}
@@ -3076,8 +3281,8 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		refreshCmd := m.exitDetailView()
-		m = m.prepareClaudeReviewConfirm(pr, idx)
-		return m, tea.Batch(m.confirmInput.Focus(), refreshCmd)
+		m = m.prepareAIReviewConfirm(pr, idx)
+		return m, refreshCmd
 	}
 	return m, nil
 }
@@ -4802,21 +5007,26 @@ func (m tuiModel) confirmDismiss() (tea.Model, tea.Cmd) {
 func newConfirmInput() textarea.Model {
 	ci := textarea.New()
 	ci.Prompt = ""
-	ci.Placeholder = "Leave blank to close without comment"
+	ci.Placeholder = "Enter text..."
 	ci.ShowLineNumbers = false
 	ci.SetWidth(tuiConfirmInputWidth)
 	ci.DynamicHeight = true
 	ci.MinHeight = tuiConfirmInputMinHeight
 	ci.MaxHeight = tuiConfirmInputMaxHeight
 	ciStyles := ci.Styles()
-	ciStyles.Focused.Text = styleText
+	ciStyles.Focused.Text = styleHighlight
 	ciStyles.Focused.Placeholder = styleSubtle
-	ciStyles.Focused.CursorLine = lg.NewStyle()
+	ciStyles.Focused.CursorLine = styleHighlight
 	ciStyles.Blurred.Text = styleText
 	ciStyles.Blurred.CursorLine = styleText
-	ciStyles.Cursor.Color = colorText
+	ciStyles.Cursor.Color = colorHighlight
 	ci.SetStyles(ciStyles)
 	return ci
+}
+
+func (m tuiModel) setConfirmInputPlaceholder(placeholder string) tuiModel {
+	m.confirmInput.Placeholder = placeholder
+	return m
 }
 
 func (m tuiModel) focusConfirmOptions() tuiModel {
@@ -4838,7 +5048,7 @@ func (m tuiModel) focusConfirmInput() (tuiModel, tea.Cmd) {
 
 func (m tuiModel) confirmInputWidth() int {
 	if m.confirmAction == tuiActionReview {
-		return tuiClaudeConfirmInputWidth
+		return tuiAIReviewConfirmInputWid
 	}
 	return tuiConfirmInputWidth
 }
@@ -4860,7 +5070,13 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.confirmDismiss()
 		case tuiKeyTab, tuiKeyShiftTab:
 			if m.hasConfirmOptions() {
-				return m.focusConfirmOptions(), nil
+				m = m.focusConfirmOptions()
+				if msg.String() == tuiKeyShiftTab {
+					m.confirmOptCursor = len(m.confirmOptions) - 1
+				} else {
+					m.confirmOptCursor = 0
+				}
+				return m, nil
 			}
 		case tuiKeybindConfirmSubmit:
 			m.confirmYes = true
@@ -4871,66 +5087,87 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
-	if m.confirmOptFocus && m.hasConfirmOptions() {
+	if !m.confirmOptFocus || !m.hasConfirmOptions() {
 		switch msg.String() {
-		case tuiKeybindVimDown, tuiKeyDown:
-			m.confirmOptCursor = min(m.confirmOptCursor+1, len(m.confirmOptions)-1)
-		case tuiKeybindVimUp, tuiKeyUp:
-			m.confirmOptCursor = max(m.confirmOptCursor-1, 0)
-		case tuiKeybindVimRight, tuiKeyRight:
-			n := len(m.confirmOptions[m.confirmOptCursor].choices)
-			if n > 0 {
-				m.confirmOptValues[m.confirmOptCursor] = min(
-					m.confirmOptValues[m.confirmOptCursor]+1,
-					n-1,
-				)
-			}
-		case tuiKeySpace:
-			n := len(m.confirmOptions[m.confirmOptCursor].choices)
-			if n > 0 {
-				m.confirmOptValues[m.confirmOptCursor] = (m.confirmOptValues[m.confirmOptCursor] + 1) % n
-			}
-		case tuiKeybindVimLeft, tuiKeyLeft:
-			m.confirmOptValues[m.confirmOptCursor] = max(
-				m.confirmOptValues[m.confirmOptCursor]-1,
-				0,
-			)
-		case tuiKeyTab, tuiKeyShiftTab:
-			if m.confirmHasInput {
-				return m.focusConfirmInput()
-			}
-		case tuiKeybindConfirmSubmit, tuiKeybindConfirmYes:
-			m.confirmYes = true
+		case tuiKeyLeft, tuiKeyRight, tuiKeybindVimLeft, tuiKeybindVimRight, tuiKeySpace, tuiKeyTab:
+			m.confirmYes = !m.confirmYes
+			return m, nil
+		case tuiKeybindConfirmYes:
 			return m.confirmAccept()
 		case tuiKeybindConfirmNo, tuiKeybindQuit, tuiKeyEsc:
 			return m.confirmDismiss()
 		case tuiKeyEnter:
-			if m.confirmHasInput {
-				return m.focusConfirmInput()
+			if m.confirmYes {
+				return m.confirmAccept()
 			}
-			m.confirmYes = true
-			return m.confirmAccept()
+			return m.confirmDismiss()
 		default:
 			return m, nil
 		}
-		return m, nil
 	}
+
+	previousProvider := m.selectedReviewProvider()
 	switch msg.String() {
-	case tuiKeyLeft, tuiKeyRight, tuiKeybindVimLeft, tuiKeybindVimRight, tuiKeySpace, tuiKeyTab:
-		m.confirmYes = !m.confirmYes
+	case tuiKeybindVimDown, tuiKeyDown:
+		if m.confirmHasInput && m.confirmOptCursor == len(m.confirmOptions)-1 {
+			return m.focusConfirmInput()
+		}
+		m.confirmOptCursor = min(m.confirmOptCursor+1, len(m.confirmOptions)-1)
+	case tuiKeybindVimUp, tuiKeyUp:
+		if m.confirmHasInput && m.confirmOptCursor == 0 {
+			return m.focusConfirmInput()
+		}
+		m.confirmOptCursor = max(m.confirmOptCursor-1, 0)
+	case tuiKeybindVimRight, tuiKeyRight:
+		n := len(m.confirmOptions[m.confirmOptCursor].choices)
+		if n > 0 {
+			m.confirmOptValues[m.confirmOptCursor] = min(
+				m.confirmOptValues[m.confirmOptCursor]+1,
+				n-1,
+			)
+		}
+	case tuiKeySpace:
+		n := len(m.confirmOptions[m.confirmOptCursor].choices)
+		if n > 0 {
+			m.confirmOptValues[m.confirmOptCursor] = (m.confirmOptValues[m.confirmOptCursor] + 1) % n
+		}
+	case tuiKeybindVimLeft, tuiKeyLeft:
+		m.confirmOptValues[m.confirmOptCursor] = max(
+			m.confirmOptValues[m.confirmOptCursor]-1,
+			0,
+		)
+	case tuiKeyTab, tuiKeyShiftTab:
+		if msg.String() == tuiKeyShiftTab {
+			if m.confirmHasInput && m.confirmOptCursor == 0 {
+				return m.focusConfirmInput()
+			}
+			m.confirmOptCursor = (m.confirmOptCursor - 1 + len(m.confirmOptions)) % len(
+				m.confirmOptions,
+			)
+			return m, nil
+		}
+		if m.confirmHasInput && m.confirmOptCursor == len(m.confirmOptions)-1 {
+			return m.focusConfirmInput()
+		}
+		m.confirmOptCursor = (m.confirmOptCursor + 1) % len(m.confirmOptions)
 		return m, nil
-	case tuiKeybindConfirmYes:
+	case tuiKeybindConfirmSubmit, tuiKeybindConfirmYes:
+		m.confirmYes = true
 		return m.confirmAccept()
 	case tuiKeybindConfirmNo, tuiKeybindQuit, tuiKeyEsc:
 		return m.confirmDismiss()
 	case tuiKeyEnter:
-		if m.confirmYes {
-			return m.confirmAccept()
+		if m.confirmHasInput {
+			return m.focusConfirmInput()
 		}
-		return m.confirmDismiss()
+		m.confirmYes = true
+		return m.confirmAccept()
 	default:
 		return m, nil
 	}
+
+	m = m.syncReviewConfirmOptions(previousProvider)
+	return m, nil
 }
 
 func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -5042,6 +5279,13 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) renderConfirmModal() string {
+	boxStyle := m.styles.overlayBox.Padding(
+		1,
+		tuiConfirmPadX-1,
+		1,
+		tuiConfirmPadX-1,
+	)
+
 	var buttons string
 	if m.confirmCmd == nil && m.confirmCmdFn == nil {
 		// Info-only modal - single OK button.
@@ -5080,7 +5324,7 @@ func (m tuiModel) renderConfirmModal() string {
 		b.WriteString(m.renderConfirmInputHints())
 		// Fix width so the border stays aligned as the textarea grows.
 		boxWidth := m.confirmInputWidth() + tuiConfirmPadX*2 //nolint:mnd // border + padding
-		return m.styles.overlayBox.Width(boxWidth).Render(b.String())
+		return boxStyle.Width(boxWidth).Render(b.String())
 	}
 
 	b.WriteString("\n\n")
@@ -5092,7 +5336,7 @@ func (m tuiModel) renderConfirmModal() string {
 	if pad := (promptWidth - buttonsWidth) / 2; pad > 0 { //nolint:mnd // center
 		centered = strings.Repeat(" ", pad) + buttons
 	}
-	return m.styles.overlayBox.Render(content + centered)
+	return boxStyle.Render(content + centered)
 }
 
 func (m tuiModel) renderConfirmOptions() string {
@@ -5113,18 +5357,20 @@ func (m tuiModel) renderConfirmOptionsHeader() string {
 			if j > 0 {
 				choicesLine.WriteString("  ")
 			}
-			if i < len(m.confirmOptValues) && m.confirmOptValues[i] == j {
+			selected := i < len(m.confirmOptValues) && m.confirmOptValues[i] == j
+			active := m.confirmOptFocus && i == m.confirmOptCursor
+			switch {
+			case selected && active:
+				choicesLine.WriteString(styleHighlight.Bold(true).Render(choice.label))
+			case selected:
 				choicesLine.WriteString(styleTitle.Bold(true).Render(choice.label))
-			} else {
+			case active:
+				choicesLine.WriteString(styleHighlight.Faint(true).Render(choice.label))
+			default:
 				choicesLine.WriteString(lg.NewStyle().Faint(true).Render(choice.label))
 			}
 		}
-		rendered := choicesLine.String()
-		if m.confirmOptFocus && i == m.confirmOptCursor {
-			b.WriteString(injectLineBackground(rendered, m.confirmInputWidth(), cursorLineBG))
-		} else {
-			b.WriteString(rendered)
-		}
+		b.WriteString(choicesLine.String())
 		b.WriteString("\n\n")
 	}
 	return b.String()
@@ -5197,39 +5443,64 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmOptValues = nil
 	m.confirmOptCursor = 0
 	m.confirmOptFocus = false
+	m.confirmReviewPR = nil
 	m.confirmInput.SetWidth(tuiConfirmInputWidth)
 	m.confirmInput.Blur()
 	m.confirmInput.SetValue("")
 	return m
 }
 
-func (m tuiModel) prepareClaudeReviewConfirm(pr PullRequest, idx int) tuiModel {
+func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	prCopy := pr
+	provider := configuredReviewProvider(m.cfg)
+	model := configuredReviewModel(m.cfg, provider)
+	effort := configuredReviewEffort(m.cfg, provider, model)
 	m.confirmAction = tuiActionReview
 	m.confirmYes = true
 	m.confirmHasInput = true
 	m.confirmInputLabel = "Prompt"
-	m.confirmOptions = []filterOptionDef{{
-		label:   claudeReviewModelOptionLabel,
-		choices: claudeReviewModelChoices,
-	}}
+	m.confirmOptions = []filterOptionDef{
+		{
+			label:   reviewProviderOptionLabel,
+			choices: reviewProviderChoices,
+		},
+		{
+			label:   reviewModelOptionLabel,
+			choices: reviewModelChoices(provider),
+		},
+		{
+			label:   reviewEffortOptionLabel,
+			choices: reviewEffortChoices(provider, model),
+		},
+	}
 	m.confirmOptValues = []int{
-		choiceIndex(claudeReviewModelChoices, string(defaultClaudeReviewModel)),
+		choiceIndex(reviewProviderChoices, string(provider)),
+		choiceIndex(reviewModelChoices(provider), model),
+		choiceIndex(reviewEffortChoices(provider, model), effort),
 	}
 	m.confirmOptCursor = 0
-	m.confirmOptFocus = false
+	m.confirmOptFocus = true
+	m.confirmReviewPR = &prCopy
+	m = m.setConfirmInputPlaceholder("Leave blank to use the default prompt")
 	m.confirmInput.SetWidth(m.confirmInputWidth())
-	_ = m.confirmInput.Focus()
-	m.confirmInput.SetValue(claudeReviewPrompt(pr, m.cfg))
-	m.confirmPrompt = "Launch Claude review for " + styledRef(&prCopy) + "?"
+	m.confirmInput.Blur()
+	m.confirmInput.SetValue(reviewPrompt(pr, m.cfg, provider))
+	m.confirmPrompt = "Launch AI review for " + styledRef(&prCopy) + "?"
 	m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
 		prompt := submission.Input
-		model := normalizeClaudeReviewModel(
-			claudeReviewModel(submission.Option(claudeReviewModelOptionLabel)),
+		provider := normalizeReviewProvider(submission.Option(reviewProviderOptionLabel))
+		if provider == reviewProviderUnknown {
+			provider = configuredReviewProvider(m.cfg)
+		}
+		model := normalizeReviewModel(provider, submission.Option(reviewModelOptionLabel))
+		effort := normalizeReviewEffort(
+			provider,
+			model,
+			submission.Option(reviewEffortOptionLabel),
 		)
 		return func() tea.Msg {
-			err := launchClaudeReview(prCopy, prompt, model)
-			return claudeReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
+			err := launchAIReview(prCopy, prompt, provider, model, effort)
+			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 	}
 	return m
@@ -5430,10 +5701,16 @@ func highlightWithChroma(raw string) string {
 	return buf.String()
 }
 
-// launchClaudeReview opens a new terminal tab, clones the PR there, and
-// launches a Claude session in that tab. Cloning happens in the new tab
+// launchAIReview opens a new terminal tab, clones the PR there, and
+// launches an AI review session in that tab. Cloning happens in the new tab
 // so SSH prompts and progress are visible to the user.
-func launchClaudeReview(pr PullRequest, prompt string, model claudeReviewModel) error {
+func launchAIReview(
+	pr PullRequest,
+	prompt string,
+	provider reviewProvider,
+	model string,
+	effort string,
+) error {
 	launcher := currentClaudeReviewLauncher()
 	if launcher == claudeLauncherNone {
 		return fmt.Errorf("unsupported terminal %q", os.Getenv("TERM_PROGRAM"))
@@ -5441,7 +5718,7 @@ func launchClaudeReview(pr PullRequest, prompt string, model claudeReviewModel) 
 
 	script, err := buildClaudeReviewAppleScript(
 		launcher,
-		buildClaudeReviewCommand(pr, prompt, normalizeClaudeReviewModel(model)),
+		buildAIReviewCommand(pr, prompt, provider, model, effort),
 	)
 	if err != nil {
 		return err
@@ -5459,7 +5736,13 @@ func launchClaudeReview(pr PullRequest, prompt string, model claudeReviewModel) 
 	return nil
 }
 
-func buildClaudeReviewCommand(pr PullRequest, prompt string, model claudeReviewModel) string {
+func buildAIReviewCommand(
+	pr PullRequest,
+	prompt string,
+	provider reviewProvider,
+	model string,
+	effort string,
+) string {
 	nwo := pr.Repository.NameWithOwner
 
 	// Clone repo and checkout the PR ref in the new tab so the user sees
@@ -5472,13 +5755,41 @@ func buildClaudeReviewCommand(pr PullRequest, prompt string, model claudeReviewM
 		cacheHome = os.Getenv("HOME") + "/.cache"
 	}
 	reviewDir := fmt.Sprintf("%s/prl/reviews/%s/%d", cacheHome, pr.Repository.Name, pr.Number)
-	modelArg := "--model=" + string(normalizeClaudeReviewModel(model))
-	return fmt.Sprintf(
-		"/usr/bin/trash %[1]q 2>/dev/null; /bin/mkdir -p %[1]q && cd %[1]q && git clone --quiet --depth 1 %[2]q . && git fetch origin refs/pull/%[3]d/head:pr-%[3]d --no-tags && git checkout pr-%[3]d && claude %[4]s --allowedTools 'Bash(gh:*)' --system-prompt %[5]q %[6]q",
+	baseCmd := fmt.Sprintf(
+		"/usr/bin/trash %[1]q 2>/dev/null; /bin/mkdir -p %[1]q && cd %[1]q && git clone --quiet --depth 1 %[2]q . && git fetch origin refs/pull/%[3]d/head:pr-%[3]d --no-tags && git checkout pr-%[3]d && ",
 		reviewDir,
 		remote,
 		pr.Number,
-		modelArg,
+	)
+	switch provider {
+	case reviewProviderCodex:
+		return baseCmd + fmt.Sprintf(
+			"codex -m %[1]q -c model_reasoning_effort=%[2]q %[3]q",
+			normalizeReviewModel(provider, model),
+			normalizeReviewEffort(provider, model, effort),
+			prompt,
+		)
+	case reviewProviderUnknown:
+		return baseCmd + fmt.Sprintf(
+			"claude --model=%[1]s --effort=%[2]s --allowedTools 'Bash(gh:*)' --system-prompt %[3]q %[4]q",
+			normalizeReviewModel(provider, model),
+			normalizeReviewEffort(provider, model, effort),
+			"You are an expert code reviewer. Be thorough, precise, and actionable.",
+			prompt,
+		)
+	case reviewProviderClaude:
+		return baseCmd + fmt.Sprintf(
+			"claude --model=%[1]s --effort=%[2]s --allowedTools 'Bash(gh:*)' --system-prompt %[3]q %[4]q",
+			normalizeReviewModel(provider, model),
+			normalizeReviewEffort(provider, model, effort),
+			"You are an expert code reviewer. Be thorough, precise, and actionable.",
+			prompt,
+		)
+	}
+	return baseCmd + fmt.Sprintf(
+		"claude --model=%[1]s --effort=%[2]s --allowedTools 'Bash(gh:*)' --system-prompt %[3]q %[4]q",
+		normalizeReviewModel(provider, model),
+		normalizeReviewEffort(provider, model, effort),
 		"You are an expert code reviewer. Be thorough, precise, and actionable.",
 		prompt,
 	)
