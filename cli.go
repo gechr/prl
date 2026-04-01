@@ -164,9 +164,6 @@ func (c *CLI) Validate() error {
 	if sending && c.Web {
 		return fmt.Errorf("--send and --web are mutually exclusive")
 	}
-	if c.Author != nil && len(c.Team.Values) > 0 {
-		return fmt.Errorf("--author and --team are mutually exclusive")
-	}
 	if c.Interactive && c.HasAction() {
 		return fmt.Errorf("--interactive cannot be combined with action flags")
 	}

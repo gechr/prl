@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,4 +317,48 @@ func TestBuildORQualifier_Empty(t *testing.T) {
 func TestBuildORQualifier_Two(t *testing.T) {
 	got := buildORQualifier("author", []string{"a", "b"})
 	require.Equal(t, "(author:a OR author:b)", got)
+}
+
+func TestBuildSearchQuery_MergesAuthorAndTeamWithoutDuplicates(t *testing.T) {
+	usersCacheOnce = sync.Once{}
+	usersCacheResult = nil
+	errUsersCache = nil
+
+	membershipDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(membershipDir, "groups_sg2.tf"), []byte(`
+module "sg2_team" {
+  name = "sg2"
+  members = [
+    module.team_members["user_1"],
+    module.team_members["user_2"],
+  ]
+}
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(membershipDir, "users.tf"), []byte(`
+locals {
+  users = {
+    user_1 = {
+      github_username = "user-1"
+    }
+    user_2 = {
+      github_username = "USER-2"
+    }
+  }
+}
+`), 0o644))
+
+	author := CSVFlag{Values: []string{"user-1", "user-2"}}
+	params, err := buildSearchQuery(&CLI{
+		Author: &author,
+		Team:   CSVFlag{Values: []string{"sg2"}},
+	}, &Config{
+		TerraformMemberDir: membershipDir,
+	})
+	require.NoError(t, err)
+	require.Contains(t, params.Query, "(author:user-1 OR author:user-2)")
+	require.Equal(t, 1, strings.Count(params.Query, "author:user-1"))
+	require.Equal(t, 1, strings.Count(params.Query, "author:user-2"))
+	require.NotContains(t, params.Query, "author:USER-2")
+	require.NotContains(t, params.Query, "author:user_1")
+	require.NotContains(t, params.Query, "author:user_2")
 }

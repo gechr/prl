@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	clib "github.com/gechr/clib/cli/kong"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,4 +31,14 @@ func TestQueryString(t *testing.T) {
 			require.Equal(t, tt.want, cli.QueryString())
 		})
 	}
+}
+
+func TestValidate_AllowsAuthorAndTeamTogether(t *testing.T) {
+	author := clib.CSVFlag{Values: []string{"user-1"}}
+	cli := &CLI{
+		Author: &author,
+		Team:   clib.CSVFlag{Values: []string{"sg2"}},
+	}
+
+	require.NoError(t, cli.Validate())
 }

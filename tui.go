@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"al.essio.dev/pkg/shellescape"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -5756,42 +5757,50 @@ func buildAIReviewCommand(
 	}
 	reviewDir := fmt.Sprintf("%s/prl/reviews/%s/%d", cacheHome, pr.Repository.Name, pr.Number)
 	baseCmd := fmt.Sprintf(
-		"/usr/bin/trash %[1]q 2>/dev/null; /bin/mkdir -p %[1]q && cd %[1]q && git clone --quiet --depth 1 %[2]q . && git fetch origin refs/pull/%[3]d/head:pr-%[3]d --no-tags && git checkout pr-%[3]d && ",
-		reviewDir,
-		remote,
+		"/usr/bin/trash %s 2>/dev/null; /bin/mkdir -p %s && cd %s && git clone --quiet --depth 1 %s . && git fetch origin refs/pull/%d/head:pr-%d --no-tags && git checkout pr-%d && ",
+		shellescape.Quote(reviewDir),
+		shellescape.Quote(reviewDir),
+		shellescape.Quote(reviewDir),
+		shellescape.Quote(remote),
+		pr.Number,
+		pr.Number,
 		pr.Number,
 	)
 	switch provider {
 	case reviewProviderCodex:
 		return baseCmd + fmt.Sprintf(
-			"codex -m %[1]q -c model_reasoning_effort=%[2]q %[3]q",
-			normalizeReviewModel(provider, model),
-			normalizeReviewEffort(provider, model, effort),
-			prompt,
+			"codex -m %s -c model_reasoning_effort=%s %s",
+			shellescape.Quote(normalizeReviewModel(provider, model)),
+			shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+			shellescape.Quote(prompt),
 		)
 	case reviewProviderUnknown:
 		return baseCmd + fmt.Sprintf(
-			"claude --model=%[1]s --effort=%[2]s --allowedTools 'Bash(gh:*)' --system-prompt %[3]q %[4]q",
-			normalizeReviewModel(provider, model),
-			normalizeReviewEffort(provider, model, effort),
-			"You are an expert code reviewer. Be thorough, precise, and actionable.",
-			prompt,
+			"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+			shellescape.Quote(normalizeReviewModel(provider, model)),
+			shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+			shellescape.Quote(
+				"You are an expert code reviewer. Be thorough, precise, and actionable.",
+			),
+			shellescape.Quote(prompt),
 		)
 	case reviewProviderClaude:
 		return baseCmd + fmt.Sprintf(
-			"claude --model=%[1]s --effort=%[2]s --allowedTools 'Bash(gh:*)' --system-prompt %[3]q %[4]q",
-			normalizeReviewModel(provider, model),
-			normalizeReviewEffort(provider, model, effort),
-			"You are an expert code reviewer. Be thorough, precise, and actionable.",
-			prompt,
+			"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+			shellescape.Quote(normalizeReviewModel(provider, model)),
+			shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+			shellescape.Quote(
+				"You are an expert code reviewer. Be thorough, precise, and actionable.",
+			),
+			shellescape.Quote(prompt),
 		)
 	}
 	return baseCmd + fmt.Sprintf(
-		"claude --model=%[1]s --effort=%[2]s --allowedTools 'Bash(gh:*)' --system-prompt %[3]q %[4]q",
-		normalizeReviewModel(provider, model),
-		normalizeReviewEffort(provider, model, effort),
-		"You are an expert code reviewer. Be thorough, precise, and actionable.",
-		prompt,
+		"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+		shellescape.Quote(normalizeReviewModel(provider, model)),
+		shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+		shellescape.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
+		shellescape.Quote(prompt),
 	)
 }
 

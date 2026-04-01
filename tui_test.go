@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"al.essio.dev/pkg/shellescape"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
@@ -156,13 +157,20 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		claudeReviewModelSonnet,
 		claudeReviewEffortHigh,
 	)
-	require.Equal(t, 1, strings.Count(cmd, "--model=sonnet"))
-	require.Equal(t, 0, strings.Count(cmd, "--model=opus"))
-	require.Equal(t, 1, strings.Count(cmd, "--effort=high"))
+	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelSonnet)))
+	require.Equal(t, 0, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelOpus)))
+	require.Equal(t, 1, strings.Count(cmd, "--effort="+shellescape.Quote(claudeReviewEffortHigh)))
 
 	cmd = buildAIReviewCommand(pr, "review prompt", reviewProviderClaude, "", "")
-	require.Equal(t, 1, strings.Count(cmd, "--model=opus"))
-	require.Equal(t, 1, strings.Count(cmd, "--effort=medium"))
+	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelOpus)))
+	require.Equal(
+		t,
+		1,
+		strings.Count(
+			cmd,
+			"--effort="+shellescape.Quote(claudeReviewEffortMedium),
+		),
+	)
 
 	cmd = buildAIReviewCommand(
 		pr,
@@ -174,8 +182,33 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	require.Contains(
 		t,
 		cmd,
-		`codex -m "gpt-5.4-mini" -c model_reasoning_effort="xhigh" "review prompt"`,
+		fmt.Sprintf(
+			"codex -m %s -c model_reasoning_effort=%s %s",
+			shellescape.Quote(codexReviewModel54Mini),
+			shellescape.Quote(codexReviewEffortXHigh),
+			shellescape.Quote("review prompt"),
+		),
 	)
+}
+
+func TestBuildAIReviewCommandPreservesPromptNewlines(t *testing.T) {
+	pr := testReviewPullRequest()
+	prompt := "line one\n\nline two"
+
+	cmd := buildAIReviewCommand(
+		pr,
+		prompt,
+		reviewProviderCodex,
+		codexReviewModel54,
+		codexReviewEffortMedium,
+	)
+
+	require.Contains(t, cmd, "'line one\n\nline two'")
+	require.NotContains(t, cmd, `line one\n\nline two`)
+}
+
+func TestShellSingleQuoteEscapesSingleQuotes(t *testing.T) {
+	require.Equal(t, `'it'"'"'s fine'`, shellescape.Quote("it's fine"))
 }
 
 func TestDefaultAIReviewPromptUsesParagraphs(t *testing.T) {

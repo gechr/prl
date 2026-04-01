@@ -84,13 +84,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		}
 	}
 
-	// Author filter (only when no team)
-	if len(cli.Team.Values) == 0 && len(cli.Author.Values) > 0 {
-		filtered := filterAllValue(cli.Author.Values)
-		if q := buildORQualifier("author", filtered); q != "" {
-			qualifiers = append(qualifiers, q)
-		}
-	}
+	authorFilters := deduplicate(filterAllValue(cli.Author.Values), true)
 
 	// Commenter filter
 	commenterVals := filterAllValue(cli.Commenter.Values)
@@ -129,7 +123,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		}
 	}
 
-	// Team filter: resolve members and add as author OR filter
+	// Team filter: resolve members and merge with explicit authors.
 	if len(cli.Team.Values) > 0 {
 		var allMembers []string
 		for _, team := range cli.Team.Values {
@@ -142,7 +136,10 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 			}
 			allMembers = append(allMembers, members...)
 		}
-		qualifiers = append(qualifiers, buildORQualifier("author", allMembers))
+		authorFilters = deduplicate(append(authorFilters, allMembers...), true)
+	}
+	if q := buildORQualifier("author", authorFilters); q != "" {
+		qualifiers = append(qualifiers, q)
 	}
 
 	// Topic filter: resolve repos and add as repo OR filter
