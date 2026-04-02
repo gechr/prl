@@ -645,11 +645,11 @@ type tuiModel struct {
 	diff            string
 	diffLines       []string
 	diffKey         prKey
-	diffScroll      int
+	diffView        viewport.Model
 	detail          PRDetail
 	detailLines     []string
 	detailKey       prKey
-	detailScroll    int
+	detailView      viewport.Model
 	detailRefreshID int
 	detailLoading   bool
 	statusMsg       string
@@ -1248,11 +1248,6 @@ func (m tuiModel) detailHasPendingChecks() bool {
 	return false
 }
 
-func (m *tuiModel) clampDetailScroll() {
-	maxScroll := max(0, len(m.detailLines)-m.detailViewport())
-	m.detailScroll = min(max(m.detailScroll, 0), maxScroll)
-}
-
 func (m tuiModel) scheduleDetailRefresh() tea.Cmd {
 	if m.view != tuiViewDetail || m.diffLoading || m.detailKey == "" ||
 		!m.detailHasPendingChecks() {
@@ -1381,12 +1376,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.header, m.rows, m.colWidths = m.rerender()
 		if m.view == tuiViewDiff {
-			m.diffLines = wrapDiffLines(m.diff, m.width)
-			m.diffScroll = min(m.diffScroll, m.diffMaxScroll())
+			m.diffLines = wrapDiffLines(m.diff, m.width-tuiScrollbarWidth)
+			m.syncDiffView()
 		}
 		if m.view == tuiViewDetail && len(m.detailLines) > 0 {
 			m.detailLines = m.renderDetailContent()
-			m.clampDetailScroll()
+			m.syncDetailView()
 		}
 		if m.confirmAction != "" {
 			m.confirmInput.SetWidth(m.confirmInputWidth())
@@ -1425,28 +1420,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case tuiViewDiff:
-			switch msg.Button {
-			case tea.MouseWheelDown:
-				if m.diffScroll < m.diffMaxScroll() {
-					m.diffScroll++
-				}
-			case tea.MouseWheelUp:
-				if m.diffScroll > 0 {
-					m.diffScroll--
-				}
-			}
+			m.diffView, _ = m.diffView.Update(msg)
 		case tuiViewDetail:
-			viewport := m.detailViewport()
-			switch msg.Button {
-			case tea.MouseWheelDown:
-				if m.detailScroll < len(m.detailLines)-viewport {
-					m.detailScroll++
-				}
-			case tea.MouseWheelUp:
-				if m.detailScroll > 0 {
-					m.detailScroll--
-				}
-			}
+			m.detailView, _ = m.detailView.Update(msg)
 		}
 		return m, nil
 
@@ -1568,11 +1544,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.view == tuiViewDetail {
 			m.stopDetailRefresh(true)
 		}
+		m.refreshTerminalSize()
 		m.diffKey = msg.key
 		pr := m.rows[idx].Item.PR
 		m.diff = highlightDiff(msg.diff, pr.URL, msg.headSHA)
-		m.diffLines = wrapDiffLines(m.diff, m.width)
-		m.diffScroll = 0
+		m.diffLines = wrapDiffLines(m.diff, m.width-tuiScrollbarWidth)
+		m.syncDiffView()
+		m.diffView.GotoTop()
 		m.view = tuiViewDiff
 		m.statusMsg = ""
 		return m, nil
@@ -1586,10 +1564,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx < 0 {
 			return m, nil // PR no longer in list
 		}
+		m.refreshTerminalSize()
 		m.detailKey = msg.key
 		m.detail = msg.detail
 		m.detailLines = m.renderDetailContent()
-		m.detailScroll = 0
+		m.syncDetailView()
+		m.detailView.GotoTop()
 		m.view = tuiViewDetail
 		m.statusMsg = ""
 		return m, m.scheduleDetailRefresh()
@@ -1624,11 +1604,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Msg("Detail check refresh failed")
 			return m, m.scheduleDetailRefresh()
 		}
-		scroll := m.detailScroll
 		m.detail.Checks = msg.checks
 		m.detailLines = m.renderDetailContent()
-		m.detailScroll = scroll
-		m.clampDetailScroll()
+		m.syncDetailView()
 		return m, m.scheduleDetailRefresh()
 
 	case aiReviewMsg:
@@ -1844,6 +1822,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if pr == nil {
 			return m, nil
 		}
+		m.refreshTerminalSize()
 		idx := m.cursor
 		actions := m.actions
 		prCopy := *pr
@@ -1852,11 +1831,12 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusErr = false
 		m.detailLoading = true
 		key := makePRKey(prCopy)
-		return m, func() tea.Msg {
+		fetchCmd := func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
 			detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number, prCopy.NodeID)
 			return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
 		}
+		return m, tea.Batch(requestWindowSizeCmd(), fetchCmd)
 
 	case tuiKeybindVimDown, tuiKeyDown:
 		if next, ok := m.nextVisible(1); ok {
@@ -1988,9 +1968,10 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		first := targets[0]
 		actions := m.actions
+		m.refreshTerminalSize()
 		m.diffLoading = true
 		flashPending(&m, statusDiffing, &first.pr)
-		return m, func() tea.Msg {
+		fetchCmd := func() tea.Msg {
 			owner, repo := prOwnerRepo(first.pr)
 			diff, headSHA, err := actions.fetchDiff(owner, repo, first.pr.Number)
 			return diffFetchedMsg{
@@ -2001,6 +1982,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:     err,
 			}
 		}
+		return m, tea.Batch(requestWindowSizeCmd(), fetchCmd)
 
 	case tuiKeybindMerge:
 		targets := m.targetMergeablePRs()
@@ -2641,7 +2623,6 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirmAction != "" {
 		return m.updateConfirmOverlay(msg)
 	}
-	maxScroll := m.diffMaxScroll()
 	switch msg.String() {
 	case tuiKeybindQuit, tuiKeyEsc, tuiKeybindDiff:
 		return m, m.exitDiffView()
@@ -2680,26 +2661,22 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case tuiKeybindVimDown, tuiKeyDown:
-		if m.diffScroll < maxScroll {
-			m.diffScroll++
-		}
+		m.diffView.ScrollDown(1)
 		return m, nil
 	case tuiKeybindVimUp, tuiKeyUp:
-		if m.diffScroll > 0 {
-			m.diffScroll--
-		}
+		m.diffView.ScrollUp(1)
 		return m, nil
 	case tuiKeyCtrlF, tuiKeySpace:
-		m.diffScroll = min(m.diffScroll+m.diffContentViewport(), maxScroll)
+		m.diffView.PageDown()
 		return m, nil
 	case tuiKeyCtrlB:
-		m.diffScroll = max(m.diffScroll-m.diffContentViewport(), 0)
+		m.diffView.PageUp()
 		return m, nil
 	case tuiKeybindTop:
-		m.diffScroll = 0
+		m.diffView.GotoTop()
 		return m, nil
 	case tuiKeybindBottom:
-		m.diffScroll = maxScroll
+		m.diffView.GotoBottom()
 		return m, nil
 	case tuiKeybindApprove, tuiKeybindApproveAlias, tuiKeybindApproveNoConfirm:
 		idx := m.resolveIndex(m.diffKey, -1)
@@ -3018,34 +2995,26 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirmAction != "" {
 		return m.updateConfirmOverlay(msg)
 	}
-	viewport := m.detailViewport()
 	switch msg.String() {
 	case tuiKeybindQuit, tuiKeyEsc, tuiKeyEnter:
 		return m, m.exitDetailView()
 	case tuiKeybindVimDown, tuiKeyDown:
-		if m.detailScroll < len(m.detailLines)-viewport {
-			m.detailScroll++
-		}
+		m.detailView.ScrollDown(1)
 		return m, nil
 	case tuiKeybindVimUp, tuiKeyUp:
-		if m.detailScroll > 0 {
-			m.detailScroll--
-		}
+		m.detailView.ScrollUp(1)
 		return m, nil
 	case tuiKeyCtrlF, tuiKeySpace:
-		maxScroll := max(0, len(m.detailLines)-viewport)
-		m.detailScroll = min(m.detailScroll+viewport, maxScroll)
+		m.detailView.PageDown()
 		return m, nil
 	case tuiKeyCtrlB:
-		m.detailScroll = max(m.detailScroll-viewport, 0)
+		m.detailView.PageUp()
 		return m, nil
 	case tuiKeybindTop:
-		m.detailScroll = 0
+		m.detailView.GotoTop()
 		return m, nil
 	case tuiKeybindBottom:
-		if end := len(m.detailLines) - viewport; end > 0 {
-			m.detailScroll = end
-		}
+		m.detailView.GotoBottom()
 		return m, nil
 	case tuiKeybindDiff:
 		// Jump to diff from detail view.
@@ -3056,8 +3025,9 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		pr := m.rows[idx].Item.PR
 		actions := m.actions
 		prCopy := pr
+		m.refreshTerminalSize()
 		m.diffLoading = true
-		return m, func() tea.Msg {
+		fetchCmd := func() tea.Msg {
 			owner, repo := prOwnerRepo(prCopy)
 			diff, headSHA, err := actions.fetchDiff(owner, repo, prCopy.Number)
 			return diffFetchedMsg{
@@ -3068,6 +3038,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:     err,
 			}
 		}
+		return m, tea.Batch(requestWindowSizeCmd(), fetchCmd)
 	case tuiKeybindApprove, tuiKeybindApproveAlias:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {
@@ -3410,7 +3381,7 @@ func (m tuiModel) viewList() tea.View {
 		b.WriteString(m.appendRightStatus(help, status))
 	}
 
-	v := tea.NewView(b.String())
+	v := tea.NewView(expandTabs(b.String()))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	m.applyRepaintMarker(&v)
@@ -3419,7 +3390,6 @@ func (m tuiModel) viewList() tea.View {
 
 func (m tuiModel) viewDiff() tea.View {
 	var b strings.Builder
-	viewport := m.diffContentViewport()
 
 	// PR title header.
 	headerStyle := styleLabel.Bold(true)
@@ -3447,18 +3417,20 @@ func (m tuiModel) viewDiff() tea.View {
 		b.WriteString("\n")
 	}
 
-	// Diff content.
-	end := min(m.diffScroll+viewport, len(m.diffLines))
-	for _, line := range m.diffLines[m.diffScroll:end] {
-		b.WriteString(line)
+	// Diff content via viewport.
+	totalLines := m.diffView.TotalLineCount()
+	vpHeight := m.diffView.Height()
+	switch {
+	case vpHeight <= 0:
 		b.WriteString("\n")
+	case totalLines > vpHeight:
+		b.WriteString(
+			m.appendScrollbar(m.diffView.View(), vpHeight, totalLines, m.diffView.ScrollPercent()),
+		)
+	default:
+		b.WriteString(m.diffView.View())
 	}
-
-	// Pad remaining.
-	rendered := end - m.diffScroll
-	for range viewport - rendered {
-		b.WriteString("\n")
-	}
+	b.WriteString("\n")
 
 	// Separator.
 	if m.width > 0 {
@@ -3472,18 +3444,18 @@ func (m tuiModel) viewDiff() tea.View {
 		b.WriteString(m.appendStatus(help))
 	} else {
 		status := ""
-		if total := len(m.diffLines); m.diffMaxScroll() > 0 {
-			vp := m.diffContentViewport()
-			end := min(m.diffScroll+vp, total)
-			pct := scrollPercent(m.diffScroll, total, vp)
+		if totalLines > vpHeight {
+			offset := m.diffView.YOffset()
+			end := min(offset+vpHeight, totalLines)
+			pct := int(math.Round(m.diffView.ScrollPercent() * 100)) //nolint:mnd // percent
 			status = m.styles.statusOK.Render(
-				fmt.Sprintf("%d-%d/%d (%d%%)", m.diffScroll+1, end, total, pct),
+				fmt.Sprintf("%d-%d/%d (%d%%)", offset+1, end, totalLines, pct),
 			)
 		}
 		b.WriteString(m.appendRightStatus(help, status))
 	}
 
-	v := tea.NewView(b.String())
+	v := tea.NewView(m.fillViewToTerminal(b.String()))
 	v.AltScreen = true
 	if m.confirmAction != "" {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
@@ -3581,20 +3553,26 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 
 func (m tuiModel) viewDetail() tea.View {
 	var b strings.Builder
-	viewport := m.detailViewport()
 
-	// Content.
-	end := min(m.detailScroll+viewport, len(m.detailLines))
-	for _, line := range m.detailLines[m.detailScroll:end] {
-		b.WriteString(truncateDisplayLine(line, m.width))
+	// Detail content via viewport.
+	totalLines := m.detailView.TotalLineCount()
+	vpHeight := m.detailView.Height()
+	switch {
+	case vpHeight <= 0:
 		b.WriteString("\n")
+	case totalLines > vpHeight:
+		b.WriteString(
+			m.appendScrollbar(
+				m.detailView.View(),
+				vpHeight,
+				totalLines,
+				m.detailView.ScrollPercent(),
+			),
+		)
+	default:
+		b.WriteString(m.detailView.View())
 	}
-
-	// Pad remaining.
-	rendered := end - m.detailScroll
-	for range viewport - rendered {
-		b.WriteString("\n")
-	}
+	b.WriteString("\n")
 
 	// Separator.
 	if m.width > 0 {
@@ -3608,17 +3586,18 @@ func (m tuiModel) viewDetail() tea.View {
 		b.WriteString(m.appendStatus(help))
 	} else {
 		status := ""
-		if total := len(m.detailLines); total > viewport {
-			end := min(m.detailScroll+viewport, total)
-			pct := scrollPercent(m.detailScroll, total, viewport)
+		if totalLines > vpHeight {
+			offset := m.detailView.YOffset()
+			end := min(offset+vpHeight, totalLines)
+			pct := int(math.Round(m.detailView.ScrollPercent() * 100)) //nolint:mnd // percent
 			status = m.styles.statusOK.Render(
-				fmt.Sprintf("%d-%d/%d (%d%%)", m.detailScroll+1, end, total, pct),
+				fmt.Sprintf("%d-%d/%d (%d%%)", offset+1, end, totalLines, pct),
 			)
 		}
 		b.WriteString(m.appendRightStatus(help, status))
 	}
 
-	v := tea.NewView(b.String())
+	v := tea.NewView(m.fillViewToTerminal(b.String()))
 	v.AltScreen = true
 	if m.confirmAction != "" {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
@@ -3627,12 +3606,58 @@ func (m tuiModel) viewDetail() tea.View {
 	return v
 }
 
+func (m tuiModel) fillViewToTerminal(output string) string {
+	output = expandTabs(output)
+	if m.width <= 0 || m.height <= 0 {
+		return output
+	}
+
+	// Extend short views to the terminal height so the next fullscreen render
+	// has blank rows available below the content.
+	lines := strings.Split(output, "\n")
+	blank := strings.Repeat(" ", m.width)
+	for len(lines) < m.height {
+		lines = append(lines, blank)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m tuiModel) detailViewport() int {
 	h := 1 + m.helpLines(m.detailHelpPairs())
 	if m.height <= h {
 		return 1
 	}
 	return m.height - h
+}
+
+func requestWindowSizeCmd() tea.Cmd {
+	return tea.RequestWindowSize
+}
+
+func (m *tuiModel) refreshTerminalSize() {
+	width, height := term.Size(os.Stdout)
+	if width <= 0 || height <= 0 {
+		return
+	}
+	if width == m.width && height == m.height {
+		return
+	}
+
+	m.width = width
+	m.height = height
+	m.header, m.rows, m.colWidths = m.rerender()
+	if m.view == tuiViewDiff {
+		m.diffLines = wrapDiffLines(m.diff, m.width-tuiScrollbarWidth)
+		m.syncDiffView()
+	}
+	if m.view == tuiViewDetail && len(m.detailLines) > 0 {
+		m.detailLines = m.renderDetailContent()
+		m.syncDetailView()
+	}
+	if m.confirmAction != "" {
+		m.confirmInput.SetWidth(m.confirmInputWidth())
+		m.confirmInput.MaxHeight = m.confirmTextareaMaxHeight()
+	}
 }
 
 // renderDetailContent builds the detail view lines from the PR and its detail data.
@@ -3861,10 +3886,6 @@ func (m tuiModel) diffContentViewport() int {
 		viewport -= 2 // title + separator above the diff body
 	}
 	return max(0, viewport)
-}
-
-func (m tuiModel) diffMaxScroll() int {
-	return max(0, len(m.diffLines)-m.diffContentViewport())
 }
 
 // scrollPercent returns the scroll position as a percentage in the style of
@@ -4882,6 +4903,7 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	if status == "" || m.width <= 0 {
 		return help
 	}
+	usableWidth := max(1, m.width-1)
 	lastNL := strings.LastIndex(help, "\n")
 	prefix := ""
 	lastLine := help
@@ -4893,9 +4915,9 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	// Drop help pairs from the right until status fits.
 	const helpGap = "  "
 	for {
-		pad := m.width - lg.Width(lastLine) - sw - 1
+		pad := usableWidth - lg.Width(lastLine) - sw
 		if pad > 0 {
-			return prefix + lastLine + strings.Repeat(" ", pad) + status + " "
+			return prefix + lastLine + strings.Repeat(" ", pad) + status
 		}
 		// Remove the rightmost help pair.
 		idx := strings.LastIndex(lastLine, helpGap)
@@ -4904,22 +4926,13 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 		}
 		lastLine = lastLine[:idx]
 	}
-	// No pairs left - wrap status across up to 3 lines, right-aligned.
-	var lines []string
-	for range 3 {
-		if lg.Width(status) <= m.width {
-			lines = append(lines, status)
-			break
-		}
-		line := xansi.Truncate(status, m.width, "")
-		lines = append(lines, line)
-		status = strings.TrimPrefix(status, xansi.Strip(line))
+
+	// No pairs left. Keep status on a single line so transient footer updates
+	// don't change the overall view height.
+	if sw < usableWidth {
+		return prefix + strings.Repeat(" ", usableWidth-sw) + status
 	}
-	wrapped := strings.Join(lines, "\n")
-	if prefix != "" {
-		return prefix + wrapped
-	}
-	return wrapped
+	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
 }
 
 func (m tuiModel) renderHelp(pairs []helpPair) string {
@@ -5043,10 +5056,16 @@ func newConfirmInput() textarea.Model {
 	return ci
 }
 
-func newConfirmView() viewport.Model {
+func newScrollView() viewport.Model {
 	v := viewport.New()
-	v.KeyMap = viewport.KeyMap{} // disable all key bindings — confirm overlay handles its own
+	v.KeyMap = viewport.KeyMap{} // disable all key bindings - views handle their own
 	v.MouseWheelEnabled = true
+	v.MouseWheelDelta = 1
+	return v
+}
+
+func newScrollViewSoftWrap() viewport.Model {
+	v := newScrollView()
 	v.SoftWrap = true
 	return v
 }
@@ -5129,9 +5148,9 @@ func (m tuiModel) confirmTextareaMaxHeight() int {
 	return min(available, tuiConfirmInputMaxHeight)
 }
 
-// confirmModalContent returns the scrollable inner content for the confirm
-// modal (prompt + options + textarea). Hints are rendered separately below the
-// viewport so they stay pinned at the bottom.
+// confirmModalContent returns the inner content string for the confirm modal
+// (prompt + options + textarea + hints). Hints are omitted when the modal
+// needs scrolling to maximise usable space.
 func (m tuiModel) confirmModalContent() string {
 	var b strings.Builder
 	b.WriteString(m.confirmPrompt)
@@ -5145,6 +5164,13 @@ func (m tuiModel) confirmModalContent() string {
 		b.WriteString(m.styles.helpKey.Render(label))
 		b.WriteString("\n")
 		b.WriteString(m.confirmInput.View())
+
+		// Only include hints when there is enough room.
+		hints := "\n\n" + m.renderConfirmInputHints()
+		total := strings.Count(b.String(), "\n") + 1 + strings.Count(hints, "\n")
+		if total <= m.confirmViewport() {
+			b.WriteString(hints)
+		}
 	} else {
 		b.WriteString("\n\n")
 	}
@@ -5159,7 +5185,23 @@ func (m *tuiModel) syncConfirmView() {
 	scrollbarWidth := tuiScrollbarWidth
 	m.confirmView.SetWidth(max(1, boxWidth-(tuiConfirmPadX-1)*2-2-scrollbarWidth))
 	m.confirmView.SetHeight(m.confirmViewport())
-	m.confirmView.SetContent(m.confirmModalContent())
+	m.confirmView.SetContent(expandTabs(m.confirmModalContent()))
+}
+
+// syncDiffView updates the diff viewport with current content and dimensions.
+func (m *tuiModel) syncDiffView() {
+	m.diffView.SetWidth(m.width - tuiScrollbarWidth)
+	m.diffView.SetHeight(m.diffContentViewport())
+	m.diffView.SetContent(expandTabs(strings.Join(m.diffLines, "\n")))
+	m.diffView.FillHeight = true
+}
+
+// syncDetailView updates the detail viewport with current content and dimensions.
+func (m *tuiModel) syncDetailView() {
+	m.detailView.SetWidth(m.width - tuiScrollbarWidth)
+	m.detailView.SetHeight(m.detailViewport())
+	m.detailView.SetContent(expandTabs(strings.Join(m.detailLines, "\n")))
+	m.detailView.FillHeight = true
 }
 
 // confirmViewport returns the maximum number of inner content lines that fit
@@ -5442,8 +5484,7 @@ func (m tuiModel) renderConfirmModal() string {
 	if m.confirmHasInput {
 		// Fix width so the border stays aligned as the textarea grows.
 		boxWidth := m.confirmInputWidth() + tuiConfirmPadX*2 //nolint:mnd // border + padding
-		footer := "\n\n" + m.renderConfirmInputHints()
-		return m.renderConfirmScrollable(boxStyle, boxWidth, m.confirmModalContent(), footer)
+		return m.renderConfirmScrollable(boxStyle, boxWidth, m.confirmModalContent())
 	}
 
 	content := m.confirmModalContent()
@@ -5453,7 +5494,7 @@ func (m tuiModel) renderConfirmModal() string {
 	if pad := (promptWidth - buttonsWidth) / 2; pad > 0 { //nolint:mnd // center
 		centered = strings.Repeat(" ", pad) + buttons
 	}
-	return m.renderConfirmScrollable(boxStyle, 0, content+centered, "")
+	return m.renderConfirmScrollable(boxStyle, 0, content+centered)
 }
 
 // renderConfirmScrollable renders inner content inside a styled box, using a
@@ -5469,7 +5510,7 @@ func (m tuiModel) renderConfirmScrollable(boxStyle lg.Style, boxWidth int, conte
 	}
 
 	// Use the viewport for clipping + scroll offset.
-	view := m.confirmView                             // copy — scroll offset persists via Update, content is ephemeral
+	view := m.confirmView                             // copy - scroll offset persists via Update, content is ephemeral
 	innerWidth := boxWidth - (tuiConfirmPadX-1)*2 - 2 //nolint:mnd // subtract padding + border
 	scrollbarWidth := tuiScrollbarWidth
 	viewWidth := max(1, innerWidth-scrollbarWidth)
@@ -5477,12 +5518,12 @@ func (m tuiModel) renderConfirmScrollable(boxStyle lg.Style, boxWidth int, conte
 	view.SetHeight(vpHeight)
 
 	// Re-render content at the narrower viewport width so the textarea
-	// lines aren't soft-wrapped by the viewport (value receiver — local copy).
+	// lines aren't soft-wrapped by the viewport (value receiver - local copy).
 	if m.confirmHasInput {
 		m.confirmInput.SetWidth(viewWidth)
 		content = m.confirmModalContent()
 	}
-	view.SetContent(content)
+	view.SetContent(expandTabs(content))
 
 	scrollbar := m.renderScrollbar(vpHeight, view.TotalLineCount(), view.ScrollPercent())
 	inner := lg.JoinHorizontal(lg.Top, view.View(), scrollbar)
@@ -5495,11 +5536,11 @@ func (m tuiModel) renderConfirmScrollable(boxStyle lg.Style, boxWidth int, conte
 	return boxStyle.Render(inner)
 }
 
-// renderScrollbar renders a vertical scrollbar track with a thumb sized
-// proportionally to the visible/total content ratio and positioned by percent.
-func (m tuiModel) renderScrollbar(height, totalLines int, percent float64) string {
+// scrollbarChars returns a slice of styled scrollbar characters (one per line)
+// with a thumb sized proportionally to the visible/total content ratio.
+func (m tuiModel) scrollbarChars(height, totalLines int, percent float64) []string {
 	if height <= 0 {
-		return ""
+		return nil
 	}
 	thumb := lg.NewStyle().Foreground(colorAccent)
 	track := lg.NewStyle().Foreground(colorAccent).Faint(true)
@@ -5508,16 +5549,53 @@ func (m tuiModel) renderScrollbar(height, totalLines int, percent float64) strin
 	trackSpace := height - thumbSize
 	thumbPos := int(math.Round(percent * float64(trackSpace)))
 
-	var b strings.Builder
+	chars := make([]string, height)
 	for i := range height {
+		if i >= thumbPos && i < thumbPos+thumbSize {
+			chars[i] = thumb.Render("█")
+		} else {
+			chars[i] = track.Render("┃")
+		}
+	}
+	return chars
+}
+
+// renderScrollbar returns a single-column scrollbar string for use with
+// lg.JoinHorizontal in the confirm modal overlay.
+func (m tuiModel) renderScrollbar(height, totalLines int, percent float64) string {
+	return strings.Join(m.scrollbarChars(height, totalLines, percent), "\n")
+}
+
+// appendScrollbar appends a scrollbar column to pre-rendered content lines,
+// padding each line to targetWidth so the scrollbar aligns at the right edge.
+func (m tuiModel) appendScrollbar(content string, height, totalLines int, percent float64) string {
+	content = expandTabs(content)
+	chars := m.scrollbarChars(height, totalLines, percent)
+	if len(chars) == 0 {
+		return content
+	}
+	targetWidth := m.width - tuiScrollbarWidth
+	lines := strings.Split(content, "\n")
+	var b strings.Builder
+	for i, line := range lines {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		if i >= thumbPos && i < thumbPos+thumbSize {
-			b.WriteString(thumb.Render("█"))
-		} else {
-			b.WriteString(track.Render("█"))
+		if i < len(chars) {
+			// Match terminal cell width for variation-selector emoji such as ⏭️.
+			lineWidth := xansi.WcWidth.StringWidth(line)
+			if lineWidth > targetWidth {
+				line = xansi.WcWidth.Truncate(line, targetWidth, "")
+				lineWidth = targetWidth
+			}
+			b.WriteString(line)
+			if pad := targetWidth - lineWidth; pad > 0 {
+				b.WriteString(strings.Repeat(" ", pad))
+			}
+			b.WriteString(chars[i])
+			continue
 		}
+		b.WriteString(line)
 	}
 	return b.String()
 }
@@ -5799,8 +5877,12 @@ func truncateDisplayLine(line string, width int) string {
 	return xansi.WcWidth.Truncate(line, width, "")
 }
 
+func expandTabs(text string) string {
+	return strings.ReplaceAll(text, "\t", "    ")
+}
+
 func wrapDiffLines(diff string, width int) []string {
-	logicalLines := strings.Split(diff, "\n")
+	logicalLines := strings.Split(expandTabs(diff), "\n")
 	if width <= 0 {
 		return logicalLines
 	}
@@ -6374,7 +6456,9 @@ func runTui(
 		selected:        make(prKeys),
 		filterInput:     fi,
 		confirmInput:    ci,
-		confirmView:     newConfirmView(),
+		diffView:        newScrollView(),
+		detailView:      newScrollView(),
+		confirmView:     newScrollViewSoftWrap(),
 		p:               p,
 		cli:             cli,
 		cfg:             cfg,

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1055,15 +1056,17 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diffKey:   makePRKey(pr),
 		diffLines: diffLines,
+		diffView:  newScrollView(),
 		view:      tuiViewDiff,
 		height:    12,
 		width:     250,
 		styles:    newTuiStyles(),
 	}
+	m.syncDiffView()
 
-	vp := m.diffContentViewport()
-	topPct := scrollPercent(0, len(diffLines), vp)
-	topStatus := fmt.Sprintf("1-%d/%d (%d%%)", vp, len(diffLines), topPct)
+	vpHeight := m.diffView.Height()
+	topPct := int(math.Round(m.diffView.ScrollPercent() * 100))
+	topStatus := fmt.Sprintf("1-%d/%d (%d%%)", vpHeight, len(diffLines), topPct)
 	require.Equal(t, 1, strings.Count(ansi.Strip(m.viewDiff().Content), topStatus))
 
 	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: 'G', Text: "G"})
@@ -1071,8 +1074,9 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, len(diffLines)-vp, bm.diffScroll)
-	bottomStatus := fmt.Sprintf("%d-%d/%d (100%%)", bm.diffScroll+1, len(diffLines), len(diffLines))
+	require.Equal(t, len(diffLines)-vpHeight, bm.diffView.YOffset())
+	offset := bm.diffView.YOffset()
+	bottomStatus := fmt.Sprintf("%d-%d/%d (100%%)", offset+1, len(diffLines), len(diffLines))
 	require.Equal(t, 1, strings.Count(ansi.Strip(bm.viewDiff().Content), bottomStatus))
 }
 
@@ -1095,18 +1099,20 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 	pr := testReviewPullRequest()
 	diff := styleDanger.Render("+abcdef")
 	m := tuiModel{
-		rows:       []TableRow{{Item: PRRowModel{PR: pr}}},
-		diff:       diff,
-		diffKey:    makePRKey(pr),
-		diffLines:  wrapDiffLines(diff, 4),
-		diffScroll: 1,
-		view:       tuiViewDiff,
-		height:     8,
-		width:      4,
-		styles:     newTuiStyles(),
-		p:          testPRL,
-		cli:        testCLI(),
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diff:      diff,
+		diffKey:   makePRKey(pr),
+		diffLines: wrapDiffLines(diff, 4),
+		diffView:  newScrollView(),
+		view:      tuiViewDiff,
+		height:    8,
+		width:     4,
+		styles:    newTuiStyles(),
+		p:         testPRL,
+		cli:       testCLI(),
 	}
+	m.syncDiffView()
+	m.diffView.ScrollDown(1)
 
 	model, cmd := m.Update(tea.WindowSizeMsg{Width: 8, Height: 8})
 
@@ -1115,29 +1121,212 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, []string{"+abcdef"}, []string{ansi.Strip(bm.diffLines[0])})
 	require.Len(t, bm.diffLines, 1)
-	require.Zero(t, bm.diffScroll)
+	require.Zero(t, bm.diffView.YOffset())
 }
 
 func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	pr := testReviewPullRequest()
 	diff := styleDanger.Render("+" + strings.Repeat("a", 85))
-	diffLines := wrapDiffLines(diff, 80)
+	width := 80
+	diffLines := wrapDiffLines(diff, width-tuiScrollbarWidth)
 	m := tuiModel{
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diff:      diff,
 		diffKey:   makePRKey(pr),
 		diffLines: diffLines,
+		diffView:  newScrollView(),
 		height:    8,
-		width:     80,
+		width:     width,
 		styles:    newTuiStyles(),
 	}
+	m.syncDiffView()
 
 	out := ansi.Strip(m.viewDiff().Content)
+	lines := strings.Split(out, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
+	}
+	out = strings.Join(lines, "\n")
 
 	require.Contains(t, out, strings.Join([]string{
 		ansi.Strip(diffLines[0]),
 		ansi.Strip(diffLines[1]),
 	}, "\n"))
+}
+
+func TestViewDiffFillsTerminalRectangle(t *testing.T) {
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey:   makePRKey(pr),
+		diffLines: []string{"+small"},
+		diffView:  newScrollView(),
+		height:    8,
+		width:     120,
+		styles:    newTuiStyles(),
+	}
+	m.syncDiffView()
+
+	assertRenderedFullScreen(t, m.viewDiff().Content, m.width, m.height)
+}
+
+func TestViewDetailFillsTerminalRectangle(t *testing.T) {
+	m := tuiModel{
+		detailLines: []string{"title", "body"},
+		detailView:  newScrollView(),
+		height:      8,
+		width:       120,
+		styles:      newTuiStyles(),
+	}
+	m.syncDetailView()
+
+	assertRenderedFullScreen(t, m.viewDetail().Content, m.width, m.height)
+}
+
+func TestAppendRightStatusDoesNotIncreaseFooterLineCount(t *testing.T) {
+	m := tuiModel{width: 24}
+	help := " ↑↓ scroll\nc comment"
+	status := "Diffing gechr/prl#42…"
+
+	got := m.appendRightStatus(help, status)
+
+	require.Equal(t, strings.Count(help, "\n"), strings.Count(got, "\n"))
+	lines := strings.Split(ansi.Strip(got), "\n")
+	require.Len(t, lines, 2)
+	require.LessOrEqual(t, lg.Width(lines[1]), m.width)
+	require.Contains(t, lines[1], "Diffing")
+}
+
+func TestAppendRightStatusTruncatesLongStatusToSingleLine(t *testing.T) {
+	m := tuiModel{width: 10}
+
+	got := ansi.Strip(m.appendRightStatus("", "Diffing gechr/prl#42…"))
+
+	require.NotContains(t, got, "\n")
+	require.LessOrEqual(t, lg.Width(got), m.width)
+	require.Contains(t, got, "…")
+}
+
+func TestAppendRightStatusUsesLeftPaddingForExactFit(t *testing.T) {
+	m := tuiModel{width: 21}
+
+	got := ansi.Strip(m.appendRightStatus("", "Diffing foo/bar#123…"))
+
+	require.Equal(t, "Diffing foo/bar#123…", got)
+}
+
+func TestViewListDiffingStatusDoesNotAddFooterLines(t *testing.T) {
+	for width := 20; width <= 120; width++ {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			base := tuiModel{
+				header: "TITLE",
+				rows: []TableRow{{
+					Item:    PRRowModel{PR: testReviewPullRequest()},
+					Display: "demo row",
+				}},
+				height:      8,
+				width:       width,
+				styles:      newTuiStyles(),
+				filterInput: textinput.New(),
+				removed:     make(prKeys),
+				selected:    make(prKeys),
+				p:           testPRL,
+				cli:         testCLI(),
+			}
+
+			withStatus := base
+			withStatus.statusMsg = withStatus.styles.statusPending.Render(statusDiffing) +
+				" " + styleRef.Render("foo/bar#123") + valueEllipsis
+
+			baseLines := strings.Split(ansi.Strip(base.viewList().Content), "\n")
+			lines := strings.Split(ansi.Strip(withStatus.viewList().Content), "\n")
+			require.Len(t, lines, len(baseLines))
+			for _, line := range lines {
+				require.LessOrEqual(t, lg.Width(line), withStatus.width)
+			}
+		})
+	}
+}
+
+func TestAppendScrollbarKeepsRowsWithinTerminalWidth(t *testing.T) {
+	m := tuiModel{width: 20, styles: newTuiStyles()}
+	content := strings.Join([]string{
+		"",
+		styleTitle.Render("short"),
+		styleTitle.Render("12345678901234567890"),
+	}, "\n")
+
+	got := ansi.Strip(m.appendScrollbar(content, 3, 10, 0.5))
+	lines := strings.Split(got, "\n")
+	require.Len(t, lines, 3)
+	for _, line := range lines {
+		require.Equal(t, 20, lg.Width(line))
+	}
+}
+
+func TestAppendScrollbarExpandsTabs(t *testing.T) {
+	m := tuiModel{width: 20, styles: newTuiStyles()}
+
+	got := ansi.Strip(m.appendScrollbar("left\tright", 1, 10, 0.5))
+
+	require.NotContains(t, got, "\t")
+	require.Contains(t, got, "left    right")
+	require.Equal(t, 20, lg.Width(got))
+}
+
+func TestAppendScrollbarUsesTerminalWidthForVariationSelectorEmoji(t *testing.T) {
+	m := tuiModel{width: 20, styles: newTuiStyles()}
+	line := normalizeTUIDisplayText("⏭️ skip")
+
+	got := ansi.Strip(m.appendScrollbar(line, 1, 10, 0.5))
+
+	require.Equal(t, 20, ansi.WcWidth.StringWidth(got))
+}
+
+func TestWrapDiffLinesExpandsTabs(t *testing.T) {
+	rows := wrapDiffLines("a\tb", 80)
+
+	require.Len(t, rows, 1)
+	require.NotContains(t, rows[0], "\t")
+	require.Equal(t, "a    b", ansi.Strip(rows[0]))
+}
+
+func TestSyncDetailViewExpandsTabs(t *testing.T) {
+	m := tuiModel{
+		detailLines: []string{"left\tright"},
+		detailView:  newScrollView(),
+		height:      5,
+		width:       20,
+		styles:      newTuiStyles(),
+	}
+
+	m.syncDetailView()
+
+	out := ansi.Strip(m.detailView.View())
+	require.NotContains(t, out, "\t")
+	require.Contains(t, out, "left    right")
+}
+
+func TestFillViewToTerminalExpandsTabs(t *testing.T) {
+	m := tuiModel{width: 12, height: 2}
+
+	got := m.fillViewToTerminal("left\tright")
+
+	require.NotContains(t, got, "\t")
+	lines := strings.Split(got, "\n")
+	require.Len(t, lines, 2)
+	require.Contains(t, lines[0], "left    right")
+	require.Equal(t, 12, lg.Width(lines[1]))
+}
+
+func assertRenderedFullScreen(t *testing.T, content string, width, height int) {
+	t.Helper()
+
+	lines := strings.Split(ansi.Strip(content), "\n")
+	require.Len(t, lines, height)
+	for _, line := range lines {
+		require.LessOrEqual(t, lg.Width(line), width)
+	}
 }
 
 func TestTruncateDisplayLinePreservesUTF8(t *testing.T) {
