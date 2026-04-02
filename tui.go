@@ -620,6 +620,14 @@ type spinnerTickMsg struct{ id int }
 // external screen clears (e.g. Cmd+K in iTerm2).
 type screenCheckMsg struct{ id int }
 
+type (
+	wheelFlushMsg   struct{ id int }
+	batchedWheelMsg struct {
+		target wheelTarget
+		delta  int
+	}
+)
+
 // refreshResultMsg carries the result of a background data refresh.
 type refreshResultMsg struct {
 	rows      []TableRow
@@ -633,34 +641,36 @@ type refreshResultMsg struct {
 //
 //nolint:recvcheck // selection helpers use pointer receivers to mutate maps/fields in-place
 type tuiModel struct {
-	items           []PRRowModel // canonical data for rerender on resize/refresh
-	rows            []TableRow   // current rendered order; row.Item is the action target
-	header          string
-	colWidths       []int // visible column widths for header click hit-testing
-	sortColumn      string
-	sortAsc         bool
-	cursor          int
-	offset          int
-	view            tuiView
-	diff            string
-	diffLines       []string
-	diffKey         prKey
-	diffView        viewport.Model
-	detail          PRDetail
-	detailLines     []string
-	detailKey       prKey
-	detailView      viewport.Model
-	detailRefreshID int
-	detailLoading   bool
-	statusMsg       string
-	statusErr       bool
-	statusID        int
-	actions         *ActionRunner
-	width           int
-	height          int
-	styles          tuiStyles
-	removed         prKeys
-	selected        prKeys
+	items             []PRRowModel // canonical data for rerender on resize/refresh
+	rows              []TableRow   // current rendered order; row.Item is the action target
+	header            string
+	colWidths         []int // visible column widths for header click hit-testing
+	sortColumn        string
+	sortAsc           bool
+	cursor            int
+	offset            int
+	view              tuiView
+	diff              string
+	diffLines         []string
+	diffRenderLines   []string
+	diffKey           prKey
+	diffView          viewport.Model
+	detail            PRDetail
+	detailLines       []string
+	detailRenderLines []string
+	detailKey         prKey
+	detailView        viewport.Model
+	detailRefreshID   int
+	detailLoading     bool
+	statusMsg         string
+	statusErr         bool
+	statusID          int
+	actions           *ActionRunner
+	width             int
+	height            int
+	styles            tuiStyles
+	removed           prKeys
+	selected          prKeys
 
 	// Filter options overlay.
 	showOptions   bool
@@ -706,6 +716,10 @@ type tuiModel struct {
 	confirmReviewPR   *PullRequest      // selected PR when the confirm modal is for AI review
 	confirmView       viewport.Model    // scrollable viewport for overflowing confirm modals
 	scrollDrag        scrollbarDragState
+	wheelPending      bool
+	wheelDelta        int
+	wheelTarget       wheelTarget
+	wheelID           int
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -743,6 +757,16 @@ const (
 	scrollbarTargetDiff
 	scrollbarTargetDetail
 	scrollbarTargetConfirm
+)
+
+type wheelTarget uint8
+
+const (
+	wheelTargetNone wheelTarget = iota
+	wheelTargetList
+	wheelTargetDiff
+	wheelTargetDetail
+	wheelTargetConfirm
 )
 
 type scrollbarDragState struct {
@@ -1263,6 +1287,243 @@ func (m tuiModel) applyRepaintMarker(v *tea.View) {
 // resetting the idle decay for auto-refresh scheduling.
 func (m *tuiModel) touchInteraction() { m.lastInteraction = time.Now() }
 
+func (m *tuiModel) queueWheelScroll(msg tea.MouseWheelMsg) tea.Cmd {
+	target, ok := m.wheelScrollTarget()
+	if !ok {
+		return nil
+	}
+
+	var delta int
+	switch msg.Button {
+	case tea.MouseWheelDown:
+		delta = 1
+	case tea.MouseWheelUp:
+		delta = -1
+	default:
+		return nil
+	}
+
+	if !m.wheelPending || m.wheelTarget != target {
+		m.wheelID++
+		m.wheelPending = true
+		m.wheelDelta = delta
+		m.wheelTarget = target
+		id := m.wheelID
+		return tea.Tick(tuiWheelBatchDelay, func(time.Time) tea.Msg {
+			return wheelFlushMsg{id: id}
+		})
+	}
+
+	m.wheelDelta += delta
+	return nil
+}
+
+type tuiWheelFilter struct {
+	delay time.Duration
+	send  func(tea.Msg)
+
+	mu            sync.Mutex
+	active        bool
+	pendingTarget wheelTarget
+	pendingDelta  int
+	timer         *time.Timer
+}
+
+func newTUIWheelFilter(delay time.Duration, send func(tea.Msg)) *tuiWheelFilter {
+	return &tuiWheelFilter{delay: delay, send: send}
+}
+
+func (f *tuiWheelFilter) filter(model tea.Model, msg tea.Msg) tea.Msg {
+	target, delta, ok := f.wheelEvent(model, msg)
+	if !ok {
+		return msg
+	}
+
+	f.enqueue(target, delta)
+	return nil
+}
+
+func (f *tuiWheelFilter) Stop() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.timer != nil {
+		f.timer.Stop()
+		f.timer = nil
+	}
+	f.active = false
+	f.pendingTarget = wheelTargetNone
+	f.pendingDelta = 0
+}
+
+func (f *tuiWheelFilter) wheelEvent(model tea.Model, msg tea.Msg) (wheelTarget, int, bool) {
+	wheelMsg, ok := msg.(tea.MouseWheelMsg)
+	if !ok {
+		return wheelTargetNone, 0, false
+	}
+
+	var delta int
+	switch wheelMsg.Button {
+	case tea.MouseWheelDown:
+		delta = 1
+	case tea.MouseWheelUp:
+		delta = -1
+	default:
+		return wheelTargetNone, 0, false
+	}
+
+	tui, ok := model.(tuiModel)
+	if !ok {
+		return wheelTargetNone, 0, false
+	}
+	target, ok := tui.wheelScrollTarget()
+	if !ok {
+		return wheelTargetNone, 0, false
+	}
+	return target, delta, true
+}
+
+func (f *tuiWheelFilter) enqueue(target wheelTarget, delta int) {
+	var immediate *batchedWheelMsg
+	startTimer := false
+
+	f.mu.Lock()
+	switch {
+	case !f.active:
+		f.active = true
+		f.pendingTarget = target
+		f.pendingDelta = delta
+		startTimer = true
+	case f.pendingTarget == target:
+		f.pendingDelta += delta
+	default:
+		if f.pendingDelta != 0 && f.pendingTarget != wheelTargetNone {
+			immediate = &batchedWheelMsg{target: f.pendingTarget, delta: f.pendingDelta}
+		}
+		if f.timer != nil {
+			f.timer.Stop()
+			f.timer = nil
+		}
+		f.active = true
+		f.pendingTarget = target
+		f.pendingDelta = delta
+		startTimer = true
+	}
+	f.mu.Unlock()
+
+	if immediate != nil {
+		f.dispatch(*immediate)
+	}
+	if startTimer {
+		f.scheduleFlush()
+	}
+}
+
+func (f *tuiWheelFilter) scheduleFlush() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.timer != nil {
+		f.timer.Stop()
+	}
+	f.timer = time.AfterFunc(f.delay, f.flush)
+}
+
+func (f *tuiWheelFilter) flush() {
+	f.mu.Lock()
+	target := f.pendingTarget
+	delta := f.pendingDelta
+	f.active = false
+	f.pendingTarget = wheelTargetNone
+	f.pendingDelta = 0
+	f.timer = nil
+	f.mu.Unlock()
+
+	if delta == 0 || target == wheelTargetNone {
+		return
+	}
+	f.dispatch(batchedWheelMsg{target: target, delta: delta})
+}
+
+func (f *tuiWheelFilter) dispatch(msg tea.Msg) {
+	if f.send == nil || msg == nil {
+		return
+	}
+	go f.send(msg)
+}
+
+func (m tuiModel) wheelScrollTarget() (wheelTarget, bool) {
+	if m.confirmAction != "" {
+		return wheelTargetConfirm, true
+	}
+
+	switch m.view {
+	case tuiViewList:
+		return wheelTargetList, true
+	case tuiViewDiff:
+		return wheelTargetDiff, true
+	case tuiViewDetail:
+		return wheelTargetDetail, true
+	default:
+		return wheelTargetNone, false
+	}
+}
+
+func (m *tuiModel) applyWheelScroll(target wheelTarget, delta int) {
+	if delta == 0 {
+		return
+	}
+	current, ok := m.wheelScrollTarget()
+	if !ok || current != target {
+		return
+	}
+
+	switch target {
+	case wheelTargetNone:
+		return
+	case wheelTargetList:
+		m.applyListWheelScroll(delta)
+	case wheelTargetDiff:
+		if delta > 0 {
+			m.diffView.ScrollDown(delta)
+		} else {
+			m.diffView.ScrollUp(-delta)
+		}
+	case wheelTargetDetail:
+		if delta > 0 {
+			m.detailView.ScrollDown(delta)
+		} else {
+			m.detailView.ScrollUp(-delta)
+		}
+	case wheelTargetConfirm:
+		m.syncConfirmView()
+		if delta > 0 {
+			m.confirmView.ScrollDown(delta)
+		} else {
+			m.confirmView.ScrollUp(-delta)
+		}
+	}
+}
+
+func (m *tuiModel) applyListWheelScroll(delta int) {
+	if delta == 0 {
+		return
+	}
+
+	step := 1
+	if delta < 0 {
+		step = -1
+		delta = -delta
+	}
+
+	for range delta {
+		next, ok := m.nextVisible(step)
+		if !ok {
+			break
+		}
+		m.cursor = next
+	}
+	m.offset = m.scrolledOffset()
+}
+
 func (m tuiModel) detailHasPendingChecks() bool {
 	for _, check := range m.detail.Checks {
 		if check.Status != ciStatusCompleted {
@@ -1414,6 +1675,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
+		m.touchInteraction()
 		if msg.Button == tea.MouseLeft && m.handleScrollbarPress(msg.Mouse()) {
 			return m, nil
 		}
@@ -1426,41 +1688,39 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMotionMsg:
+		m.touchInteraction()
 		if m.handleScrollbarMotion(msg.Mouse()) {
 			return m, nil
 		}
 		return m, nil
 
 	case tea.MouseReleaseMsg:
+		m.touchInteraction()
 		m.scrollDrag = scrollbarDragState{}
 		return m, nil
 
 	case tea.MouseWheelMsg:
-		// Scroll the confirm modal when it's active and overflows.
-		if m.confirmAction != "" {
-			m.syncConfirmView()
-			m.confirmView, _ = m.confirmView.Update(msg)
+		m.touchInteraction()
+		if cmd := m.queueWheelScroll(msg); cmd != nil {
+			return m, cmd
+		}
+		return m, nil
+
+	case batchedWheelMsg:
+		m.touchInteraction()
+		m.applyWheelScroll(msg.target, msg.delta)
+		return m, nil
+
+	case wheelFlushMsg:
+		if msg.id != m.wheelID || !m.wheelPending || m.wheelDelta == 0 {
 			return m, nil
 		}
-		switch m.view {
-		case tuiViewList:
-			switch msg.Button {
-			case tea.MouseWheelDown:
-				if next, ok := m.nextVisible(1); ok {
-					m.cursor = next
-					m.offset = m.scrolledOffset()
-				}
-			case tea.MouseWheelUp:
-				if next, ok := m.nextVisible(-1); ok {
-					m.cursor = next
-					m.offset = m.scrolledOffset()
-				}
-			}
-		case tuiViewDiff:
-			m.diffView, _ = m.diffView.Update(msg)
-		case tuiViewDetail:
-			m.detailView, _ = m.detailView.Update(msg)
-		}
+		target := m.wheelTarget
+		delta := m.wheelDelta
+		m.wheelPending = false
+		m.wheelDelta = 0
+		m.wheelTarget = wheelTargetNone
+		m.applyWheelScroll(target, delta)
 		return m, nil
 
 	case actionMsg:
@@ -3461,11 +3721,9 @@ func (m tuiModel) viewDiff() tea.View {
 	case vpHeight <= 0:
 		b.WriteString("\n")
 	case totalLines > vpHeight:
-		b.WriteString(
-			m.appendScrollbar(m.diffView.View(), vpHeight, totalLines, m.diffView.ScrollPercent()),
-		)
+		b.WriteString(m.renderViewportContent(m.diffRenderLines, m.diffView, true))
 	default:
-		b.WriteString(m.diffView.View())
+		b.WriteString(m.renderViewportContent(m.diffRenderLines, m.diffView, false))
 	}
 	b.WriteString("\n")
 
@@ -3599,16 +3857,9 @@ func (m tuiModel) viewDetail() tea.View {
 	case vpHeight <= 0:
 		b.WriteString("\n")
 	case totalLines > vpHeight:
-		b.WriteString(
-			m.appendScrollbar(
-				m.detailView.View(),
-				vpHeight,
-				totalLines,
-				m.detailView.ScrollPercent(),
-			),
-		)
+		b.WriteString(m.renderViewportContent(m.detailRenderLines, m.detailView, true))
 	default:
-		b.WriteString(m.detailView.View())
+		b.WriteString(m.renderViewportContent(m.detailRenderLines, m.detailView, false))
 	}
 	b.WriteString("\n")
 
@@ -4679,7 +4930,7 @@ func (m tuiModel) diffHelpPairs() []helpPair {
 		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilotReview})
+		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilot})
 	}
 	if m.diffQueueTotal > 0 {
 		if len(m.diffHistory) > 0 {
@@ -4731,7 +4982,7 @@ func (m tuiModel) detailHelpPairs() []helpPair {
 		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
 	if actionable && !draft {
-		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilotReview})
+		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilot})
 	}
 	pairs = append(pairs, helpPair{tuiKeybindQuit, tuiHelpDismiss})
 	return pairs
@@ -5229,17 +5480,21 @@ func (m *tuiModel) syncConfirmView() {
 
 // syncDiffView updates the diff viewport with current content and dimensions.
 func (m *tuiModel) syncDiffView() {
-	m.diffView.SetWidth(m.width - tuiScrollbarWidth)
+	width := max(0, m.width-tuiScrollbarWidth)
+	m.diffRenderLines = normalizeViewportRenderLines(m.diffLines, width)
+	m.diffView.SetWidth(width)
 	m.diffView.SetHeight(m.diffContentViewport())
-	m.diffView.SetContent(expandTabs(strings.Join(m.diffLines, "\n")))
+	m.diffView.SetContentLines(m.diffRenderLines)
 	m.diffView.FillHeight = true
 }
 
 // syncDetailView updates the detail viewport with current content and dimensions.
 func (m *tuiModel) syncDetailView() {
-	m.detailView.SetWidth(m.width - tuiScrollbarWidth)
+	width := max(0, m.width-tuiScrollbarWidth)
+	m.detailRenderLines = normalizeViewportRenderLines(m.detailLines, width)
+	m.detailView.SetWidth(width)
 	m.detailView.SetHeight(m.detailViewport())
-	m.detailView.SetContent(expandTabs(strings.Join(m.detailLines, "\n")))
+	m.detailView.SetContentLines(m.detailRenderLines)
 	m.detailView.FillHeight = true
 }
 
@@ -5847,6 +6102,74 @@ func (m tuiModel) appendScrollbar(content string, height, totalLines int, percen
 			continue
 		}
 		b.WriteString(line)
+	}
+	return b.String()
+}
+
+func normalizeViewportRenderLines(lines []string, width int) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, len(lines))
+	for i, line := range lines {
+		normalized[i] = normalizeViewportRenderLine(line, width)
+	}
+	return normalized
+}
+
+func normalizeViewportRenderLine(line string, width int) string {
+	line = expandTabs(line)
+	if width <= 0 {
+		return line
+	}
+
+	lineWidth := xansi.WcWidth.StringWidth(line)
+	if lineWidth > width {
+		line = xansi.WcWidth.Truncate(line, width, "")
+		lineWidth = width
+	}
+	if pad := width - lineWidth; pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	return line
+}
+
+func (m tuiModel) renderViewportContent(
+	lines []string,
+	vp viewport.Model,
+	withScrollbar bool,
+) string {
+	height := vp.Height()
+	width := max(0, vp.Width())
+	if height <= 0 {
+		return ""
+	}
+
+	start := min(vp.YOffset(), len(lines))
+	end := min(start+height, len(lines))
+	scrollbar := []string(nil)
+	if withScrollbar {
+		scrollbar = m.scrollbarChars(height, vp.TotalLineCount(), vp.ScrollPercent())
+	}
+	blank := strings.Repeat(" ", width)
+
+	var b strings.Builder
+	for row := range height {
+		if row > 0 {
+			b.WriteByte('\n')
+		}
+
+		line := blank
+		idx := start + row
+		if idx < end {
+			line = lines[idx]
+		}
+		b.WriteString(line)
+
+		if row < len(scrollbar) {
+			b.WriteString(scrollbar[row])
+		}
 	}
 	return b.String()
 }
@@ -6726,7 +7049,20 @@ func runTui(
 		model.header, model.rows, model.colWidths = model.rerender()
 	}
 
-	_, err = tea.NewProgram(model).Run()
+	var program *tea.Program
+	wheelFilter := newTUIWheelFilter(tuiWheelBatchDelay, func(msg tea.Msg) {
+		if program != nil {
+			program.Send(msg)
+		}
+	})
+	defer wheelFilter.Stop()
+
+	program = tea.NewProgram(
+		model,
+		tea.WithFPS(tuiRenderFPS),
+		tea.WithFilter(wheelFilter.filter),
+	)
+	_, err = program.Run()
 	if err != nil {
 		return fmt.Errorf("interactive TUI: %w", err)
 	}

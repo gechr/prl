@@ -175,9 +175,11 @@ const (
 	tuiOptionsPadX             = 2
 	tuiOptionsPadY             = 1
 
-	tuiJumpTimeout    = 500 * time.Millisecond
-	tuiStatusFlash    = 5 * time.Second
-	tuiScreenCheckInt = 1 * time.Second
+	tuiJumpTimeout     = 500 * time.Millisecond
+	tuiWheelBatchDelay = 12 * time.Millisecond
+	tuiRenderFPS       = 30
+	tuiStatusFlash     = 5 * time.Second
+	tuiScreenCheckInt  = 1 * time.Second
 
 	tuiNonCursorPrefix = "  "
 
@@ -249,33 +251,33 @@ const (
 
 // tuiHelp* - terse lowercase labels for bottom help bars.
 const (
-	tuiHelpApprove       = "approve"
-	tuiHelpApproveMerge  = "approve/merge"
-	tuiHelpAutomerge     = "automerge"
-	tuiHelpClose         = "close"
-	tuiHelpComment       = "comment"
-	tuiHelpCopilotReview = "copilot review"
-	tuiHelpCopy          = "copy"
-	tuiHelpDiff          = "diff"
-	tuiHelpDismiss       = "dismiss"
-	tuiHelpFilter        = "filter"
-	tuiHelpHelp          = "help"
-	tuiHelpMarkDraft     = "mark draft"
-	tuiHelpMarkReady     = "mark ready"
-	tuiHelpMerge         = "merge"
-	tuiHelpNext          = "next"
-	tuiHelpOpen          = "open"
-	tuiHelpOptions       = "options"
-	tuiHelpPrev          = "prev"
-	tuiHelpQuit          = "quit"
-	tuiHelpReopen        = "reopen"
-	tuiHelpReview        = "review"
-	tuiHelpScroll        = "scroll"
-	tuiHelpSelect        = "select"
-	tuiHelpShow          = "show"
-	tuiHelpSlack         = "slack"
-	tuiHelpUnsubscribe   = "unsubscribe"
-	tuiHelpUpdateBranch  = "update branch"
+	tuiHelpApprove      = "approve"
+	tuiHelpApproveMerge = "approve/merge"
+	tuiHelpAutomerge    = "automerge"
+	tuiHelpClose        = "close"
+	tuiHelpComment      = "comment"
+	tuiHelpCopilot      = "copilot"
+	tuiHelpCopy         = "copy"
+	tuiHelpDiff         = "diff"
+	tuiHelpDismiss      = "dismiss"
+	tuiHelpFilter       = "filter"
+	tuiHelpHelp         = "help"
+	tuiHelpMarkDraft    = "mark draft"
+	tuiHelpMarkReady    = "mark ready"
+	tuiHelpMerge        = "merge"
+	tuiHelpNext         = "next"
+	tuiHelpOpen         = "open"
+	tuiHelpOptions      = "options"
+	tuiHelpPrev         = "prev"
+	tuiHelpQuit         = "quit"
+	tuiHelpReopen       = "reopen"
+	tuiHelpReview       = "review"
+	tuiHelpScroll       = "scroll"
+	tuiHelpSelect       = "select"
+	tuiHelpShow         = "show"
+	tuiHelpSlack        = "slack"
+	tuiHelpUnsubscribe  = "unsubscribe"
+	tuiHelpUpdateBranch = "update branch"
 )
 
 // tuiDesc* - Title Case descriptions for the ? help overlay.

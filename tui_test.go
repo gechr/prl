@@ -1312,6 +1312,137 @@ func TestAppendScrollbarUsesTerminalWidthForVariationSelectorEmoji(t *testing.T)
 	require.Equal(t, 20, ansi.WcWidth.StringWidth(got))
 }
 
+func TestSyncDiffViewCachesNormalizedRenderLines(t *testing.T) {
+	m := tuiModel{
+		diffLines: []string{
+			"left\tright",
+			strings.Repeat("x", 40),
+		},
+		diffView: newScrollView(),
+		height:   6,
+		width:    20,
+		styles:   newTuiStyles(),
+	}
+
+	m.syncDiffView()
+
+	require.Len(t, m.diffRenderLines, 2)
+	require.NotContains(t, ansi.Strip(m.diffRenderLines[0]), "\t")
+	require.Contains(t, ansi.Strip(m.diffRenderLines[0]), "left    right")
+	require.Equal(t, 19, ansi.WcWidth.StringWidth(m.diffRenderLines[0]))
+	require.Equal(t, 19, ansi.WcWidth.StringWidth(m.diffRenderLines[1]))
+	require.Equal(t, len(m.diffRenderLines), m.diffView.TotalLineCount())
+}
+
+func TestRenderViewportContentUsesCachedLinesWithScrollbar(t *testing.T) {
+	m := tuiModel{styles: newTuiStyles()}
+	lines := []string{
+		normalizeViewportRenderLine("line 1", 10),
+		normalizeViewportRenderLine("line 2", 10),
+		normalizeViewportRenderLine("line 3", 10),
+		normalizeViewportRenderLine("line 4", 10),
+	}
+	vp := newScrollView()
+	vp.SetWidth(10)
+	vp.SetHeight(3)
+	vp.SetContentLines(lines)
+	vp.SetYOffset(1)
+
+	got := ansi.Strip(m.renderViewportContent(lines, vp, true))
+	rows := strings.Split(got, "\n")
+
+	require.Len(t, rows, 3)
+	require.Contains(t, rows[0], "line 2")
+	require.Contains(t, rows[1], "line 3")
+	require.Contains(t, rows[2], "line 4")
+	for _, row := range rows {
+		require.Equal(t, 11, ansi.WcWidth.StringWidth(row))
+	}
+}
+
+func TestMouseWheelCoalescesDiffScroll(t *testing.T) {
+	pr := testReviewPullRequest()
+	diffLines := make([]string, 60)
+	for i := range diffLines {
+		diffLines[i] = fmt.Sprintf("line %d", i)
+	}
+
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey:   makePRKey(pr),
+		diffLines: diffLines,
+		diffView:  newScrollView(),
+		view:      tuiViewDiff,
+		height:    14,
+		width:     80,
+		styles:    newTuiStyles(),
+	}
+	m.syncDiffView()
+
+	model, cmd := m.Update(tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown}))
+	require.NotNil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.wheelPending)
+	require.Equal(t, 1, bm.wheelDelta)
+	require.Equal(t, 0, bm.diffView.YOffset())
+
+	model, cmd = bm.Update(tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown}))
+	require.Nil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.wheelPending)
+	require.Equal(t, 2, bm.wheelDelta)
+	require.Equal(t, 0, bm.diffView.YOffset())
+
+	model, cmd = bm.Update(wheelFlushMsg{id: bm.wheelID})
+	require.Nil(t, cmd)
+
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.wheelPending)
+	require.Zero(t, bm.wheelDelta)
+	require.Equal(t, wheelTargetNone, bm.wheelTarget)
+	require.Equal(t, 2, bm.diffView.YOffset())
+}
+
+func TestTUIWheelFilterCoalescesMouseWheelInput(t *testing.T) {
+	ch := make(chan tea.Msg, 1)
+	filter := newTUIWheelFilter(time.Millisecond, func(msg tea.Msg) {
+		ch <- msg
+	})
+	defer filter.Stop()
+
+	model := tuiModel{view: tuiViewDiff}
+
+	require.Nil(t, filter.filter(model, tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown})))
+	require.Nil(t, filter.filter(model, tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown})))
+
+	select {
+	case msg := <-ch:
+		wheel, ok := msg.(batchedWheelMsg)
+		require.True(t, ok)
+		require.Equal(t, wheelTargetDiff, wheel.target)
+		require.Equal(t, 2, wheel.delta)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for coalesced wheel message")
+	}
+}
+
+func TestTUIWheelFilterPassesNonWheelMessages(t *testing.T) {
+	filter := newTUIWheelFilter(time.Millisecond, nil)
+	defer filter.Stop()
+
+	model := tuiModel{view: tuiViewDiff}
+	key := tea.KeyPressMsg{}
+
+	got := filter.filter(model, key)
+
+	require.Equal(t, key, got)
+}
+
 func TestScrollbarTrackClickJumpsDiffViewport(t *testing.T) {
 	pr := testReviewPullRequest()
 	diffLines := make([]string, 60)

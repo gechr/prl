@@ -102,6 +102,15 @@ func run() error {
 	clog.SetSymbols(symbols)
 	tty := applyColorMode(cli.Color)
 
+	stopPprof, pprofAddr, err := maybeStartPprofServer()
+	if err != nil {
+		return err
+	}
+	if stopPprof != nil {
+		defer stopPprof()
+		clog.Info().Str("addr", pprofAddr).Msg("pprof listening")
+	}
+
 	// Validate
 	if vErr := cli.Validate(); vErr != nil {
 		return vErr
