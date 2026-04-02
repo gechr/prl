@@ -9,9 +9,9 @@ import (
 	"github.com/gechr/clog"
 )
 
-var claudeReviewPromptPlaceholderPattern = regexp.MustCompile(`\{([a-zA-Z][a-zA-Z0-9]*)\}`)
+var aiReviewPromptPlaceholderPattern = regexp.MustCompile(`\{([a-zA-Z][a-zA-Z0-9]*)\}`)
 
-const claudeReviewPromptSubmatchCount = 2
+const aiReviewPromptSubmatchCount = 2
 
 type reviewProvider string
 
@@ -96,8 +96,8 @@ func validateReviewPromptTemplate(template string) error {
 	}
 
 	unknown := make(map[string]struct{})
-	for _, match := range claudeReviewPromptPlaceholderPattern.FindAllStringSubmatch(template, -1) {
-		if len(match) < claudeReviewPromptSubmatchCount {
+	for _, match := range aiReviewPromptPlaceholderPattern.FindAllStringSubmatch(template, -1) {
+		if len(match) < aiReviewPromptSubmatchCount {
 			continue
 		}
 		if _, ok := allowed[match[1]]; !ok {
@@ -137,11 +137,11 @@ func renderReviewPrompt(template string, pr PullRequest) (string, error) {
 		"title":       pr.Title,
 	}
 
-	rendered := claudeReviewPromptPlaceholderPattern.ReplaceAllStringFunc(
+	rendered := aiReviewPromptPlaceholderPattern.ReplaceAllStringFunc(
 		template,
 		func(match string) string {
-			parts := claudeReviewPromptPlaceholderPattern.FindStringSubmatch(match)
-			if len(parts) < claudeReviewPromptSubmatchCount {
+			parts := aiReviewPromptPlaceholderPattern.FindStringSubmatch(match)
+			if len(parts) < aiReviewPromptSubmatchCount {
 				return match
 			}
 			return values[parts[1]]

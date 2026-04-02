@@ -20,19 +20,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCurrentClaudeReviewLauncher(t *testing.T) {
+func TestCurrentAIReviewLauncher(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	require.Equal(t, claudeLauncherGhostty, currentClaudeReviewLauncher())
+	require.Equal(t, aiReviewLauncherGhostty, currentAIReviewLauncher())
 
 	t.Setenv("TERM_PROGRAM", "iTerm.app")
-	require.Equal(t, claudeLauncherITerm2, currentClaudeReviewLauncher())
+	require.Equal(t, aiReviewLauncherITerm2, currentAIReviewLauncher())
 
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
-	require.Equal(t, claudeLauncherNone, currentClaudeReviewLauncher())
+	require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
 }
 
-func TestBuildClaudeReviewAppleScriptGhosttyUsesNewTab(t *testing.T) {
-	script, err := buildClaudeReviewAppleScript(claudeLauncherGhostty, "echo 'review'\n")
+func TestBuildAIReviewAppleScriptGhosttyUsesNewTab(t *testing.T) {
+	script, err := buildAIReviewAppleScript(aiReviewLauncherGhostty, "echo 'review'\n")
 
 	require.NoError(t, err)
 	require.Contains(t, script, `tell application "Ghostty"`)
@@ -43,8 +43,8 @@ func TestBuildClaudeReviewAppleScriptGhosttyUsesNewTab(t *testing.T) {
 	require.NotContains(t, script, "display dialog")
 }
 
-func TestBuildClaudeReviewAppleScriptITerm2UsesNewTab(t *testing.T) {
-	script, err := buildClaudeReviewAppleScript(claudeLauncherITerm2, "echo review")
+func TestBuildAIReviewAppleScriptITerm2UsesNewTab(t *testing.T) {
+	script, err := buildAIReviewAppleScript(aiReviewLauncherITerm2, "echo review")
 
 	require.NoError(t, err)
 	require.Contains(t, script, `tell application "iTerm2"`)
@@ -56,8 +56,8 @@ func TestBuildClaudeReviewAppleScriptITerm2UsesNewTab(t *testing.T) {
 	require.NotContains(t, script, "display dialog")
 }
 
-func TestBuildClaudeReviewAppleScriptUnsupported(t *testing.T) {
-	_, err := buildClaudeReviewAppleScript(claudeLauncherNone, "echo review")
+func TestBuildAIReviewAppleScriptUnsupported(t *testing.T) {
+	_, err := buildAIReviewAppleScript(aiReviewLauncherNone, "echo review")
 
 	require.ErrorContains(t, err, "unsupported terminal")
 }
@@ -1170,6 +1170,22 @@ func TestViewDiffFillsTerminalRectangle(t *testing.T) {
 	assertRenderedFullScreen(t, m.viewDiff().Content, m.width, m.height)
 }
 
+func TestViewDiffEnablesMouseTracking(t *testing.T) {
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey:   makePRKey(pr),
+		diffLines: []string{"+small"},
+		diffView:  newScrollView(),
+		height:    8,
+		width:     120,
+		styles:    newTuiStyles(),
+	}
+	m.syncDiffView()
+
+	require.Equal(t, tea.MouseModeCellMotion, m.viewDiff().MouseMode)
+}
+
 func TestViewDetailFillsTerminalRectangle(t *testing.T) {
 	m := tuiModel{
 		detailLines: []string{"title", "body"},
@@ -1181,6 +1197,19 @@ func TestViewDetailFillsTerminalRectangle(t *testing.T) {
 	m.syncDetailView()
 
 	assertRenderedFullScreen(t, m.viewDetail().Content, m.width, m.height)
+}
+
+func TestViewDetailEnablesMouseTracking(t *testing.T) {
+	m := tuiModel{
+		detailLines: []string{"title", "body"},
+		detailView:  newScrollView(),
+		height:      8,
+		width:       120,
+		styles:      newTuiStyles(),
+	}
+	m.syncDetailView()
+
+	require.Equal(t, tea.MouseModeCellMotion, m.viewDetail().MouseMode)
 }
 
 func TestAppendRightStatusDoesNotIncreaseFooterLineCount(t *testing.T) {
@@ -1281,6 +1310,120 @@ func TestAppendScrollbarUsesTerminalWidthForVariationSelectorEmoji(t *testing.T)
 	got := ansi.Strip(m.appendScrollbar(line, 1, 10, 0.5))
 
 	require.Equal(t, 20, ansi.WcWidth.StringWidth(got))
+}
+
+func TestScrollbarTrackClickJumpsDiffViewport(t *testing.T) {
+	pr := testReviewPullRequest()
+	diffLines := make([]string, 60)
+	for i := range diffLines {
+		diffLines[i] = fmt.Sprintf("line %d", i)
+	}
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey:   makePRKey(pr),
+		diffLines: diffLines,
+		diffView:  newScrollView(),
+		view:      tuiViewDiff,
+		height:    14,
+		width:     80,
+		styles:    newTuiStyles(),
+	}
+	m.syncDiffView()
+
+	hitbox, ok := m.scrollbarHitbox(scrollbarTargetDiff)
+	require.True(t, ok)
+
+	require.True(t, m.handleScrollbarPress(tea.Mouse{
+		X:      hitbox.x,
+		Y:      hitbox.y + hitbox.height - 1,
+		Button: tea.MouseLeft,
+	}))
+
+	require.True(t, m.scrollDrag.active)
+	require.Equal(t, scrollbarTargetDiff, m.scrollDrag.target)
+	require.Positive(t, m.diffView.YOffset())
+	require.GreaterOrEqual(t, m.diffView.ScrollPercent(), 0.9)
+}
+
+func TestScrollbarThumbDragMovesDiffViewport(t *testing.T) {
+	pr := testReviewPullRequest()
+	diffLines := make([]string, 60)
+	for i := range diffLines {
+		diffLines[i] = fmt.Sprintf("line %d", i)
+	}
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey:   makePRKey(pr),
+		diffLines: diffLines,
+		diffView:  newScrollView(),
+		view:      tuiViewDiff,
+		height:    14,
+		width:     80,
+		styles:    newTuiStyles(),
+	}
+	m.syncDiffView()
+	m.diffView.SetYOffset(m.diffView.Height())
+
+	hitbox, ok := m.scrollbarHitbox(scrollbarTargetDiff)
+	require.True(t, ok)
+	thumbPos, _ := scrollbarThumbMetrics(
+		hitbox.height,
+		hitbox.totalLines,
+		m.diffView.ScrollPercent(),
+	)
+	pressY := hitbox.y + thumbPos
+
+	require.True(t, m.handleScrollbarPress(tea.Mouse{
+		X:      hitbox.x,
+		Y:      pressY,
+		Button: tea.MouseLeft,
+	}))
+
+	initialOffset := m.diffView.YOffset()
+	require.True(t, m.handleScrollbarMotion(tea.Mouse{
+		X:      hitbox.x,
+		Y:      hitbox.y + hitbox.height - 1,
+		Button: tea.MouseLeft,
+	}))
+
+	require.Greater(t, m.diffView.YOffset(), initialOffset)
+	require.GreaterOrEqual(t, m.diffView.ScrollPercent(), 0.9)
+
+	model, cmd := m.Update(tea.MouseReleaseMsg(tea.Mouse{
+		X:      hitbox.x,
+		Y:      hitbox.y + hitbox.height - 1,
+		Button: tea.MouseLeft,
+	}))
+	require.Nil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.scrollDrag.active)
+}
+
+func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
+	m := tuiModel{
+		confirmAction: tuiActionInfo,
+		confirmPrompt: strings.TrimSuffix(strings.Repeat("line\n", 40), "\n"),
+		confirmView:   newScrollViewSoftWrap(),
+		confirmInput:  newConfirmInput(),
+		width:         80,
+		height:        18,
+		styles:        newTuiStyles(),
+	}
+	m.syncConfirmView()
+
+	hitbox, ok := m.scrollbarHitbox(scrollbarTargetConfirm)
+	require.True(t, ok)
+
+	require.True(t, m.handleScrollbarPress(tea.Mouse{
+		X:      hitbox.x,
+		Y:      hitbox.y + hitbox.height - 1,
+		Button: tea.MouseLeft,
+	}))
+
+	require.Positive(t, m.confirmView.YOffset())
+	require.GreaterOrEqual(t, m.confirmView.ScrollPercent(), 0.9)
 }
 
 func TestWrapDiffLinesExpandsTabs(t *testing.T) {

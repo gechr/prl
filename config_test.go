@@ -35,7 +35,7 @@ func TestSaveConfigKeyClearsPersistedSortWithoutPanic(t *testing.T) {
 	require.False(t, strings.HasSuffix(string(data), "\n\n"))
 }
 
-func TestLoadConfigRejectsInvalidClaudeReviewPromptPlaceholder(t *testing.T) {
+func TestLoadConfigRejectsInvalidAIReviewPromptPlaceholder(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	cp, err := configPath()

@@ -32,26 +32,26 @@ import (
 	"github.com/gechr/prl/internal/term"
 )
 
-type claudeReviewLauncher string
+type aiReviewLauncher string
 
 const (
-	claudeLauncherNone    claudeReviewLauncher = ""
-	claudeLauncherGhostty claudeReviewLauncher = "ghostty"
-	claudeLauncherITerm2  claudeReviewLauncher = "iterm2"
+	aiReviewLauncherNone    aiReviewLauncher = ""
+	aiReviewLauncherGhostty aiReviewLauncher = "ghostty"
+	aiReviewLauncherITerm2  aiReviewLauncher = "iterm2"
 )
 
-func currentClaudeReviewLauncher() claudeReviewLauncher {
+func currentAIReviewLauncher() aiReviewLauncher {
 	switch os.Getenv("TERM_PROGRAM") {
 	case "ghostty":
-		return claudeLauncherGhostty
+		return aiReviewLauncherGhostty
 	case "iTerm.app":
-		return claudeLauncherITerm2
+		return aiReviewLauncherITerm2
 	default:
-		return claudeLauncherNone
+		return aiReviewLauncherNone
 	}
 }
 
-func hasClaudeReviewLauncher() bool { return currentClaudeReviewLauncher() != claudeLauncherNone }
+func hasAIReviewLauncher() bool { return currentAIReviewLauncher() != aiReviewLauncherNone }
 
 const (
 	reviewProviderOptionLabel = "Provider"
@@ -705,6 +705,7 @@ type tuiModel struct {
 	confirmOptFocus   bool              // true when confirm option rows have focus
 	confirmReviewPR   *PullRequest      // selected PR when the confirm modal is for AI review
 	confirmView       viewport.Model    // scrollable viewport for overflowing confirm modals
+	scrollDrag        scrollbarDragState
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -733,6 +734,29 @@ type tuiModel struct {
 	resolver *AuthorResolver
 	rest     *api.RESTClient
 	params   *SearchParams
+}
+
+type scrollbarTarget uint8
+
+const (
+	scrollbarTargetNone scrollbarTarget = iota
+	scrollbarTargetDiff
+	scrollbarTargetDetail
+	scrollbarTargetConfirm
+)
+
+type scrollbarDragState struct {
+	active bool
+	target scrollbarTarget
+	grab   int
+}
+
+type scrollbarHitbox struct {
+	target     scrollbarTarget
+	x          int
+	y          int
+	height     int
+	totalLines int
 }
 
 // isCurrentUserPR reports whether the given PR was authored by the authenticated user.
@@ -1390,12 +1414,25 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft && m.handleScrollbarPress(msg.Mouse()) {
+			return m, nil
+		}
 		if m.view == tuiViewList && msg.Button == tea.MouseLeft && msg.Y == 0 {
 			col := m.headerColumnAt(msg.X)
 			if col != "" {
 				return m.toggleSort(col)
 			}
 		}
+		return m, nil
+
+	case tea.MouseMotionMsg:
+		if m.handleScrollbarMotion(msg.Mouse()) {
+			return m, nil
+		}
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		m.scrollDrag = scrollbarDragState{}
 		return m, nil
 
 	case tea.MouseWheelMsg:
@@ -2257,7 +2294,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.confirmInput.Focus()
 
 	case tuiKeybindReview:
-		if !hasClaudeReviewLauncher() {
+		if !hasAIReviewLauncher() {
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
 			m.confirmPrompt = tuiAIReviewUnsupported
@@ -2278,7 +2315,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiKeybindReviewNoConfirm:
-		if !hasClaudeReviewLauncher() {
+		if !hasAIReviewLauncher() {
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
 			m.confirmPrompt = tuiAIReviewUnsupported
@@ -3253,7 +3290,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		_ = copyToClipboard(pr.URL)
 		return m, flashResult(&m, resultCopied, pr.Ref(), "", false)
 	case tuiKeybindReview:
-		if !hasClaudeReviewLauncher() {
+		if !hasAIReviewLauncher() {
 			refreshCmd := m.exitDetailView()
 			m.confirmAction = tuiActionInfo
 			m.confirmYes = true
@@ -3457,6 +3494,7 @@ func (m tuiModel) viewDiff() tea.View {
 
 	v := tea.NewView(m.fillViewToTerminal(b.String()))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	if m.confirmAction != "" {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
 	}
@@ -3599,6 +3637,7 @@ func (m tuiModel) viewDetail() tea.View {
 
 	v := tea.NewView(m.fillViewToTerminal(b.String()))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	if m.confirmAction != "" {
 		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
 	}
@@ -4550,7 +4589,7 @@ func (m tuiModel) listHelpPairs() []helpPair {
 		helpPair{tuiKeybindOpen, tuiHelpOpen},
 		helpPair{tuiKeybindCopyURL, tuiHelpCopy},
 	)
-	if actionable && !draft && hasClaudeReviewLauncher() {
+	if actionable && !draft && hasAIReviewLauncher() {
 		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
 	if m.autoRefresh {
@@ -4636,7 +4675,7 @@ func (m tuiModel) diffHelpPairs() []helpPair {
 		pairs = append(pairs, helpPair{tuiKeybindSlack, tuiHelpSlack})
 	}
 
-	if actionable && !draft && hasClaudeReviewLauncher() {
+	if actionable && !draft && hasAIReviewLauncher() {
 		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
 	if actionable && !draft {
@@ -4688,7 +4727,7 @@ func (m tuiModel) detailHelpPairs() []helpPair {
 	if actionable && m.detail.MergeableState == valueBehind {
 		pairs = append(pairs, helpPair{tuiKeybindUpdateBranch, tuiHelpUpdateBranch})
 	}
-	if actionable && !draft && hasClaudeReviewLauncher() {
+	if actionable && !draft && hasAIReviewLauncher() {
 		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
 	}
 	if actionable && !draft {
@@ -4733,7 +4772,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		{tuiKeybindHelp, tuiDescHelp},
 		{tuiKeybindQuit, tuiDescQuit},
 	}
-	if hasClaudeReviewLauncher() {
+	if hasAIReviewLauncher() {
 		// Insert review before the last two entries (?, q).
 		pairs = append(
 			pairs[:len(pairs)-2],
@@ -5566,6 +5605,218 @@ func (m tuiModel) renderScrollbar(height, totalLines int, percent float64) strin
 	return strings.Join(m.scrollbarChars(height, totalLines, percent), "\n")
 }
 
+func scrollbarThumbMetrics(height, totalLines int, percent float64) (int, int) {
+	if height <= 0 {
+		return 0, 0
+	}
+	maxThumb := height / 2 //nolint:mnd // cap at 50%
+	thumbSize := min(maxThumb, max(1, height*height/max(1, totalLines)))
+	trackSpace := max(0, height-thumbSize)
+	thumbPos := 0
+	if trackSpace > 0 {
+		thumbPos = int(math.Round(percent * float64(trackSpace)))
+	}
+	return thumbPos, thumbSize
+}
+
+func (m *tuiModel) handleScrollbarPress(msg tea.Mouse) bool {
+	const thumbCenterDivisor = 2
+
+	if m.confirmAction != "" {
+		m.syncConfirmView()
+	} else {
+		switch m.view {
+		case tuiViewList:
+			return false
+		case tuiViewDiff:
+			m.syncDiffView()
+		case tuiViewDetail:
+			m.syncDetailView()
+		default:
+			return false
+		}
+	}
+
+	hitbox, ok := m.scrollbarHitboxAt(msg.X, msg.Y)
+	if !ok {
+		return false
+	}
+	percent := m.scrollbarPercent(hitbox.target)
+	thumbPos, thumbSize := scrollbarThumbMetrics(hitbox.height, hitbox.totalLines, percent)
+	row := min(max(msg.Y-hitbox.y, 0), hitbox.height-1)
+	grab := thumbSize / thumbCenterDivisor
+	if row >= thumbPos && row < thumbPos+thumbSize {
+		grab = row - thumbPos
+	}
+	m.scrollDrag = scrollbarDragState{
+		active: true,
+		target: hitbox.target,
+		grab:   grab,
+	}
+	m.scrollbarScrollToRow(hitbox, row, grab)
+	return true
+}
+
+func (m *tuiModel) handleScrollbarMotion(msg tea.Mouse) bool {
+	if !m.scrollDrag.active {
+		return false
+	}
+	hitbox, ok := m.scrollbarHitbox(m.scrollDrag.target)
+	if !ok {
+		m.scrollDrag = scrollbarDragState{}
+		return false
+	}
+	m.scrollbarScrollToRow(hitbox, msg.Y-hitbox.y, m.scrollDrag.grab)
+	return true
+}
+
+func (m *tuiModel) scrollbarScrollToRow(hitbox scrollbarHitbox, row, grab int) {
+	if hitbox.height <= 0 {
+		return
+	}
+	vp := m.scrollbarViewport(hitbox.target)
+	if vp == nil {
+		return
+	}
+	maxOffset := max(0, hitbox.totalLines-hitbox.height)
+	if maxOffset == 0 {
+		vp.SetYOffset(0)
+		return
+	}
+	_, thumbSize := scrollbarThumbMetrics(hitbox.height, hitbox.totalLines, vp.ScrollPercent())
+	trackSpace := max(0, hitbox.height-thumbSize)
+	topRow := min(max(row-grab, 0), trackSpace)
+	if trackSpace == 0 {
+		vp.SetYOffset(maxOffset)
+		return
+	}
+	offset := int(math.Round(float64(topRow) / float64(trackSpace) * float64(maxOffset)))
+	vp.SetYOffset(offset)
+}
+
+func (m *tuiModel) scrollbarViewport(target scrollbarTarget) *viewport.Model {
+	switch target {
+	case scrollbarTargetNone:
+		return nil
+	case scrollbarTargetDiff:
+		return &m.diffView
+	case scrollbarTargetDetail:
+		return &m.detailView
+	case scrollbarTargetConfirm:
+		return &m.confirmView
+	default:
+		return nil
+	}
+}
+
+func (m tuiModel) scrollbarPercent(target scrollbarTarget) float64 {
+	if vp := m.scrollbarViewport(target); vp != nil {
+		return vp.ScrollPercent()
+	}
+	return 0
+}
+
+func (m tuiModel) scrollbarHitboxAt(x, y int) (scrollbarHitbox, bool) {
+	for _, target := range []scrollbarTarget{
+		scrollbarTargetConfirm,
+		scrollbarTargetDiff,
+		scrollbarTargetDetail,
+	} {
+		hitbox, ok := m.scrollbarHitbox(target)
+		if !ok {
+			continue
+		}
+		if x == hitbox.x && y >= hitbox.y && y < hitbox.y+hitbox.height {
+			return hitbox, true
+		}
+	}
+	return scrollbarHitbox{}, false
+}
+
+func (m tuiModel) scrollbarHitbox(target scrollbarTarget) (scrollbarHitbox, bool) {
+	switch target {
+	case scrollbarTargetNone:
+		return scrollbarHitbox{}, false
+	case scrollbarTargetDiff:
+		totalLines := m.diffView.TotalLineCount()
+		height := m.diffView.Height()
+		if totalLines <= height || height <= 0 || m.width <= 0 || m.view != tuiViewDiff ||
+			m.confirmAction != "" {
+			return scrollbarHitbox{}, false
+		}
+		y := 0
+		if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
+			y = 2
+		}
+		return scrollbarHitbox{
+			target:     target,
+			x:          m.width - 1,
+			y:          y,
+			height:     height,
+			totalLines: totalLines,
+		}, true
+	case scrollbarTargetDetail:
+		totalLines := m.detailView.TotalLineCount()
+		height := m.detailView.Height()
+		if totalLines <= height || height <= 0 || m.width <= 0 || m.view != tuiViewDetail ||
+			m.confirmAction != "" {
+			return scrollbarHitbox{}, false
+		}
+		return scrollbarHitbox{
+			target:     target,
+			x:          m.width - 1,
+			y:          0,
+			height:     height,
+			totalLines: totalLines,
+		}, true
+	case scrollbarTargetConfirm:
+		if m.confirmAction == "" {
+			return scrollbarHitbox{}, false
+		}
+		totalLines := m.confirmView.TotalLineCount()
+		height := m.confirmView.Height()
+		if totalLines <= height || height <= 0 {
+			return scrollbarHitbox{}, false
+		}
+		return m.confirmScrollbarHitbox()
+	default:
+		return scrollbarHitbox{}, false
+	}
+}
+
+func (m tuiModel) confirmScrollbarHitbox() (scrollbarHitbox, bool) {
+	const centerDivisor = 2
+
+	lines := strings.Split(xansi.Strip(m.renderConfirmModal()), "\n")
+	if len(lines) == 0 {
+		return scrollbarHitbox{}, false
+	}
+
+	fgWidth := 0
+	for _, line := range lines {
+		if w := xansi.WcWidth.StringWidth(line); w > fgWidth {
+			fgWidth = w
+		}
+	}
+	startRow := max(0, (m.height-len(lines))/centerDivisor)
+	startCol := max(0, (m.width-fgWidth)/centerDivisor)
+
+	for row, line := range lines {
+		col := strings.IndexAny(line, "█┃")
+		if col < 0 {
+			continue
+		}
+		return scrollbarHitbox{
+			target:     scrollbarTargetConfirm,
+			x:          startCol + xansi.WcWidth.StringWidth(line[:col]),
+			y:          startRow + row,
+			height:     m.confirmView.Height(),
+			totalLines: m.confirmView.TotalLineCount(),
+		}, true
+	}
+	return scrollbarHitbox{}, false
+}
+
 // appendScrollbar appends a scrollbar column to pre-rendered content lines,
 // padding each line to targetWidth so the scrollbar aligns at the right edge.
 func (m tuiModel) appendScrollbar(content string, height, totalLines int, percent float64) string {
@@ -5978,12 +6229,12 @@ func launchAIReview(
 	model string,
 	effort string,
 ) error {
-	launcher := currentClaudeReviewLauncher()
-	if launcher == claudeLauncherNone {
+	launcher := currentAIReviewLauncher()
+	if launcher == aiReviewLauncherNone {
 		return fmt.Errorf("unsupported terminal %q", os.Getenv("TERM_PROGRAM"))
 	}
 
-	script, err := buildClaudeReviewAppleScript(
+	script, err := buildAIReviewAppleScript(
 		launcher,
 		buildAIReviewCommand(pr, prompt, provider, model, effort),
 	)
@@ -6070,18 +6321,18 @@ func buildAIReviewCommand(
 	)
 }
 
-func buildClaudeReviewAppleScript(launcher claudeReviewLauncher, shellCmd string) (string, error) {
+func buildAIReviewAppleScript(launcher aiReviewLauncher, shellCmd string) (string, error) {
 	switch launcher {
-	case claudeLauncherNone:
+	case aiReviewLauncherNone:
 		return "", fmt.Errorf("unsupported terminal %q", launcher)
-	case claudeLauncherGhostty:
+	case aiReviewLauncherGhostty:
 		return fmt.Sprintf(`tell application "Ghostty"
 	tell application "System Events" to tell process "Ghostty" to set frontmost to true
 	set cfg to new surface configuration
 	set initial input of cfg to %q
 	new tab in front window with configuration cfg
 end tell`, shellCmd), nil
-	case claudeLauncherITerm2:
+	case aiReviewLauncherITerm2:
 		return fmt.Sprintf(`tell application "iTerm2"
 	activate
 	tell current window
