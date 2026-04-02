@@ -36,7 +36,7 @@ var (
 	colorMagenta = lg.Color("5")
 )
 
-// Niche colors — single/low-use but named for palette auditing.
+// Niche colors - single/low-use but named for palette auditing.
 var (
 	colorDraft         = lg.Color("8")   // draft dim, noResults
 	colorMerged        = lg.Color("141") // merged status (purple)
@@ -56,7 +56,7 @@ const (
 	cursorLineSelectedBG = "\x1b[48;2;10;30;15m"
 )
 
-// Base styles — add .Bold(true), .Faint(true), etc. at call sites as needed.
+// Base styles - add .Bold(true), .Faint(true), etc. at call sites as needed.
 var (
 	styleAccent     = lg.NewStyle().Foreground(colorAccent)
 	styleRef        = lg.NewStyle().Foreground(colorRef)

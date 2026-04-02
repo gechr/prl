@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"al.essio.dev/pkg/shellescape"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
@@ -702,6 +704,7 @@ type tuiModel struct {
 	confirmOptCursor  int               // focused confirm option row
 	confirmOptFocus   bool              // true when confirm option rows have focus
 	confirmReviewPR   *PullRequest      // selected PR when the confirm modal is for AI review
+	confirmView       viewport.Model    // scrollable viewport for overflowing confirm modals
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -1385,6 +1388,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailLines = m.renderDetailContent()
 			m.clampDetailScroll()
 		}
+		if m.confirmAction != "" {
+			m.confirmInput.SetWidth(m.confirmInputWidth())
+			m.confirmInput.MaxHeight = m.confirmTextareaMaxHeight()
+		}
 		return m, nil
 
 	case tea.MouseClickMsg:
@@ -1397,6 +1404,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseWheelMsg:
+		// Scroll the confirm modal when it's active and overflows.
+		if m.confirmAction != "" {
+			m.syncConfirmView()
+			m.confirmView, _ = m.confirmView.Update(msg)
+			return m, nil
+		}
 		switch m.view {
 		case tuiViewList:
 			switch msg.Button {
@@ -2154,6 +2167,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmAction = tuiActionClose
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.prepareConfirmInput()
 		m.confirmInput.SetValue("")
 		if len(targets) == 1 {
 			m.confirmSubject = targets[0].pr.Ref()
@@ -2241,6 +2255,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmURL = prCopy.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.prepareConfirmInput()
 		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&prCopy) + "?"
@@ -2740,6 +2755,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmURL = pr.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.prepareConfirmInput()
 		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Close " + styledRef(&pr) + "?"
@@ -2792,6 +2808,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmURL = pr.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.prepareConfirmInput()
 		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&pr) + "?"
@@ -3164,6 +3181,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmURL = pr.URL
 		m.confirmYes = true
 		m.confirmHasInput = true
+		m = m.prepareConfirmInput()
 		m.confirmInput.SetValue("")
 		m.confirmPrompt = "Comment on " + styledRef(&pr) + "?"
 		m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
@@ -5025,8 +5043,24 @@ func newConfirmInput() textarea.Model {
 	return ci
 }
 
+func newConfirmView() viewport.Model {
+	v := viewport.New()
+	v.KeyMap = viewport.KeyMap{} // disable all key bindings — confirm overlay handles its own
+	v.MouseWheelEnabled = true
+	v.SoftWrap = true
+	return v
+}
+
 func (m tuiModel) setConfirmInputPlaceholder(placeholder string) tuiModel {
 	m.confirmInput.Placeholder = placeholder
+	return m
+}
+
+// prepareConfirmInput configures the confirm textarea dimensions for the
+// current terminal size. Call this whenever confirmHasInput is set to true.
+func (m tuiModel) prepareConfirmInput() tuiModel {
+	m.confirmInput.SetWidth(m.confirmInputWidth())
+	m.confirmInput.MaxHeight = m.confirmTextareaMaxHeight()
 	return m
 }
 
@@ -5047,11 +5081,93 @@ func (m tuiModel) focusConfirmInput() (tuiModel, tea.Cmd) {
 	return m, m.confirmInput.Focus()
 }
 
-func (m tuiModel) confirmInputWidth() int {
-	if m.confirmAction == tuiActionReview {
-		return tuiAIReviewConfirmInputWid
+// scrollConfirmToFocus scrolls the confirm viewport so the currently focused
+// element (option row or textarea) is visible. Call after any focus change.
+func (m *tuiModel) scrollConfirmToFocus() {
+	m.syncConfirmView()
+
+	// Calculate the line offset of the focused element within the content.
+	// Layout: prompt (1) + blank (2) + [options: 3 lines each] + label (1) + textarea + hints.
+	const promptLines = 3 // prompt + 2 blank lines (\n\n)
+	const linesPerOption = 3
+
+	if m.confirmOptFocus && m.hasConfirmOptions() {
+		line := promptLines + m.confirmOptCursor*linesPerOption
+		m.confirmView.EnsureVisible(max(0, line-1), 0, 0)
+		return
 	}
-	return tuiConfirmInputWidth
+
+	if m.confirmHasInput {
+		// Textarea starts after prompt + all options + label.
+		line := promptLines + len(m.confirmOptions)*linesPerOption + 1
+		m.confirmView.EnsureVisible(max(0, line-1), 0, 0)
+	}
+}
+
+func (m tuiModel) confirmInputWidth() int {
+	w := tuiConfirmInputWidth
+	if m.confirmAction == tuiActionReview {
+		w = tuiAIReviewConfirmInputWid
+	}
+	// Cap to terminal width minus border+padding so the modal never overflows.
+	if maxW := m.width - tuiConfirmPadX*2 - 2; m.width > 0 && w > maxW { //nolint:mnd // border cols
+		w = max(20, maxW) //nolint:mnd // minimum usable width
+	}
+	return w
+}
+
+// confirmTextareaMaxHeight returns a dynamic MaxHeight for the confirm textarea
+// so it shrinks on small terminals instead of overflowing.
+func (m tuiModel) confirmTextareaMaxHeight() int {
+	if m.height <= 0 {
+		return tuiConfirmInputMaxHeight
+	}
+	// Reserve space for: border (2) + padding (2) + prompt (~2) + label (1) +
+	// options (~6) + hints (2) + blank lines (~3).
+	const overhead = 18
+	available := max(tuiConfirmInputMinHeight, m.height-overhead)
+	return min(available, tuiConfirmInputMaxHeight)
+}
+
+// confirmModalContent returns the scrollable inner content for the confirm
+// modal (prompt + options + textarea). Hints are rendered separately below the
+// viewport so they stay pinned at the bottom.
+func (m tuiModel) confirmModalContent() string {
+	var b strings.Builder
+	b.WriteString(m.confirmPrompt)
+	if m.confirmHasInput {
+		label := m.confirmInputLabel
+		if label == "" {
+			label = "Comment"
+		}
+		b.WriteString("\n\n")
+		b.WriteString(m.renderConfirmOptions())
+		b.WriteString(m.styles.helpKey.Render(label))
+		b.WriteString("\n")
+		b.WriteString(m.confirmInput.View())
+	} else {
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+// syncConfirmView updates the persistent viewport with the current modal
+// content and dimensions so that scroll operations (mouse wheel, page up/down)
+// have accurate line counts. Called in Update paths before scrolling.
+func (m *tuiModel) syncConfirmView() {
+	boxWidth := m.confirmInputWidth() + tuiConfirmPadX*2 //nolint:mnd // border + padding
+	scrollbarWidth := tuiScrollbarWidth
+	m.confirmView.SetWidth(max(1, boxWidth-(tuiConfirmPadX-1)*2-2-scrollbarWidth))
+	m.confirmView.SetHeight(m.confirmViewport())
+	m.confirmView.SetContent(m.confirmModalContent())
+}
+
+// confirmViewport returns the maximum number of inner content lines that fit
+// within the terminal, leaving room for the box border and vertical padding.
+func (m tuiModel) confirmViewport() int {
+	// 2 border rows + 2×1 vertical padding (top/bottom inside the box).
+	const chrome = 4
+	return max(chrome-1, m.height-chrome)
 }
 
 func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -5077,6 +5193,7 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.confirmOptCursor = 0
 				}
+				m.scrollConfirmToFocus()
 				return m, nil
 			}
 		case tuiKeybindConfirmSubmit:
@@ -5111,14 +5228,20 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case tuiKeybindVimDown, tuiKeyDown:
 		if m.confirmHasInput && m.confirmOptCursor == len(m.confirmOptions)-1 {
-			return m.focusConfirmInput()
+			focused, cmd := m.focusConfirmInput()
+			focused.scrollConfirmToFocus()
+			return focused, cmd
 		}
 		m.confirmOptCursor = min(m.confirmOptCursor+1, len(m.confirmOptions)-1)
+		m.scrollConfirmToFocus()
 	case tuiKeybindVimUp, tuiKeyUp:
 		if m.confirmHasInput && m.confirmOptCursor == 0 {
-			return m.focusConfirmInput()
+			focused, cmd := m.focusConfirmInput()
+			focused.scrollConfirmToFocus()
+			return focused, cmd
 		}
 		m.confirmOptCursor = max(m.confirmOptCursor-1, 0)
+		m.scrollConfirmToFocus()
 	case tuiKeybindVimRight, tuiKeyRight:
 		n := len(m.confirmOptions[m.confirmOptCursor].choices)
 		if n > 0 {
@@ -5140,17 +5263,23 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tuiKeyTab, tuiKeyShiftTab:
 		if msg.String() == tuiKeyShiftTab {
 			if m.confirmHasInput && m.confirmOptCursor == 0 {
-				return m.focusConfirmInput()
+				focused, cmd := m.focusConfirmInput()
+				focused.scrollConfirmToFocus()
+				return focused, cmd
 			}
 			m.confirmOptCursor = (m.confirmOptCursor - 1 + len(m.confirmOptions)) % len(
 				m.confirmOptions,
 			)
+			m.scrollConfirmToFocus()
 			return m, nil
 		}
 		if m.confirmHasInput && m.confirmOptCursor == len(m.confirmOptions)-1 {
-			return m.focusConfirmInput()
+			focused, cmd := m.focusConfirmInput()
+			focused.scrollConfirmToFocus()
+			return focused, cmd
 		}
 		m.confirmOptCursor = (m.confirmOptCursor + 1) % len(m.confirmOptions)
+		m.scrollConfirmToFocus()
 		return m, nil
 	case tuiKeybindConfirmSubmit, tuiKeybindConfirmYes:
 		m.confirmYes = true
@@ -5159,7 +5288,9 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.confirmDismiss()
 	case tuiKeyEnter:
 		if m.confirmHasInput {
-			return m.focusConfirmInput()
+			focused, cmd := m.focusConfirmInput()
+			focused.scrollConfirmToFocus()
+			return focused, cmd
 		}
 		m.confirmYes = true
 		return m.confirmAccept()
@@ -5308,36 +5439,87 @@ func (m tuiModel) renderConfirmModal() string {
 		buttons = no + "  " + yes
 	}
 
-	var b strings.Builder
-	b.WriteString(m.confirmPrompt)
-
 	if m.confirmHasInput {
-		label := m.confirmInputLabel
-		if label == "" {
-			label = "Comment"
-		}
-		b.WriteString("\n\n")
-		b.WriteString(m.renderConfirmOptions())
-		b.WriteString(m.styles.helpKey.Render(label))
-		b.WriteString("\n")
-		b.WriteString(m.confirmInput.View())
-		b.WriteString("\n\n")
-		b.WriteString(m.renderConfirmInputHints())
 		// Fix width so the border stays aligned as the textarea grows.
 		boxWidth := m.confirmInputWidth() + tuiConfirmPadX*2 //nolint:mnd // border + padding
-		return boxStyle.Width(boxWidth).Render(b.String())
+		footer := "\n\n" + m.renderConfirmInputHints()
+		return m.renderConfirmScrollable(boxStyle, boxWidth, m.confirmModalContent(), footer)
 	}
 
-	b.WriteString("\n\n")
-
-	content := b.String()
+	content := m.confirmModalContent()
 	promptWidth := lg.Width(m.confirmPrompt)
 	buttonsWidth := lg.Width(buttons)
 	centered := buttons
 	if pad := (promptWidth - buttonsWidth) / 2; pad > 0 { //nolint:mnd // center
 		centered = strings.Repeat(" ", pad) + buttons
 	}
-	return boxStyle.Render(content + centered)
+	return m.renderConfirmScrollable(boxStyle, 0, content+centered, "")
+}
+
+// renderConfirmScrollable renders inner content inside a styled box, using a
+// viewport for clipping and a scrollbar when the content exceeds the terminal.
+func (m tuiModel) renderConfirmScrollable(boxStyle lg.Style, boxWidth int, content string) string {
+	vpHeight := m.confirmViewport()
+	lines := strings.Split(content, "\n")
+	if len(lines) <= vpHeight {
+		if boxWidth > 0 {
+			return boxStyle.Width(boxWidth).Render(content)
+		}
+		return boxStyle.Render(content)
+	}
+
+	// Use the viewport for clipping + scroll offset.
+	view := m.confirmView                             // copy — scroll offset persists via Update, content is ephemeral
+	innerWidth := boxWidth - (tuiConfirmPadX-1)*2 - 2 //nolint:mnd // subtract padding + border
+	scrollbarWidth := tuiScrollbarWidth
+	viewWidth := max(1, innerWidth-scrollbarWidth)
+	view.SetWidth(viewWidth)
+	view.SetHeight(vpHeight)
+
+	// Re-render content at the narrower viewport width so the textarea
+	// lines aren't soft-wrapped by the viewport (value receiver — local copy).
+	if m.confirmHasInput {
+		m.confirmInput.SetWidth(viewWidth)
+		content = m.confirmModalContent()
+	}
+	view.SetContent(content)
+
+	scrollbar := m.renderScrollbar(vpHeight, view.TotalLineCount(), view.ScrollPercent())
+	inner := lg.JoinHorizontal(lg.Top, view.View(), scrollbar)
+	// Reduce right padding so the scrollbar sits snug against the border.
+	boxStyle = boxStyle.PaddingRight(1)
+	if boxWidth > 0 {
+		boxWidth -= tuiConfirmPadX - 2 //nolint:mnd // keep 1 space between scrollbar and border
+		return boxStyle.Width(boxWidth).Render(inner)
+	}
+	return boxStyle.Render(inner)
+}
+
+// renderScrollbar renders a vertical scrollbar track with a thumb sized
+// proportionally to the visible/total content ratio and positioned by percent.
+func (m tuiModel) renderScrollbar(height, totalLines int, percent float64) string {
+	if height <= 0 {
+		return ""
+	}
+	thumb := lg.NewStyle().Foreground(colorAccent)
+	track := lg.NewStyle().Foreground(colorAccent).Faint(true)
+	maxThumb := height / 2 //nolint:mnd // cap at 50%
+	thumbSize := min(maxThumb, max(1, height*height/max(1, totalLines)))
+	trackSpace := height - thumbSize
+	thumbPos := int(math.Round(percent * float64(trackSpace)))
+
+	var b strings.Builder
+	for i := range height {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		if i >= thumbPos && i < thumbPos+thumbSize {
+			b.WriteString(thumb.Render("█"))
+		} else {
+			b.WriteString(track.Render("█"))
+		}
+	}
+	return b.String()
 }
 
 func (m tuiModel) renderConfirmOptions() string {
@@ -5445,7 +5627,9 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmOptCursor = 0
 	m.confirmOptFocus = false
 	m.confirmReviewPR = nil
+	m.confirmView.GotoTop()
 	m.confirmInput.SetWidth(tuiConfirmInputWidth)
+	m.confirmInput.MaxHeight = tuiConfirmInputMaxHeight
 	m.confirmInput.Blur()
 	m.confirmInput.SetValue("")
 	return m
@@ -5459,6 +5643,7 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmAction = tuiActionReview
 	m.confirmYes = true
 	m.confirmHasInput = true
+	m = m.prepareConfirmInput()
 	m.confirmInputLabel = "Prompt"
 	m.confirmOptions = []filterOptionDef{
 		{
@@ -5483,7 +5668,6 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmOptFocus = true
 	m.confirmReviewPR = &prCopy
 	m = m.setConfirmInputPlaceholder("Leave blank to use the default prompt")
-	m.confirmInput.SetWidth(m.confirmInputWidth())
 	m.confirmInput.Blur()
 	m.confirmInput.SetValue(reviewPrompt(pr, m.cfg, provider))
 	m.confirmPrompt = "Launch AI review for " + styledRef(&prCopy) + "?"
@@ -6190,6 +6374,7 @@ func runTui(
 		selected:        make(prKeys),
 		filterInput:     fi,
 		confirmInput:    ci,
+		confirmView:     newConfirmView(),
 		p:               p,
 		cli:             cli,
 		cfg:             cfg,

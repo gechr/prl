@@ -171,6 +171,7 @@ const (
 	tuiConfirmInputMaxHeight   = 30
 	tuiConfirmPadX             = 4
 	tuiConfirmPadY             = 2
+	tuiScrollbarWidth          = 1
 	tuiOptionsPadX             = 2
 	tuiOptionsPadY             = 1
 
