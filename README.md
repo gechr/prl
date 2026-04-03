@@ -1,8 +1,8 @@
 # prl
 
-Search, filter, display, and act on GitHub pull requests across an organization.
+Search, filter, display, and act on GitHub pull requests across an owner (organization or user).
 
-`prl` wraps `gh search prs` with opinionated defaults, rich terminal output (ANSI colors, OSC 8 hyperlinks, markdown-rendered titles), interactive multi-select for bulk actions, and Slack-formatted output.
+`prl` wraps `gh search prs` with opinionated defaults, rich terminal output (ANSI colors, OSC 8 hyperlinks, markdown-rendered titles), interactive multi-select for bulk actions, and optional plugin-based completion, resolution, and Slack sending.
 
 ## Install
 
@@ -11,6 +11,14 @@ go install github.com/gechr/prl@latest
 ```
 
 Requires [`gh`](https://cli.github.com/) to be installed and authenticated.
+
+### Quickstart
+
+```sh
+prl --init
+```
+
+This creates `~/.config/prl/config.yaml` with default settings. Edit it to set a default owner.
 
 ## Usage
 
@@ -24,7 +32,7 @@ prl [flags] [query...]
 # Your open PRs (default)
 prl
 
-# All open PRs in the org
+# All open PRs for an owner
 prl -a all
 
 # PRs created in the last 2 weeks, sorted by creation date
@@ -42,8 +50,8 @@ prl -a all --approve
 # Auto-merge your PRs
 prl --merge -y
 
-# Slack-formatted output
-prl -a all -o slack
+# Send your PRs to Slack via a plugin
+prl --send
 
 # Dry run: show the gh command without executing
 prl -a all -n
@@ -58,7 +66,7 @@ prl -a all -o json
 
 | Flag            | Short | Description                                                    |
 | --------------- | ----- | -------------------------------------------------------------- |
-| `--org`         |       | GitHub organization(s), comma-separated                        |
+| `--owner`       | `-O`  | GitHub owner(s), comma-separated                               |
 | `--repo`        | `-R`  | Limit to specific repo                                         |
 | `--filter`      | `-f`  | Raw GitHub search qualifier (repeatable)                       |
 | `--match`       |       | Restrict search to field (default: title)                      |
@@ -66,7 +74,7 @@ prl -a all -o json
 | `--commenter`   |       | Filter by commenter                                            |
 | `--no-bot`      | `-B`  | Exclude bot authors (post-fetch)                               |
 | `--draft`       |       | Show only draft PRs (negatable: `--no-draft`)                  |
-| `--team`        | `-t`  | Filter by team authors (resolves via Terraform HCL)            |
+| `--team`        | `-t`  | Filter by team authors (via plugin or `teams` config)          |
 | `--involves`    | `-I`  | Filter by involvement                                          |
 | `--requested`   |       | Filter by requested reviewer                                   |
 | `--reviewed-by` |       | Filter by reviewer                                             |
@@ -74,7 +82,7 @@ prl -a all -o json
 | `--language`    | `-l`  | Filter by language                                             |
 | `--review`      | `-r`  | Filter by review status                                        |
 | `--state`       | `-s`  | PR state: open/closed/merged/all (default: open)               |
-| `--topic`       | `-T`  | Filter by repo topic (resolves via Terraform HCL)              |
+| `--topic`       | `-T`  | Filter by repo topic (via plugin)                              |
 | `--created`     | `-c`  | Filter by creation date (e.g. `2weeks`, `today`, `2024-01-01`) |
 | `--drift`       | `-d`  | Filter by created-to-updated gap (e.g. `0`, `1week`, `>3days`) |
 | `--updated`     | `-u`  | Filter by last updated date                                    |
@@ -98,22 +106,24 @@ prl -a all -o json
 
 ### Actions
 
-| Flag     | Short | Description                         |
-| -------- | ----- | ----------------------------------- |
-| `--copy` | `-C`  | Copy output to clipboard            |
-| `--dry`  | `-n`  | Show search query without executing |
-| `--open` | `-O`  | Open each PR in browser             |
-| `--web`  | `-w`  | Open GitHub search in browser       |
+| Flag        | Short | Description                                           |
+| ----------- | ----- | ----------------------------------------------------- |
+| `--copy`    | `-C`  | Copy output to clipboard                              |
+| `--dry`     | `-n`  | Show search query without executing                   |
+| `--open`    | `-O`  | Open each PR in browser                               |
+| `--web`     | `-w`  | Open GitHub search in browser                         |
+| `--send`    |       | Send PRs to Slack via plugin                          |
+| `--send-to` |       | Override Slack recipient (`#channel`, `@user`, email) |
 
 ### Output
 
-| Flag        | Short | Description                                     |
-| ----------- | ----- | ----------------------------------------------- |
-| `--columns` |       | Custom table columns (forces table output)      |
-| `--limit`   | `-L`  | Maximum results (default: 30)                   |
-| `--output`  | `-o`  | Output format: table/url/bullet/slack/json/repo |
-| `--reverse` |       | Show oldest first (top)                         |
-| `--sort`    |       | Sort by: name/created/updated (default: name)   |
+| Flag        | Short | Description                                   |
+| ----------- | ----- | --------------------------------------------- |
+| `--columns` |       | Custom table columns (forces table output)    |
+| `--limit`   | `-L`  | Maximum results (default: 30)                 |
+| `--output`  | `-o`  | Output format: table/url/bullet/json/repo     |
+| `--reverse` |       | Show oldest first (top)                       |
+| `--sort`    |       | Sort by: name/created/updated (default: name) |
 
 ### Miscellaneous
 
@@ -158,7 +168,7 @@ Additional units for drift: `s`/`sec`/`secs`/`second`/`seconds`
 
 Default columns: `index`, `title`, `ref`, `created`, `updated` (plus `author` when using `--team` or multiple authors).
 
-Available columns: `index`, `org`, `ref`, `repo`, `number`, `title`, `labels`, `author`, `state`, `created`, `updated`, `url`
+Available columns: `index`, `owner`, `ref`, `repo`, `number`, `title`, `labels`, `author`, `state`, `created`, `updated`, `url`
 
 ```sh
 prl --columns title,ref,author,labels
@@ -172,17 +182,19 @@ Config file at `~/.config/prl/config.yaml`:
 
 ```yaml
 default:
-  organizations:
+  owners:
     - my-org
   authors:
     - "@me"
   bots: true        # set to false to exclude bots by default
   limit: 50
   match: title      # title, body, or comments
-  output: table     # table, url, bullet, slack, json, or repo
+  output: table     # table, url, bullet, json, or repo
   reverse: false    # true to show oldest first by default
   sort: updated     # name, created, or updated
   state: open       # open, closed, merged, or all
+
+plugin: ""
 
 tui:
   review:
@@ -192,30 +204,25 @@ tui:
     providers:
       claude:
         prompt: |
-          Review PR #{prNumber} in {orgWithRepo}.
+          Review PR #{prNumber} in {ownerWithRepo}.
 
           URL: {prURL}
       codex:
         prompt: |
-          Review PR #{prNumber} in {orgWithRepo}.
+          Review PR #{prNumber} in {ownerWithRepo}.
 
           URL: {prURL}
 
-code_dir: ~/code/github/my-org
-terraform_repository_dir: ~/code/github/my-org/tf-github
-terraform_membership_dir: ~/code/github/my-org/tf-membership-v2
-ignored_organizations:
+ignored_owners:
   - archived-org
-
-output:
-  slack:
-    skip_repos:
-      - internal-tool
-    two_approver_repos:
-      - critical-service
 
 team_aliases:
   ops: ops_team_full_name
+
+teams:
+  ops_team_full_name:
+    - alice
+    - bob
 
 authors:
   dependabot: Bot
@@ -223,17 +230,15 @@ authors:
   asmith: Alice Smith
 ```
 
-Available AI review prompt placeholders: `{prNumber}`, `{repo}`, `{org}`, `{orgWithRepo}`, `{prURL}`, `{prRef}`, `{title}`.
+Available AI review prompt placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`.
 
-Setting `code_dir` automatically derives `terraform_repository_dir` (`<code_dir>/tf-github`) and `terraform_membership_dir` (`<code_dir>/tf-membership-v2`) unless they are set explicitly.
-
-Top-level settings can be overridden via `PRL_*` environment variables (e.g. `PRL_CODE_DIR=~/code`).
+Top-level settings can be overridden via `PRL_*` environment variables.
 
 ## Author Name Resolution
 
 Authors can be resolved to display names from two sources:
 
-1. **HCL** (`users.tf`): Parses `github_username` to `first_name last_name` mappings
-1. **Config** (`authors`): Fallback mapping in config.yaml
+1. **Plugin**: `complete author` output from the configured plugin
+1. **Config** (`authors`): Fallback mapping in `config.yaml`
 
-In table output, authors are colorized with a 20-color palette, bots are dimmed, and departed users (config-only, not in HCL) are shown with strikethrough.
+In table output, authors are colorized with a 20-color palette, bots are dimmed, and config-only users are shown with strikethrough when the plugin marks active users.

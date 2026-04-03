@@ -112,3 +112,25 @@ func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testi
 		`invalid tui.review.default.effort "max" for provider "codex" model "gpt-5.4"`,
 	)
 }
+
+func TestLoadConfigMigratesLegacySlackDefaultOutput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`default:
+  output: slack
+`),
+			0o600,
+		),
+	)
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, valueTable, cfg.Default.Output)
+}

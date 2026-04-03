@@ -301,3 +301,35 @@ func buildORQualifier(qualifier string, values []string) string {
 	}
 	return "(" + strings.Join(parts, " OR ") + ")"
 }
+
+// buildOwnerQualifier constructs a GitHub search OR expression that matches
+// either an organization or a user owner for each provided value.
+func buildOwnerQualifier(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+
+	const ownerQualifierKinds = 2
+
+	parts := make([]string, 0, len(values)*ownerQualifierKinds)
+	for _, v := range values {
+		parts = append(parts, "org:"+v, "user:"+v)
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
+// buildExcludedOwnerQualifiers constructs negated GitHub search qualifiers that
+// exclude both organization-owned and user-owned repositories.
+func buildExcludedOwnerQualifiers(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	const ownerQualifierKinds = 2
+
+	parts := make([]string, 0, len(values)*ownerQualifierKinds)
+	for _, v := range values {
+		parts = append(parts, "-org:"+v, "-user:"+v)
+	}
+	return parts
+}

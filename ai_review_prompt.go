@@ -38,8 +38,8 @@ func reviewPromptPlaceholderNames() []string {
 	return []string{
 		"prNumber",
 		"repo",
-		"org",
-		"orgWithRepo",
+		"owner",
+		"ownerWithRepo",
 		"prURL",
 		"prRef",
 		"title",
@@ -47,12 +47,12 @@ func reviewPromptPlaceholderNames() []string {
 }
 
 func defaultReviewPromptTemplate(_ reviewProvider) string {
-	return "Perform a comprehensive code review of PR #{prNumber} in {orgWithRepo}.\n\n" +
+	return "Perform a comprehensive code review of PR #{prNumber} in {ownerWithRepo}.\n\n" +
 		"The PR branch is checked out.\n\n" +
 		"First read the PR context with:\n" +
-		"gh pr view {prNumber} --repo {orgWithRepo}\n\n" +
+		"gh pr view {prNumber} --repo {ownerWithRepo}\n\n" +
 		"Then get the diff with:\n" +
-		"gh api repos/{orgWithRepo}/pulls/{prNumber} -H 'Accept: application/vnd.github.v3.diff'\n\n" +
+		"gh api repos/{ownerWithRepo}/pulls/{prNumber} -H 'Accept: application/vnd.github.v3.diff'\n\n" +
 		"Focus on: correctness, edge cases, error handling, performance, readability, and style.\n\n" +
 		"Be thorough but concise."
 }
@@ -128,13 +128,13 @@ func renderReviewPrompt(template string, pr PullRequest) (string, error) {
 
 	owner, repo := prOwnerRepo(pr)
 	values := map[string]string{
-		"prNumber":    fmt.Sprintf("%d", pr.Number),
-		"repo":        repo,
-		"org":         owner,
-		"orgWithRepo": pr.Repository.NameWithOwner,
-		"prURL":       pr.URL,
-		"prRef":       pr.Ref(),
-		"title":       pr.Title,
+		"prNumber":      fmt.Sprintf("%d", pr.Number),
+		"repo":          repo,
+		"owner":         owner,
+		"ownerWithRepo": pr.Repository.NameWithOwner,
+		"prURL":         pr.URL,
+		"prRef":         pr.Ref(),
+		"title":         pr.Title,
 	}
 
 	rendered := aiReviewPromptPlaceholderPattern.ReplaceAllStringFunc(

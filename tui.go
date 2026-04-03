@@ -590,9 +590,8 @@ type aiReviewMsg struct {
 
 // slackSentMsg is sent when a Slack send completes.
 type slackSentMsg struct {
-	count  int
-	output string // first line of CLI output (e.g. "Message sent to #channel")
-	err    error
+	count int
+	err   error
 }
 
 // jumpTimeoutMsg fires when the digit-input window expires.
@@ -861,7 +860,7 @@ func cloneCLI(src *CLI) *CLI {
 
 	dst := *src
 	dst.Query = append([]string(nil), src.Query...)
-	dst.Organization = cloneCSVFlag(src.Organization)
+	dst.Owner = cloneCSVFlag(src.Owner)
 	dst.Filter = append([]string(nil), src.Filter...)
 	dst.Author = cloneCSVFlagPtr(src.Author)
 	dst.Commenter = cloneCSVFlag(src.Commenter)
@@ -955,8 +954,8 @@ func (r refreshSnapshot) run() refreshResultMsg {
 		prs = filterByCI(prs, ci)
 	}
 
-	orgFilter := singleOrg(r.cli.Organization.Values)
-	items := buildPRRowModels(prs, orgFilter, r.resolver)
+	ownerFilter := singleOwner(r.cli.Owner.Values)
+	items := buildPRRowModels(prs, ownerFilter, r.resolver)
 	termWidth := max(0, r.width-tuiListPrefixWidth(len(items)))
 	renderer := r.p.newTableRenderer(r.cli, r.tty, termWidth, table.WithShowIndex(false))
 	_, rows, _ := renderTUITable(r.p, renderer, items, "", false, termWidth)
@@ -1927,12 +1926,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, flashResult(&m, "Slack failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
-		status := msg.output
-		if status == "" {
-			status = fmt.Sprintf("%d PRs", msg.count)
-			if msg.count == 1 {
-				status = "1 PR"
-			}
+		status := fmt.Sprintf("%d PRs", msg.count)
+		if msg.count == 1 {
+			status = "1 PR"
 		}
 		return m, flashResult(&m, "Slacked", status, "", false)
 
@@ -2624,8 +2620,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirmPrompt = fmt.Sprintf("Send %d PRs to Slack?", count)
 		}
 		m.confirmCmd = func() tea.Msg {
-			out, err := sendSlack(cli, cfg, prs)
-			return slackSentMsg{count: count, output: out, err: err}
+			err := pluginSlackSend(cfg, cli.SendTo, prs)
+			return slackSentMsg{count: count, err: err}
 		}
 		return m, nil
 
@@ -2650,8 +2646,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
-			out, err := sendSlack(cli, cfg, prs)
-			return slackSentMsg{count: count, output: out, err: err}
+			err := pluginSlackSend(cfg, cli.SendTo, prs)
+			return slackSentMsg{count: count, err: err}
 		}
 
 	case tuiKeybindOpen:
@@ -3224,8 +3220,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmYes = true
 		m.confirmPrompt = "Send " + styledRef(&pr) + " to Slack?"
 		m.confirmCmd = func() tea.Msg {
-			out, err := sendSlack(cli, cfg, []PullRequest{pr})
-			return slackSentMsg{count: 1, output: out, err: err}
+			err := pluginSlackSend(cfg, cli.SendTo, []PullRequest{pr})
+			return slackSentMsg{count: 1, err: err}
 		}
 		return m, nil
 	case tuiKeybindSlackNoConfirm:
@@ -3242,8 +3238,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
-			out, err := sendSlack(cli, cfg, []PullRequest{pr})
-			return slackSentMsg{count: 1, output: out, err: err}
+			err := pluginSlackSend(cfg, cli.SendTo, []PullRequest{pr})
+			return slackSentMsg{count: 1, err: err}
 		}
 	case tuiKeybindOpen:
 		idx := m.resolveIndex(m.diffKey, -1)
@@ -3485,8 +3481,8 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmYes = true
 		m.confirmPrompt = "Send " + styledRef(&pr) + " to Slack?"
 		m.confirmCmd = func() tea.Msg {
-			out, err := sendSlack(cli, cfg, []PullRequest{pr})
-			return slackSentMsg{count: 1, output: out, err: err}
+			err := pluginSlackSend(cfg, cli.SendTo, []PullRequest{pr})
+			return slackSentMsg{count: 1, err: err}
 		}
 		return m, refreshCmd
 	case tuiKeybindSlackNoConfirm:
@@ -3503,8 +3499,8 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cfg := m.cfg
 		cli := m.cli
 		return m, func() tea.Msg {
-			out, err := sendSlack(cli, cfg, []PullRequest{pr})
-			return slackSentMsg{count: 1, output: out, err: err}
+			err := pluginSlackSend(cfg, cli.SendTo, []PullRequest{pr})
+			return slackSentMsg{count: 1, err: err}
 		}
 	case tuiKeybindUpdateBranch:
 		idx := m.resolveIndex(m.detailKey, -1)
@@ -6937,7 +6933,10 @@ func runTui(
 		}
 	}
 
-	resolver := NewAuthorResolver(cfg)
+	resolver, err := NewAuthorResolver(cfg)
+	if err != nil {
+		return err
+	}
 
 	type fetchResult struct {
 		rows      []TableRow
@@ -6947,13 +6946,13 @@ func runTui(
 		err       error
 	}
 	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
-		prs, err := executeSearch(rest, params)
-		if err != nil {
-			return fetchResult{err: err}
+		prs, searchErr := executeSearch(rest, params)
+		if searchErr != nil {
+			return fetchResult{err: searchErr}
 		}
-		prs, err = applyFilters(cli, prs)
-		if err != nil {
-			return fetchResult{err: err}
+		prs, filterErr := applyFilters(cli, prs)
+		if filterErr != nil {
+			return fetchResult{err: filterErr}
 		}
 		// Post-fetch filters: --closed-by, --merged-by
 		prs = applyTimelineFilters(rest, cli, prs)
@@ -6981,8 +6980,8 @@ func runTui(
 			prs = filterByCI(prs, ci)
 		}
 
-		orgFilter := singleOrg(cli.Organization.Values)
-		items := buildPRRowModels(prs, orgFilter, resolver)
+		ownerFilter := singleOwner(cli.Owner.Values)
+		items := buildPRRowModels(prs, ownerFilter, resolver)
 
 		initWidth := max(0, term.Width(os.Stdout)-tuiListPrefixWidth(len(items)))
 		renderer := p.newTableRenderer(cli, tty, initWidth, table.WithShowIndex(false))

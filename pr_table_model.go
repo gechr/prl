@@ -10,6 +10,7 @@ import (
 type PRRowModel struct {
 	PR          PullRequest
 	Ref         string
+	Owner       string
 	Repo        string
 	RepoNWO     string
 	Number      int
@@ -36,17 +37,18 @@ type AuthorModel struct {
 // buildPRRowModels creates PRRowModel values from raw PullRequests.
 func buildPRRowModels(
 	prs []PullRequest,
-	orgFilter string,
+	ownerFilter string,
 	resolver *AuthorResolver,
 ) []PRRowModel {
 	models := make([]PRRowModel, len(prs))
 	for i, pr := range prs {
 		// Build ref text.
 		name := pr.Repository.NameWithOwner
-		if orgFilter != "" && orgFilter != valueAll {
+		if ownerFilter != "" && ownerFilter != valueAll {
 			name = pr.Repository.Name
 		}
 		ref := fmt.Sprintf("%s#%d", name, pr.Number)
+		owner, _, _ := strings.Cut(pr.Repository.NameWithOwner, "/")
 
 		// Build labels.
 		labels := make([]string, len(pr.Labels))
@@ -57,6 +59,7 @@ func buildPRRowModels(
 		models[i] = PRRowModel{
 			PR:          pr,
 			Ref:         ref,
+			Owner:       owner,
 			Repo:        pr.Repository.Name,
 			RepoNWO:     pr.Repository.NameWithOwner,
 			Number:      pr.Number,
@@ -92,7 +95,7 @@ func buildAuthorModel(pr PullRequest, resolver *AuthorResolver) AuthorModel {
 	if isBot {
 		am.Display = resolveBotDisplay(am.Display, resolver)
 	} else {
-		am.IsDeparted = resolver.IsKnown(login) && !resolver.IsHCL(login)
+		am.IsDeparted = resolver.IsKnown(login) && !resolver.IsActive(login)
 	}
 
 	return am

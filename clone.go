@@ -23,7 +23,7 @@ type cloneTarget struct {
 }
 
 // cloneRepos clones unique repositories from the given PRs in parallel.
-// It uses the SSH remote format (git@github.com:org/repo) and the VCS
+// It uses the SSH remote format (git@github.com:owner/repo) and the VCS
 // configured via PRL_VCS (default: git).
 // When a repo has exactly one PR, the PR's head branch is checked out via --branch.
 func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool) error {
@@ -40,9 +40,9 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool)
 		return nil
 	}
 
-	// If all repos share the same org, omit it from display names.
+	// If all repos share the same owner, omit it from display names.
 	displayName := func(nwo string) string { return nwo }
-	if prefix := commonOrgPrefix(targets); prefix != "" {
+	if prefix := commonOwnerPrefix(targets); prefix != "" {
 		displayName = func(nwo string) string { return strings.TrimPrefix(nwo, prefix) }
 	}
 
@@ -106,7 +106,7 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool)
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			// SSH-only: uses git@github.com:org/repo format.
+			// SSH-only: uses git@github.com:owner/repo format.
 			remote := "git@github.com:" + target.NameWithOwner
 			if err := runClone(ctx, remote, target.Branch, cloneDir(target), useJJ); err != nil {
 				mu.Lock()
@@ -323,13 +323,13 @@ func buildCloneTargets(
 	return targets
 }
 
-// commonOrgPrefix returns "org/" if all targets share the same org, otherwise "".
-func commonOrgPrefix(targets []cloneTarget) string {
+// commonOwnerPrefix returns "owner/" if all targets share the same owner, otherwise "".
+func commonOwnerPrefix(targets []cloneTarget) string {
 	if len(targets) == 0 {
 		return ""
 	}
-	org, _, _ := strings.Cut(targets[0].NameWithOwner, "/")
-	prefix := org + "/"
+	owner, _, _ := strings.Cut(targets[0].NameWithOwner, "/")
+	prefix := owner + "/"
 	for _, t := range targets[1:] {
 		if !strings.HasPrefix(t.NameWithOwner, prefix) {
 			return ""

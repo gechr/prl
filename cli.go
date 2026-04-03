@@ -25,7 +25,7 @@ type CLI struct {
 	Query []string `help:"Search term(s) to filter pull requests" arg:"" optional:""`
 
 	// Filter flags
-	Organization    CSVFlag  `name:"owner"       help:"Limit to GitHub owner/organization"                           short:"O" aliases:"organization,org"                                                         clib:"terse='Owner/org',group='Filters/1'"`
+	Owner           CSVFlag  `name:"owner"       help:"Limit to GitHub owner"                                        short:"O"                                                                                    clib:"terse='Owner',group='Filters/1'"`
 	Repo            string   `name:"repo"        help:"Limit to specific repo"                                       short:"R" aliases:"repository"                                                               clib:"terse='Repository',complete='predictor=repo',group='Filters/1'"`
 	Filter          []string `name:"filter"      help:"Search qualifier"                                             short:"f"                                                                                    clib:"terse='Search qualifier',group='Filters/2'"`
 	Match           string   `name:"match"       help:"Restrict text search to field"                                                                                          placeholder:"<field>"              clib:"terse='Search field',complete='values=title body comments',group='Filters/2',enum='title,body,comments',highlight='t,b,c',default='title'"`
@@ -77,18 +77,17 @@ type CLI struct {
 	Open  bool `name:"open"  help:"Open each PR in browser"                    short:"P"                          clib:"terse='Open in browser',group='Actions/1'"`
 	Web   bool `name:"web"   help:"Open GitHub search in browser"              short:"w"                          clib:"terse='Web search',group='Actions/1'"`
 
-	Send   bool   `name:"send"    help:"Send slack output to configured recipient(s)"                                clib:"terse='Send to Slack',group='Actions/2'"`
-	SendAt string `name:"send-at" help:"Schedule slack send (+5m, +2h, HH:MM, Unix ts)"    placeholder:"<time>"      clib:"terse='Schedule Slack send',group='Actions/2'"`
+	Send   bool   `name:"send"    help:"Send PRs to Slack via plugin"                                                clib:"terse='Send to Slack',group='Actions/2'"`
 	SendTo string `name:"send-to" help:"Override Slack recipient (#channel, @user, email)" placeholder:"<recipient>" clib:"terse='Override Slack recipient',complete='predictor=slack-recipient',group='Actions/2'"`
 
 	// Output flags
-	Watch    bool    `name:"watch"   help:"Refresh output periodically"                                                                        short:"W"                                     clib:"terse='Watch mode',group='Output/0'"`
-	ExitZero bool    `name:"exit-0"  help:"Exit immediately when there are no results"                                                         short:"0"                                     clib:"terse='Exit on no match',group='Output/0'"`
-	Columns  CSVFlag `name:"columns" help:"Table columns [index, ref, repo, org, number, title, labels, author, state, created, updated, url]"           aliases:"col" placeholder:"<cols>"  clib:"terse='Table columns',complete='predictor=columns,comma',group='Output/1'"`
-	Limit    *int    `name:"limit"   help:"Maximum results"                                                                                    short:"L"               placeholder:"<n>"     clib:"terse='Max results',group='Output/1'"`
-	Output   *string `name:"output"  help:"Output format"                                                                                      short:"o"               placeholder:"<fmt>"   clib:"terse='Output format',complete='values=url bullet slack table json repo',group='Output/1',enum='url,bullet,slack,table,json,repo',highlight='u,b,s,t,j,r',default='table'"`
-	Reverse  bool    `name:"reverse" help:"Show oldest first (top)"                                                                                                                          clib:"terse='Reverse display order',group='Output/1'"`
-	Sort     *string `name:"sort"    help:"Sort by"                                                                                                                    placeholder:"<field>" clib:"terse='Sort field',complete='values=name created updated',group='Output/1',enum='name,created,updated',highlight='n,c,u',default='name'"`
+	Watch    bool    `name:"watch"   help:"Refresh output periodically"                                                                          short:"W"                                     clib:"terse='Watch mode',group='Output/0'"`
+	ExitZero bool    `name:"exit-0"  help:"Exit immediately when there are no results"                                                           short:"0"                                     clib:"terse='Exit on no match',group='Output/0'"`
+	Columns  CSVFlag `name:"columns" help:"Table columns [index, ref, repo, owner, number, title, labels, author, state, created, updated, url]"           aliases:"col" placeholder:"<cols>"  clib:"terse='Table columns',complete='predictor=columns,comma',group='Output/1'"`
+	Limit    *int    `name:"limit"   help:"Maximum results"                                                                                      short:"L"               placeholder:"<n>"     clib:"terse='Max results',group='Output/1'"`
+	Output   *string `name:"output"  help:"Output format"                                                                                        short:"o"               placeholder:"<fmt>"   clib:"terse='Output format',complete='values=url bullet table json repo',group='Output/1',enum='url,bullet,table,json,repo',highlight='u,b,t,j,r',default='table'"`
+	Reverse  bool    `name:"reverse" help:"Show oldest first (top)"                                                                                                                            clib:"terse='Reverse display order',group='Output/1'"`
+	Sort     *string `name:"sort"    help:"Sort by"                                                                                                                      placeholder:"<field>" clib:"terse='Sort field',complete='values=name created updated',group='Output/1',enum='name,created,updated',highlight='n,c,u',default='name'"`
 
 	// Miscellaneous
 	Init    bool   `name:"init"    help:"Initialize config with defaults"                      clib:"terse='Initialize config',group='Miscellaneous/0'"`
@@ -154,7 +153,7 @@ func (c *CLI) Validate() error {
 	if c.Clone && c.HasAction() {
 		return fmt.Errorf("--clone cannot be combined with PR action flags")
 	}
-	sending := c.Send || c.SendTo != "" || c.SendAt != ""
+	sending := c.Send || c.SendTo != ""
 	if sending && c.Clone {
 		return fmt.Errorf("--send and --clone are mutually exclusive")
 	}
@@ -220,7 +219,7 @@ func (c *CLI) Validate() error {
 	if c.Output != nil {
 		if _, ok := parseOutputFormat(*c.Output); !ok {
 			return fmt.Errorf(
-				"invalid --output value %q (valid: table/t, url/u, bullet/b, slack/s, json/j, repo/r)",
+				"invalid --output value %q (valid: table/t, url/u, bullet/b, json/j, repo/r)",
 				*c.Output,
 			)
 		}
@@ -299,8 +298,8 @@ func (c *CLI) Normalize(cfg *Config) {
 	c.ReviewRequested.Values = normalizeCSV(c.ReviewRequested.Values)
 	c.ReviewedBy.Values = normalizeCSV(c.ReviewedBy.Values)
 
-	// Normalize org
-	c.Organization.Values = normalizeCSV(c.Organization.Values)
+	// Normalize owner
+	c.Owner.Values = normalizeCSV(c.Owner.Values)
 
 	// --since is a hidden alias for --created
 	if c.Since != "" && c.Created == "" {
@@ -308,8 +307,8 @@ func (c *CLI) Normalize(cfg *Config) {
 	}
 
 	// Apply config defaults where CLI didn't set them
-	if len(c.Organization.Values) == 0 && len(cfg.Default.Organizations) > 0 {
-		c.Organization.Values = cfg.Default.Organizations
+	if len(c.Owner.Values) == 0 && len(cfg.Default.Owners) > 0 {
+		c.Owner.Values = cfg.Default.Owners
 	}
 	if c.Limit == nil {
 		c.Limit = &cfg.Default.Limit
@@ -474,7 +473,7 @@ func (c *CLI) LimitValue() int {
 
 // QueryString joins positional arguments into a search query.
 // A leading "-" or "!" on any term is converted to the GitHub "NOT" keyword
-// because GitHub search uses "-" only for qualifier negation (e.g. -org:foo),
+// because GitHub search uses "-" only for qualifier negation (e.g. -author:foo),
 // not for free-text negation. Multi-word terms are quoted so the phrase is
 // treated as a unit (e.g. -"foo bar" → NOT "foo bar").
 func (c *CLI) QueryString() string {
@@ -514,34 +513,23 @@ func (c *CLI) ApplyOutputOverrides() {
 		c.setOutput(valueTable)
 	}
 
-	// --send-at and --send-to imply --send
-	if c.SendAt != "" {
-		c.Send = true
-		clog.Debug().Msg("--send-at implied --send")
-	}
+	// --send-to implies --send
 	if c.SendTo != "" {
-		c.SendTo = normalizeSlackChannel(c.SendTo)
 		c.Send = true
 		clog.Debug().Msg("--send-to implied --send")
 	}
 
-	// --send: table for interactive selection; slack for non-interactive (--yes)
+	// --send: table for interactive selection; url for non-interactive (--yes)
 	if c.Send {
 		if c.IsInteractive() {
 			c.setOutput(valueTable)
 		} else {
-			c.setOutput("slack")
+			c.setOutput(valueURL)
 		}
 		// --send implies --no-draft unless draft was explicitly set
 		if !c.draftExplicit {
 			c.Draft = new(false)
 			clog.Debug().Msg("--send implied --no-draft")
 		}
-	}
-
-	// -o slack implies --copy
-	if c.OutputFormat() == OutputSlack {
-		c.Copy = true
-		clog.Debug().Msg("-o slack implied --copy")
 	}
 }

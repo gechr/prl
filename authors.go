@@ -6,47 +6,69 @@ import (
 )
 
 var defaultAuthorAliases = map[string]string{
-	strings.ToLower(copilotReviewer):   "Copilot",
-	strings.ToLower(sg2WizardReviewer): "SG2 Wizard",
+	strings.ToLower(copilotReviewer): "Copilot",
 }
 
 // AuthorResolver resolves GitHub usernames to display names.
 type AuthorResolver struct {
-	names    map[string]string // lowercased username -> display name
-	hclNames map[string]bool   // tracks which names came from HCL
+	names       map[string]string // lowercased username -> display name
+	activeNames map[string]bool   // tracks which names came from helper (active users)
 }
 
-// NewAuthorResolver creates an AuthorResolver from config authors and HCL sources.
-func NewAuthorResolver(cfg *Config) *AuthorResolver {
+// NewAuthorResolver creates an AuthorResolver from config authors and optional plugin.
+func NewAuthorResolver(cfg *Config) (*AuthorResolver, error) {
+	if cfg == nil {
+		cfg = &Config{}
+	}
+
 	r := &AuthorResolver{
-		names:    make(map[string]string),
-		hclNames: make(map[string]bool),
+		names:       make(map[string]string),
+		activeNames: make(map[string]bool),
 	}
 
 	maps.Copy(r.names, defaultAuthorAliases)
 
-	// Load config authors first (lower priority)
+	// Load config authors (lower priority)
 	for username, displayName := range cfg.Authors {
 		r.names[strings.ToLower(username)] = displayName
 	}
 
-	// Load HCL names (higher priority, overwrites config entries)
-	r.loadHCLNames(cfg)
+	// Load plugin names (higher priority, marks as active)
+	if err := r.loadPluginNames(cfg); err != nil {
+		return nil, err
+	}
 
-	return r
+	return r, nil
 }
 
-// loadHCLNames loads names from HCL users.tf (overwrites config author entries).
-func (r *AuthorResolver) loadHCLNames(cfg *Config) {
-	hclNames, err := parseUsersHCLNames(cfg)
+// loadPluginNames loads author names from the plugin binary.
+// Uses the "complete author" output which returns "username\tDisplay Name" lines.
+func (r *AuthorResolver) loadPluginNames(cfg *Config) error {
+	plug, err := discoverPlugin(cfg)
 	if err != nil {
-		return
+		return err
 	}
-	for ghUser, name := range hclNames {
-		lower := strings.ToLower(ghUser)
-		r.names[lower] = name
-		r.hclNames[lower] = true
+	results, err := plug.Complete("author")
+	if err != nil {
+		return err
 	}
+	if results == nil {
+		return nil
+	}
+
+	for _, line := range results {
+		val, desc, hasSep := strings.Cut(line, "\t")
+		if val == valueAtMe || val == "all" {
+			continue
+		}
+		lower := strings.ToLower(val)
+		if hasSep && desc != "" {
+			r.names[lower] = desc
+		}
+		r.activeNames[lower] = true
+	}
+
+	return nil
 }
 
 // Resolve returns the display name for a GitHub username.
@@ -57,9 +79,14 @@ func (r *AuthorResolver) Resolve(username string) string {
 	return username
 }
 
-// IsHCL returns true if the name came from HCL (vs config-only = departed).
-func (r *AuthorResolver) IsHCL(username string) bool {
-	return r.hclNames[strings.ToLower(username)]
+// IsActive returns true if the name came from the helper (active user).
+// When no helper is available, all known authors are considered active.
+func (r *AuthorResolver) IsActive(username string) bool {
+	if len(r.activeNames) == 0 {
+		// No helper — can't distinguish active from departed
+		return true
+	}
+	return r.activeNames[strings.ToLower(username)]
 }
 
 // IsKnown returns true if the username has a display name mapping.
@@ -68,8 +95,7 @@ func (r *AuthorResolver) IsKnown(username string) bool {
 	return ok
 }
 
-// IsAuthorBot returns true if the username is a known bot reviewer.
+// isAuthorBot returns true if the username is a known bot reviewer.
 func isAuthorBot(username string) bool {
-	lower := strings.ToLower(username)
-	return lower == strings.ToLower(copilotReviewer) || lower == strings.ToLower(sg2WizardReviewer)
+	return strings.EqualFold(username, copilotReviewer)
 }

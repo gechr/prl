@@ -623,8 +623,8 @@ func TestNewTableRenderer_IndexDisabledInInteractive(t *testing.T) {
 
 func TestNewTableRenderer_OrgFilter(t *testing.T) {
 	cli := &CLI{
-		Organization: CSVFlag{Values: []string{"myorg"}},
-		Columns:      CSVFlag{Values: []string{"ref"}},
+		Owner:   CSVFlag{Values: []string{"myorg"}},
+		Columns: CSVFlag{Values: []string{"ref"}},
 	}
 	r := testPRL.newTableRenderer(cli, true, 0)
 
@@ -639,8 +639,8 @@ func TestNewTableRenderer_OrgFilter(t *testing.T) {
 
 func TestNewTableRenderer_OrgFilter_Multiple(t *testing.T) {
 	cli := &CLI{
-		Organization: CSVFlag{Values: []string{"org1", "org2"}},
-		Columns:      CSVFlag{Values: []string{"ref"}},
+		Owner:   CSVFlag{Values: []string{"org1", "org2"}},
+		Columns: CSVFlag{Values: []string{"ref"}},
 	}
 	r := testPRL.newTableRenderer(cli, true, 0)
 

@@ -18,8 +18,6 @@ func TestParseOutputFormat(t *testing.T) {
 		{"u", OutputURL, true},
 		{"bullet", OutputBullet, true},
 		{"b", OutputBullet, true},
-		{"slack", OutputSlack, true},
-		{"s", OutputSlack, true},
 		{"json", OutputJSON, true},
 		{"j", OutputJSON, true},
 		{"repo", OutputRepo, true},
@@ -94,16 +92,16 @@ func TestRef(t *testing.T) {
 		},
 	}
 
-	// Default: includes org
-	refSingleOrg = ""
+	// Default: includes owner
+	refSingleOwner = ""
 	require.Equal(t, "acme-corp/dockerfiles#42", pr.Ref())
 
-	// Single org: omits org
-	refSingleOrg = "acme-corp"
+	// Single owner: omits owner
+	refSingleOwner = "acme-corp"
 	require.Equal(t, "dockerfiles#42", pr.Ref())
 
 	// Reset for other tests
-	refSingleOrg = ""
+	refSingleOwner = ""
 }
 
 func TestParseCIStatus(t *testing.T) {

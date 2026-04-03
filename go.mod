@@ -17,10 +17,9 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/cli/go-gh/v2 v2.13.0
-	github.com/gechr/clib v0.2.7
+	github.com/gechr/clib v0.2.11
 	github.com/gechr/clog v0.7.28
 	github.com/goccy/go-yaml v1.19.2
-	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/confmap v1.0.0
 	github.com/knadh/koanf/providers/env v1.1.0
@@ -50,14 +49,12 @@ require (
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/MirrexOne/unqueryvet v1.5.4 // indirect
 	github.com/OpenPeeDeeP/depguard/v2 v2.2.1 // indirect
-	github.com/agext/levenshtein v1.2.1 // indirect
 	github.com/alecthomas/go-check-sumtype v0.3.1 // indirect
 	github.com/alexkohler/nakedret/v2 v2.0.6 // indirect
 	github.com/alexkohler/prealloc v1.1.0 // indirect
 	github.com/alfatraining/structtag v1.0.0 // indirect
 	github.com/alingse/asasalint v0.0.11 // indirect
 	github.com/alingse/nilnesserr v0.2.0 // indirect
-	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/ashanbrown/forbidigo/v2 v2.3.0 // indirect
 	github.com/ashanbrown/makezero/v2 v2.1.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -177,7 +174,6 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
-	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mitchellh/hashstructure/v2 v2.0.2 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
@@ -242,7 +238,6 @@ require (
 	github.com/ykadowak/zerologlint v0.1.5 // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
-	github.com/zclconf/go-cty v1.16.3 // indirect
 	gitlab.com/bosi/decorder v0.4.2 // indirect
 	go-simpler.org/musttag v0.14.0 // indirect
 	go-simpler.org/sloglint v0.11.1 // indirect

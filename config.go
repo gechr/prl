@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/gechr/clog"
-	"github.com/gechr/prl/internal/shell"
 	goyaml "github.com/goccy/go-yaml"
 	goyamlast "github.com/goccy/go-yaml/ast"
 	goyamlparser "github.com/goccy/go-yaml/parser"
@@ -31,24 +30,20 @@ func configPath() (string, error) {
 // Configuration key constants.
 const (
 	keyAuthors               = "authors"
-	keyCodeDir               = "code_dir"
 	keyDefaultAuthors        = "default.authors"
 	keyDefaultBots           = "default.bots"
 	keyDefaultLimit          = "default.limit"
 	keyDefaultMatch          = "default.match"
 	keyDefaultMergeMethod    = "default.merge_method"
-	keyDefaultOrganizations  = "default.organizations"
+	keyDefaultOwners         = "default.owners"
 	keyDefaultOutput         = "default.output"
 	keyDefaultReverse        = "default.reverse"
 	keyDefaultSort           = "default.sort"
 	keyDefaultState          = "default.state"
-	keyIgnoredOrganizations  = "ignored_organizations"
-	keySlackRecipients       = "output.slack.recipients"
-	keySlackSkipRepos        = "output.slack.skip_repos"
-	keySlackTwoApprover      = "output.slack.two_approver_repos"
+	keyPlugin                = "plugin"
+	keyIgnoredOwners         = "ignored_owners"
 	keyTeamAliases           = "team_aliases"
-	keyTerraformMemberDir    = "terraform_membership_dir"
-	keyTerraformRepoDir      = "terraform_repository_dir"
+	keyTeams                 = "teams"
 	keySpinnerStyle          = "spinner.style"
 	keySpinnerColors         = "spinner.colors"
 	keyTUIAutoRefresh        = "tui.refresh.enabled"
@@ -70,38 +65,22 @@ const (
 
 // Defaults holds default values that can be overridden by CLI flags.
 type Defaults struct {
-	Authors       []string `koanf:"authors"`
-	Bots          bool     `koanf:"bots"`
-	Limit         int      `koanf:"limit"`
-	Match         string   `koanf:"match"`
-	MergeMethod   string   `koanf:"merge_method"`
-	Organizations []string `koanf:"organizations"`
-	Output        string   `koanf:"output"`
-	Reverse       bool     `koanf:"reverse"`
-	Sort          string   `koanf:"sort"`
-	State         string   `koanf:"state"`
+	Authors     []string `koanf:"authors"`
+	Bots        bool     `koanf:"bots"`
+	Limit       int      `koanf:"limit"`
+	Match       string   `koanf:"match"`
+	MergeMethod string   `koanf:"merge_method"`
+	Owners      []string `koanf:"owners"`
+	Output      string   `koanf:"output"`
+	Reverse     bool     `koanf:"reverse"`
+	Sort        string   `koanf:"sort"`
+	State       string   `koanf:"state"`
 }
 
 // SpinnerConfig holds spinner style configuration.
 type SpinnerConfig struct {
 	Style  string   `koanf:"style"`
 	Colors []string `koanf:"colors"`
-}
-
-// OutputConfig holds output format configuration.
-type OutputConfig struct {
-	Slack SlackOutputConfig `koanf:"slack"`
-}
-
-// slackRecipients maps a Slack recipient (#channel, @user, or email) to a list
-// of <org>/<repo> patterns (or "*" for the default) that route to it.
-type slackRecipients map[string][]string
-
-// SlackOutputConfig holds Slack output format configuration.
-type SlackOutputConfig struct {
-	Recipients       slackRecipients `koanf:"recipients"`
-	SkipRepos        []string        `koanf:"skip_repos"`
-	TwoApproverRepos []string        `koanf:"two_approver_repos"`
 }
 
 // TUIAutoRefreshConfig holds auto-refresh settings.
@@ -167,19 +146,18 @@ type Config struct {
 	// TUI settings
 	TUI TUIConfig `koanf:"tui"`
 
-	// Directory paths
-	CodeDir                string `koanf:"code_dir"`
-	TerraformRepositoryDir string `koanf:"terraform_repository_dir"`
-	TerraformMemberDir     string `koanf:"terraform_membership_dir"`
+	// Plugin binary for completions and resolution (name or path).
+	// If empty, prl auto-discovers prl-plugin-* on PATH.
+	Plugin string `koanf:"plugin"`
 
-	// Organization exclusion
-	IgnoredOrganizations []string `koanf:"ignored_organizations"`
-
-	// Output format configuration
-	Output OutputConfig `koanf:"output"`
+	// Owner exclusion
+	IgnoredOwners []string `koanf:"ignored_owners"`
 
 	// Team aliases
 	TeamAliases map[string]string `koanf:"team_aliases"`
+
+	// Teams maps team names to lists of GitHub usernames.
+	Teams map[string][]string `koanf:"teams"`
 
 	// Author display names (github_username -> Display Name)
 	Authors map[string]string `koanf:"authors"`
@@ -187,27 +165,24 @@ type Config struct {
 
 func defaultConfig() map[string]any {
 	return map[string]any{
-		keyAuthors:              map[string]string{},
-		keyVCS:                  vcsGit,
-		keyCodeDir:              "",
-		keyDefaultAuthors:       []string{valueAtMe},
-		keyDefaultBots:          true,
-		keyDefaultLimit:         defaultLimit,
-		keyDefaultMatch:         "title",
-		keyDefaultMergeMethod:   "squash",
-		keyDefaultOrganizations: []string{},
-		keyDefaultOutput:        valueTable,
-		keyDefaultReverse:       false,
-		keyDefaultSort:          valueName,
-		keyDefaultState:         valueOpen,
-		keyIgnoredOrganizations: []string{},
-		keySlackRecipients:      slackRecipients{},
-		keySlackSkipRepos:       []string{},
-		keySlackTwoApprover:     []string{},
-		keyTeamAliases:          map[string]string{},
-		keyTerraformMemberDir:   "",
-		keySpinnerStyle:         defaultSpinner,
-		keyTUIAutoRefresh:       true,
+		keyAuthors:            map[string]string{},
+		keyVCS:                vcsGit,
+		keyDefaultAuthors:     []string{valueAtMe},
+		keyDefaultBots:        true,
+		keyDefaultLimit:       defaultLimit,
+		keyDefaultMatch:       "title",
+		keyDefaultMergeMethod: "squash",
+		keyDefaultOwners:      []string{},
+		keyDefaultOutput:      valueTable,
+		keyDefaultReverse:     false,
+		keyDefaultSort:        valueName,
+		keyDefaultState:       valueOpen,
+		keyPlugin:             "",
+		keyIgnoredOwners:      []string{},
+		keyTeamAliases:        map[string]string{},
+		keyTeams:              map[string][]string{},
+		keySpinnerStyle:       defaultSpinner,
+		keyTUIAutoRefresh:     true,
 		keyTUIReviewDefaultEff: defaultReviewEffort(
 			defaultReviewProvider,
 			defaultReviewModel(defaultReviewProvider),
@@ -225,7 +200,6 @@ func defaultConfig() map[string]any {
 		keyTUISortKey:            "",
 		keyTUISortOrder:          "",
 		keySpinnerColors:         defaultSpinnerColors,
-		keyTerraformRepoDir:      "",
 	}
 }
 
@@ -256,12 +230,13 @@ func loadConfig() (*Config, error) {
 	}), nil); err != nil {
 		return nil, fmt.Errorf("loading environment variables: %w", err)
 	}
-
-	// Re-derive dependent paths if code_dir was set but terraform dirs were not.
-	codeDir := shell.ExpandPath(k.String(keyCodeDir))
-	if codeDir != "" {
-		deriveTerraformDir(k, keyTerraformRepoDir, filepath.Join(codeDir, "tf-github"))
-		deriveTerraformDir(k, keyTerraformMemberDir, filepath.Join(codeDir, "tf-membership-v2"))
+	if strings.EqualFold(k.String(keyDefaultOutput), "slack") {
+		clog.Warn().Msg(
+			`default.output=slack has been removed; using "table" (use --send to post via plugin)`,
+		)
+		if err := k.Set(keyDefaultOutput, valueTable); err != nil {
+			return nil, fmt.Errorf("migrating default.output: %w", err)
+		}
 	}
 
 	var cfg Config
@@ -357,42 +332,6 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid tui.review.providers.codex.prompt: %w", err)
 	}
 
-	// Expand ~ and $ENV in directory paths
-	cfg.CodeDir = shell.ExpandPath(cfg.CodeDir)
-	cfg.TerraformRepositoryDir = shell.ExpandPath(cfg.TerraformRepositoryDir)
-	cfg.TerraformMemberDir = shell.ExpandPath(cfg.TerraformMemberDir)
-
-	// Validate slack repo lists are in org/repo format
-	for _, repo := range cfg.Output.Slack.SkipRepos {
-		if strings.Count(repo, "/") != 1 {
-			return nil, fmt.Errorf(
-				"output.slack.skip_repos: %q must be in <org>/<repo> format",
-				repo,
-			)
-		}
-	}
-	for _, repo := range cfg.Output.Slack.TwoApproverRepos {
-		if strings.Count(repo, "/") != 1 {
-			return nil, fmt.Errorf(
-				"output.slack.two_approver_repos: %q must be in <org>/<repo> format",
-				repo,
-			)
-		}
-	}
-	normalizedRecipients := make(slackRecipients, len(cfg.Output.Slack.Recipients))
-	for channel, repos := range cfg.Output.Slack.Recipients {
-		for _, repo := range repos {
-			if repo != "*" && strings.Count(repo, "/") != 1 {
-				return nil, fmt.Errorf(
-					"output.slack.recipients: repo %q must be \"*\" or in <org>/<repo> format",
-					repo,
-				)
-			}
-		}
-		normalizedRecipients[normalizeSlackChannel(channel)] = repos
-	}
-	cfg.Output.Slack.Recipients = normalizedRecipients
-
 	// Validate VCS
 	switch strings.ToLower(cfg.VCS) {
 	case vcsGit, vcsJJ:
@@ -402,16 +341,6 @@ func loadConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
-}
-
-// deriveTerraformDir sets a terraform directory key to a default value if it is not already set.
-func deriveTerraformDir(k *koanf.Koanf, key, defaultPath string) {
-	if k.String(key) != "" {
-		return
-	}
-	if err := k.Load(confmap.Provider(map[string]any{key: defaultPath}, "."), nil); err != nil {
-		clog.Debug().Err(err).Str("key", key).Msg("Failed to set derived terraform dir")
-	}
 }
 
 // saveConfigKey reads the config file, sets a dotted key (e.g. "tui.refresh.enabled")
@@ -613,14 +542,14 @@ default:
   # Options: squash, merge, rebase
   merge_method: squash
 
-  # Limit searches to specific GitHub organizations.
+  # Limit searches to specific GitHub owners (organizations or users).
   # Examples:
-  #   organizations: ["my-org"]
-  #   organizations: ["org-a", "org-b"]
-  organizations: []
+  #   owners: ["my-org"]
+  #   owners: ["org-a", "org-b"]
+  owners: []
 
   # Output format for results.
-  # Options: table, url, bullet, slack, json, repo
+  # Options: table, url, bullet, json, repo
   output: %[3]s
 
   # Show oldest results first (at the top).
@@ -690,13 +619,16 @@ spinner:
   # Each frame cycles through these colors in order.
   colors: [%[8]s]
 
-# Base directory for code repositories.
-# Example: code_dir: ~/code/github
-code_dir: ""
+# Plugin binary for completions and resolution.
+# If set, prl invokes this binary for --author/--team/-R/--topic completions
+# and for resolving --team to GitHub usernames.
+# If omitted, prl auto-discovers any prl-plugin-* binary on PATH.
+# Example: plugin: acme
+plugin: ""
 
-# Organizations to exclude from results.
-# Example: ignored_organizations: ["archived-org", "old-org"]
-ignored_organizations: []
+# Owners to exclude from results.
+# Example: ignored_owners: ["archived-org", "old-org"]
+ignored_owners: []
 
 # Map GitHub usernames to display names for prettier output.
 # Example:
@@ -705,30 +637,19 @@ ignored_organizations: []
 #     hubot: Hubot Bot
 authors: {}
 
+# Map team names to lists of GitHub usernames for --team resolution.
+# Example:
+#   teams:
+#     ops: [alice, bob, charlie]
+#     frontend: [dave, eve]
+teams: {}
+
 # Short aliases for team slugs, usable with --team.
 # Example:
 #   team_aliases:
 #     fe: my-org/frontend
 #     be: my-org/backend
 team_aliases: {}
-
-# Slack output configuration for --send.
-output:
-  slack:
-    # Map GitHub usernames to Slack recipients.
-    # Example:
-    #   recipients:
-    #     octocat: "@mona"
-    #     hubot: "#bots"
-    recipients: {}
-
-    # Repos to exclude from Slack output.
-    # Example: skip_repos: ["my-org/noisy-repo"]
-    skip_repos: []
-
-    # Repos that require two approvals (highlighted in Slack output).
-    # Example: two_approver_repos: ["my-org/critical-service"]
-    two_approver_repos: []
 `,
 		valueAtMe,
 		defaultLimit,
@@ -739,7 +660,7 @@ output:
 		defaultSpinner,
 		`"`+strings.Join(defaultSpinnerColors, `", "`)+`"`,
 		indentBlock(defaultReviewPromptTemplate(reviewProviderClaude), promptBlockIndent),
-		"`{prNumber}`, `{repo}`, `{org}`, `{orgWithRepo}`, `{prURL}`, `{prRef}`, `{title}`",
+		"`{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`",
 		indentBlock(defaultReviewPromptTemplate(reviewProviderCodex), promptBlockIndent),
 	)
 }()

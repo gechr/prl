@@ -27,8 +27,7 @@ const (
 
 	colTitle = "title"
 
-	copilotReviewer   = "copilot-pull-request-reviewer[bot]"
-	sg2WizardReviewer = "sg2-wizard[bot]"
+	copilotReviewer = "copilot-pull-request-reviewer[bot]"
 )
 
 // GitHub API status values.

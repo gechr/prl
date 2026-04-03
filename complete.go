@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -13,23 +12,29 @@ func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 		return fmt.Errorf("unsupported shell %q (supported: fish)", shell)
 	}
 
-	var results []string
+	var (
+		err     error
+		results []string
+	)
 
 	switch kind {
 	case "author":
-		results = completeAuthors(cfg)
+		results, err = completeAuthors(cfg)
 	case "team":
-		results = completeTeams(cfg)
+		results, err = completeTeams(cfg)
 	case "repo":
-		results = completeRepositories(cfg)
+		results, err = completeRepositories(cfg)
 	case "topic":
-		results = completeTopics(cfg)
+		results, err = completeTopics(cfg)
 	case "columns":
 		results = p.completeColumns()
 	case "slack-recipient":
-		results = completeSlackRecipients(cfg)
+		results, err = completeSlackRecipients(cfg)
 	default:
 		return fmt.Errorf("unknown completion type %q", kind)
+	}
+	if err != nil {
+		return err
 	}
 
 	for _, r := range results {
@@ -39,31 +44,37 @@ func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 }
 
 // completeAuthors returns author completions as "username\tDisplay Name" lines.
-func completeAuthors(cfg *Config) []string {
+// Tries plugin first, falls back to config authors.
+func completeAuthors(cfg *Config) ([]string, error) {
 	var results []string
 
 	results = append(results, valueAtMe+"\tCurrent user")
 	results = append(results, "all\tAll authors")
 
 	if cfg == nil {
-		return results
+		return results, nil
 	}
 
-	// HCL names (active users)
-	nameMap, err := parseUsersHCLNames(cfg)
-	if err == nil {
-		usernames := make([]string, 0, len(nameMap))
-		for gh := range nameMap {
-			usernames = append(usernames, gh)
+	// Try plugin
+	plug, err := discoverPlugin(cfg)
+	if err != nil {
+		return nil, err
+	}
+	pluginResults, err := plug.Complete("author")
+	if err != nil {
+		return nil, err
+	}
+	if pluginResults != nil {
+		for _, r := range pluginResults {
+			val, _, _ := strings.Cut(r, "\t")
+			if val != valueAtMe && val != "all" {
+				results = append(results, r)
+			}
 		}
-		sort.Strings(usernames)
-
-		for _, gh := range usernames {
-			results = append(results, gh+"\t"+nameMap[gh])
-		}
+		return results, nil
 	}
 
-	// Config authors (departed/extra mappings)
+	// Fall back to config authors
 	if len(cfg.Authors) > 0 {
 		var configUsers []string
 		for username := range cfg.Authors {
@@ -71,49 +82,65 @@ func completeAuthors(cfg *Config) []string {
 		}
 		sort.Strings(configUsers)
 
-		hclSet := make(map[string]bool, len(nameMap))
-		for gh := range nameMap {
-			hclSet[gh] = true
-		}
-
 		for _, username := range configUsers {
-			if !hclSet[strings.ToLower(username)] {
-				name := cfg.Authors[username]
-				if strings.EqualFold(name, BotName) {
-					name += " 🤖"
-				} else {
-					name += " 💀"
-				}
-				results = append(results, username+"\t"+name)
+			name := cfg.Authors[username]
+			if strings.EqualFold(name, BotName) {
+				name += " 🤖"
 			}
+			results = append(results, username+"\t"+name)
 		}
 	}
 
-	return results
+	return results, nil
 }
 
 // completeTeams returns team name completions.
-func completeTeams(cfg *Config) []string {
-	if cfg == nil || cfg.TerraformMemberDir == "" {
-		return nil
+// Tries plugin first, falls back to config teams + team_aliases.
+func completeTeams(cfg *Config) ([]string, error) {
+	if cfg == nil {
+		return nil, nil
 	}
 
-	modules, err := parseGroupModules(cfg.TerraformMemberDir)
+	plug, err := discoverPlugin(cfg)
 	if err != nil {
-		return nil
+		return nil, err
+	}
+	pluginResults, err := plug.Complete("team")
+	if err != nil {
+		return nil, err
+	}
+	if pluginResults != nil {
+		seen := make(map[string]bool)
+		var results []string
+
+		for _, r := range pluginResults {
+			val, _, _ := strings.Cut(r, "\t")
+			seen[val] = true
+			results = append(results, r)
+		}
+
+		for alias, target := range cfg.TeamAliases {
+			if !seen[alias] {
+				seen[alias] = true
+				results = append(results, alias+"\t"+target)
+			}
+		}
+
+		sort.Strings(results)
+		return results, nil
 	}
 
+	// Fall back to config teams + aliases
 	seen := make(map[string]bool)
 	var results []string
 
-	for _, m := range modules {
-		if !seen[m.Name] {
-			seen[m.Name] = true
-			results = append(results, m.Name)
+	for team := range cfg.Teams {
+		if !seen[team] {
+			seen[team] = true
+			results = append(results, team)
 		}
 	}
 
-	// Add team aliases
 	for alias, target := range cfg.TeamAliases {
 		if !seen[alias] {
 			seen[alias] = true
@@ -122,123 +149,43 @@ func completeTeams(cfg *Config) []string {
 	}
 
 	sort.Strings(results)
-	return results
+	return results, nil
 }
 
-// completeRepositories returns repository name completions.
-func completeRepositories(cfg *Config) []string {
-	if cfg == nil || cfg.TerraformRepositoryDir == "" {
-		return nil
-	}
-
-	pattern := filepath.Join(cfg.TerraformRepositoryDir, "*.tf")
-	tfFiles, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil
-	}
-
-	modules, err := parseRepoModules(tfFiles)
-	if err != nil {
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	var results []string
-
-	for _, m := range modules {
-		if !seen[m.Name] {
-			seen[m.Name] = true
-			results = append(results, m.Name)
-		}
-	}
-
-	sort.Strings(results)
-	return results
-}
-
-// completeTopics returns topic completions.
-func completeTopics(cfg *Config) []string {
-	if cfg == nil || cfg.TerraformRepositoryDir == "" {
-		return nil
-	}
-
-	var files []string
-	for _, f := range []string{"main.tf", "sg2.tf"} {
-		files = append(files, filepath.Join(cfg.TerraformRepositoryDir, f))
-	}
-
-	modules, err := parseRepoModules(files)
-	if err != nil {
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	seen["sg2"] = true // Always include sg2 as a special topic
-
-	for _, m := range modules {
-		topicsAttr, ok := m.Body.Attributes["topics"]
-		if !ok {
-			continue
-		}
-		srcRange := topicsAttr.SrcRange
-		topicsSrc := string(m.Src[srcRange.Start.Byte:srcRange.End.Byte])
-		for part := range strings.SplitSeq(topicsSrc, `"`) {
-			topic := strings.TrimSpace(part)
-			if topic != "" && !strings.ContainsAny(topic, "[]={},\n\t ") {
-				seen[topic] = true
-			}
-		}
-	}
-
-	var results []string
-	for topic := range seen {
-		results = append(results, topic)
-	}
-
-	sort.Strings(results)
-	return results
-}
-
-// completeSlackRecipients returns Slack recipient completions: channel names
-// from the recipients config, plus email addresses from users.tf.
-func completeSlackRecipients(cfg *Config) []string {
+// completeRepositories returns repository name completions from the plugin.
+func completeRepositories(cfg *Config) ([]string, error) {
 	if cfg == nil {
-		return nil
+		return nil, nil
 	}
-
-	var results []string
-
-	// Channel completions from recipients config.
-	for channel := range cfg.Output.Slack.Recipients {
-		// Strip the leading "#" - normalizeSlackChannel adds it automatically.
-		// Keep "@" for user mentions since that prefix is meaningful.
-		display := strings.TrimPrefix(channel, "#")
-		results = append(results, display+"\tChannel")
+	plug, err := discoverPlugin(cfg)
+	if err != nil {
+		return nil, err
 	}
+	return plug.Complete("repo")
+}
 
-	// Email completions from users.tf (e.g. "alice@example.com\tAlice Smith").
-	{
-		emailMap, err := parseUsersHCLEmails(cfg)
-		nameMap, _ := parseUsersHCLNames(cfg)
-		if err == nil {
-			usernames := make([]string, 0, len(emailMap))
-			for gh := range emailMap {
-				usernames = append(usernames, gh)
-			}
-			sort.Strings(usernames)
-			for _, gh := range usernames {
-				email := emailMap[gh]
-				desc := nameMap[gh]
-				if desc == "" {
-					desc = email
-				}
-				results = append(results, email+"\t"+desc)
-			}
-		}
+// completeTopics returns topic completions from the plugin.
+func completeTopics(cfg *Config) ([]string, error) {
+	if cfg == nil {
+		return nil, nil
 	}
+	plug, err := discoverPlugin(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return plug.Complete("topic")
+}
 
-	sort.Strings(results)
-	return results
+// completeSlackRecipients returns Slack recipient completions from the plugin.
+func completeSlackRecipients(cfg *Config) ([]string, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	plug, err := discoverPlugin(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return plug.Complete("slack-recipient")
 }
 
 // completeColumns returns column name completions.

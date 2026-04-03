@@ -92,18 +92,11 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 		"index": {Name: "index", Header: "", Render: nil},
 		"idx":   {Name: "index", Header: "", Render: nil},
 		"i":     {Name: "index", Header: "", Render: nil},
-		"org": {
-			Name:   "org",
-			Header: "ORG",
-			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
-				return table.TextCell(row.RepoNWO)
-			},
-		},
 		"owner": {
-			Name:   "org",
-			Header: "ORG",
+			Name:   "owner",
+			Header: "OWNER",
 			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
-				return table.TextCell(row.RepoNWO)
+				return table.TextCell(row.Owner)
 			},
 		},
 		"ref": {
@@ -265,7 +258,7 @@ func normalizeTUIDisplayText(text string) string {
 //nolint:mnd // width estimates are inherently magic numbers
 var columnWidthEstimate = map[string]int{
 	"index": 3, "idx": 3, "i": 3,
-	"ref": 20, "repo": 15, "org": 25, "owner": 25,
+	"ref": 20, "repo": 15, "owner": 25,
 	"number": 5, "author": 12, "state": 6, "labels": 15,
 	"status": 8, "reason": 12, "url": 50,
 	"created": 14, "updated": 14,
@@ -380,8 +373,8 @@ func normalizeColumns(values []string) []string {
 	return cols
 }
 
-// singleOrg returns the org name if exactly one non-"all" org is specified, otherwise "".
-func singleOrg(values []string) string {
+// singleOwner returns the owner name if exactly one non-"all" owner is specified, otherwise "".
+func singleOwner(values []string) string {
 	filtered := filterAllValue(values)
 	if len(filtered) == 1 {
 		return filtered[0]

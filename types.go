@@ -72,15 +72,15 @@ type PullRequest struct {
 	reviewDecisionLoaded bool
 }
 
-// refSingleOrg is set when all results belong to a single org,
-// causing Ref to omit the org prefix for brevity.
-var refSingleOrg string
+// refSingleOwner is set when all results belong to a single owner,
+// causing Ref to omit the owner prefix for brevity.
+var refSingleOwner string
 
 // Ref returns a short GitHub-style reference.
-// When a single org is active, returns "repo#123"; otherwise "org/repo#123".
+// When a single owner is active, returns "repo#123"; otherwise "owner/repo#123".
 func (pr PullRequest) Ref() string {
 	name := pr.Repository.NameWithOwner
-	if refSingleOrg != "" {
+	if refSingleOwner != "" {
 		name = pr.Repository.Name
 	}
 	return fmt.Sprintf("%s#%d", name, pr.Number)
@@ -99,7 +99,6 @@ const (
 	OutputBullet
 	OutputJSON
 	OutputRepo
-	OutputSlack
 	OutputURL
 )
 
@@ -111,8 +110,6 @@ func parseOutputFormat(s string) (OutputFormat, bool) {
 		return OutputURL, true
 	case "bullet", "b":
 		return OutputBullet, true
-	case "slack", "s":
-		return OutputSlack, true
 	case "json", "j":
 		return OutputJSON, true
 	case valueRepo, "r":
@@ -130,8 +127,6 @@ func (f OutputFormat) String() string {
 		return valueURL
 	case OutputBullet:
 		return "bullet"
-	case OutputSlack:
-		return "slack"
 	case OutputJSON:
 		return "json"
 	case OutputRepo:

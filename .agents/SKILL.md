@@ -2,7 +2,7 @@
 
 ## Overview
 
-`prl` is a Go CLI tool that searches, filters, displays, and acts on GitHub pull requests across an organization. It wraps `gh search prs` with opinionated defaults, rich terminal output (ANSI colors, OSC 8 hyperlinks, markdown-rendered titles), interactive multi-select for bulk actions, and Slack-formatted output.
+`prl` is a Go CLI tool that searches, filters, displays, and acts on GitHub pull requests across a GitHub owner (organization or user). It wraps `gh search prs` with opinionated defaults, rich terminal output (ANSI colors, OSC 8 hyperlinks, markdown-rendered titles), interactive multi-select for bulk actions, and Slack-formatted output.
 
 **Install**: `go install github.com/gechr/prl@latest`
 **Requires**: `gh` CLI installed and authenticated.
@@ -46,10 +46,10 @@ Positional `[query...]` arguments are free-text search terms joined with spaces 
 
 ### Scope Flags
 
-| Flag            | Short | Type   | Default | Description                                                                         |
-| --------------- | ----- | ------ | ------- | ----------------------------------------------------------------------------------- |
-| `--org <org>`   |       | CSV    | config  | GitHub organization(s), comma-separated (aliases: `organization`, `owner`). Use `all` for no org filter |
-| `--repo <repo>` | `-R`  | string |         | Limit to specific repository (alias: `repository`)                                  |
+| Flag            | Short | Type   | Default | Description                                                                                             |
+| --------------- | ----- | ------ | ------- | ------------------------------------------------------------------------------------------------------- |
+| `--owner <owner>` |  `-O` | CSV    | config  | GitHub owner(s), comma-separated (aliases: `organization`, `org`). Use `all` for no owner filter |
+| `--repo <repo>` | `-R`  | string |         | Limit to specific repository (alias: `repository`)                                                      |
 
 ### Display Flags
 
@@ -226,7 +226,7 @@ Uses `charmbracelet/huh` multi-select UI:
 
 ```yaml
 default:
-  organizations:
+  owners:
     - my-org
   authors:
     - "@me"
@@ -241,7 +241,7 @@ default:
 code_dir: ~/code/github/my-org
 terraform_repository_dir: ~/code/github/my-org/tf-github
 terraform_membership_dir: ~/code/github/my-org/tf-membership-v2
-ignored_organizations:
+ignored_owners:
   - archived-org
 
 output:
@@ -513,23 +513,25 @@ prl -a all -w
 ### Bulk Actions
 
 ```sh
+# These examples omit -a, so they default to --author @me (your PRs only).
+
 # Approve selected PRs (interactive multi-select)
-prl -a all --approve
+prl --approve
 
 # Approve all PRs without confirmation
-prl -a all --approve -y
+prl --approve -y
 
 # Close selected PRs
-prl -a all --close
+prl --close
 
 # Close and delete branches
-prl -a all --close --delete-branch
+prl --close --delete-branch
 
 # Close with a comment
-prl -a all --close --comment "Superseded by #456"
+prl --close --comment "Superseded by #456"
 
 # Add a comment to PRs
-prl -a all --comment "Please rebase"
+prl --comment "Please rebase"
 
 # Enable auto-merge (squash) on your PRs
 prl --merge
@@ -544,13 +546,13 @@ prl --no-merge
 prl --update
 
 # Mark PRs as draft
-prl -a all --mark-draft
+prl --mark-draft
 
 # Mark PRs as ready for review
 prl --mark-ready
 
 # Approve and open in browser
-prl -a all --approve -O
+prl --approve -O
 ```
 
 ### Combined Workflows

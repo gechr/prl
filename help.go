@@ -7,7 +7,6 @@ import (
 	"github.com/alecthomas/kong"
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clib/help"
-	"github.com/gechr/prl/internal/human"
 )
 
 // helpPrinter returns a Kong HelpPrinter that renders colored help output.
@@ -21,7 +20,7 @@ func (p *prl) helpPrinter(cfg *Config) kong.HelpPrinter {
 
 	return clib.HelpPrinterFunc(renderer,
 		clib.NodeSectionsFunc(clib.WithArguments(&CLI{})),
-		help.WithFlagDefault("owner", formatCSV(cfg.Default.Organizations)),
+		help.WithFlagDefault("owner", formatCSV(cfg.Default.Owners)),
 		help.WithFlagDefault("author", defaultAuthor),
 		help.WithFlagDefault("limit", fmt.Sprintf("%d", cfg.Default.Limit)),
 		help.WithHelpFlags("Print short help", "Print long help with examples"),
@@ -59,39 +58,31 @@ func buildExamplesSection() help.Section {
 }
 
 func (p *prl) buildConfigurationSection(cfg *Config) help.Section {
-	defaultDir := human.ContractHome(cfg.CodeDir)
+	pluginName := cfg.Plugin
+	if pluginName == "" {
+		pluginName = "(auto-discover prl-plugin-* on PATH)"
+	}
 
 	return help.Section{
 		Title: "Configuration",
 		Content: []help.Content{
 			help.Text("  " +
-				p.theme.Magenta.Bold(true).Render("PRL_CODE_DIR") +
-				"  Base path for local repos" + p.theme.DimDefault(defaultDir)),
-			help.Text("  The following local repos enable smart filtering:"),
-			&help.Section{
-				Title: "tf-github",
-				Content: []help.Content{
-					help.FlagGroup{
-						{
-							Long: "topic",
-							Desc: "Resolve repo topics from Terraform module",
-						},
-					},
+				p.theme.Magenta.Bold(true).Render("plugin") +
+				"  External binary for completions and resolution" +
+				p.theme.DimDefault(pluginName)),
+			help.Text("  A plugin binary enables smart filtering:"),
+			help.FlagGroup{
+				{
+					Long: "author",
+					Desc: "Show real names via plugin or config authors",
 				},
-			},
-			&help.Section{
-				Title: "tf-membership-v2",
-				Content: []help.Content{
-					help.FlagGroup{
-						{
-							Long: "author",
-							Desc: "Show real names via user mapping",
-						},
-						{
-							Long: "team",
-							Desc: "Resolve team members from HCL group definitions",
-						},
-					},
+				{
+					Long: "team",
+					Desc: "Resolve team members via plugin or config teams",
+				},
+				{
+					Long: "topic",
+					Desc: "Resolve repo topics via plugin",
 				},
 			},
 		},

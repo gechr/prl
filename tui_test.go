@@ -248,9 +248,9 @@ func TestReviewPromptUsesConfigTemplate(t *testing.T) {
 			Review: TUIReviewConfig{
 				Providers: TUIReviewProvidersConfig{
 					Claude: TUIReviewProviderConfig{
-						Prompt: `Review PR {prNumber} in {orgWithRepo}.
+						Prompt: `Review PR {prNumber} in {ownerWithRepo}.
 Repo: {repo}
-Org: {org}
+Owner: {owner}
 Ref: {prRef}
 URL: {prURL}
 Title: {title}`,
@@ -264,7 +264,7 @@ Title: {title}`,
 		t,
 		`Review PR 42 in gechr/prl.
 Repo: prl
-Org: gechr
+Owner: gechr
 Ref: gechr/prl#42
 URL: https://github.com/gechr/prl/pull/42
 Title: Improve AI review prompts`,
@@ -1009,7 +1009,9 @@ func TestExitDiffViewStartsImmediateRefreshWhenDue(t *testing.T) {
 
 func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 	pr := testReviewPullRequest()
-	pr.Author.Login = "george"
+	pr.Author.Login = "alice"
+	resolver, err := NewAuthorResolver(&Config{})
+	require.NoError(t, err)
 	m := tuiModel{
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		detailKey: makePRKey(pr),
@@ -1019,7 +1021,7 @@ func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 				State: "COMMENTED",
 			}},
 		},
-		resolver: NewAuthorResolver(&Config{}),
+		resolver: resolver,
 		width:    80,
 	}
 

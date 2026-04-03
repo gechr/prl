@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -40,29 +39,27 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		// no state filter
 	}
 
-	// Resolve org values (strip "all")
-	orgVals := filterAllValue(cli.Organization.Values)
+	// Resolve owner values (strip "all")
+	ownerVals := filterAllValue(cli.Owner.Values)
 
 	// Repo filter
 	if cli.Repo != "" {
 		repo := cli.Repo
-		if !strings.Contains(repo, "/") && len(orgVals) == 1 {
-			repo = orgVals[0] + "/" + repo
+		if !strings.Contains(repo, "/") && len(ownerVals) == 1 {
+			repo = ownerVals[0] + "/" + repo
 		}
 		qualifiers = append(qualifiers, "repo:"+repo)
 	}
 
-	// Owner/org filter
+	// Owner filter
 	if cli.Repo == "" {
-		if q := buildORQualifier("org", orgVals); q != "" {
+		if q := buildOwnerQualifier(ownerVals); q != "" {
 			qualifiers = append(qualifiers, q)
 		}
 	}
 
-	// Ignored orgs (config-only, always applied)
-	for _, ignored := range cfg.IgnoredOrganizations {
-		qualifiers = append(qualifiers, "-org:"+ignored)
-	}
+	// Ignored owners (config-only, always applied)
+	qualifiers = append(qualifiers, buildExcludedOwnerQualifiers(cfg.IgnoredOwners)...)
 
 	// Date filters
 	if cli.Created != "" {
@@ -84,7 +81,11 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		}
 	}
 
-	authorFilters := deduplicate(filterAllValue(cli.Author.Values), true)
+	var authorValues []string
+	if cli.Author != nil {
+		authorValues = cli.Author.Values
+	}
+	authorFilters := deduplicate(filterAllValue(authorValues), true)
 
 	// Commenter filter
 	commenterVals := filterAllValue(cli.Commenter.Values)
@@ -125,9 +126,13 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 
 	// Team filter: resolve members and merge with explicit authors.
 	if len(cli.Team.Values) > 0 {
+		plug, err := discoverPlugin(cfg)
+		if err != nil {
+			return nil, err
+		}
 		var allMembers []string
 		for _, team := range cli.Team.Values {
-			members, err := resolveTeamMembers(team, cfg)
+			members, err := plug.ResolveTeam(team, cfg)
 			if err != nil {
 				return nil, fmt.Errorf("resolving team %q: %w", team, err)
 			}
@@ -144,20 +149,9 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 
 	// Topic filter: resolve repos and add as repo OR filter
 	if cli.Topic != "" {
-		repos, err := resolveTopicRepos(cli.Topic, cfg)
+		qualifiedRepos, err := resolveTopicReposForSearch(cli.Topic, ownerVals, cfg)
 		if err != nil {
 			return nil, err
-		}
-		if len(repos) == 0 {
-			return nil, fmt.Errorf("no repos found for topic %q", cli.Topic)
-		}
-		var qualifiedRepos []string
-		for _, r := range repos {
-			if len(orgVals) == 1 {
-				qualifiedRepos = append(qualifiedRepos, orgVals[0]+"/"+r)
-			} else {
-				qualifiedRepos = append(qualifiedRepos, r)
-			}
 		}
 		qualifiers = append(qualifiers, buildORQualifier("repo", qualifiedRepos))
 	}
@@ -256,6 +250,31 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		PerPage:    perPage,
 		TotalLimit: limit,
 	}, nil
+}
+
+func resolveTopicReposForSearch(topic string, ownerVals []string, cfg *Config) ([]string, error) {
+	plug, err := discoverPlugin(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	repos, err := plug.ResolveTopic(topic)
+	if err != nil {
+		return nil, err
+	}
+	if len(repos) == 0 {
+		return nil, fmt.Errorf("no repos found for topic %q", topic)
+	}
+
+	qualifiedRepos := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if len(ownerVals) == 1 {
+			qualifiedRepos = append(qualifiedRepos, ownerVals[0]+"/"+repo)
+			continue
+		}
+		qualifiedRepos = append(qualifiedRepos, repo)
+	}
+	return qualifiedRepos, nil
 }
 
 // shouldShowAuthor returns true if the author column should be shown in table mode.
@@ -418,7 +437,7 @@ func executeWebSearch(params *SearchParams) error {
 }
 
 // buildDryRunOutput returns the search query string for dry-run display.
-func (p *prl) buildDryRunOutput(params *SearchParams, cli *CLI, cfg *Config) string {
+func (p *prl) buildDryRunOutput(params *SearchParams, cli *CLI) string {
 	var parts []string
 	parts = append(parts, p.theme.Bold.Render("query:")+" "+params.Query)
 	if params.Sort != "" {
@@ -432,45 +451,17 @@ func (p *prl) buildDryRunOutput(params *SearchParams, cli *CLI, cfg *Config) str
 		}
 	}
 	if cli.Send {
-		parts = append(parts, p.theme.Bold.Render("slack:")+" "+formatSlackDryRun(cli, cfg))
+		parts = append(parts, p.theme.Bold.Render("slack:")+" "+formatSlackDryRun(cli))
 	}
 	return strings.Join(parts, "\n")
 }
 
 // formatSlackDryRun returns a human-readable summary of where --send will route.
-func formatSlackDryRun(cli *CLI, cfg *Config) string {
+func formatSlackDryRun(cli *CLI) string {
 	if cli.SendTo != "" {
 		return cli.SendTo + " (--send-to override)"
 	}
-	recipients := cfg.Output.Slack.Recipients
-	if len(recipients) == 0 {
-		return "(no recipients configured)"
-	}
-	channels := make([]string, 0, len(recipients))
-	for channel := range recipients {
-		channels = append(channels, channel)
-	}
-	sort.Strings(channels)
-	var parts []string
-	for _, channel := range channels {
-		var specific []string
-		isDefault := false
-		for _, repo := range recipients[channel] {
-			if repo == "*" {
-				isDefault = true
-			} else {
-				specific = append(specific, repo)
-			}
-		}
-		sort.Strings(specific)
-		if isDefault {
-			parts = append([]string{channel + " (default)"}, parts...)
-		}
-		for _, repo := range specific {
-			parts = append(parts, channel+" ("+repo+")")
-		}
-	}
-	return strings.Join(parts, ", ")
+	return "(via plugin)"
 }
 
 // filterAllValue removes "all" from a values slice (meaning "don't filter").

@@ -129,8 +129,8 @@ func run() error {
 	// Normalize with config defaults
 	cli.Normalize(cfg)
 
-	// When a single org is active, Ref() omits the org prefix for brevity.
-	refSingleOrg = singleOrg(cli.Organization.Values)
+	// When a single owner is active, Ref() omits the owner prefix for brevity.
+	refSingleOwner = singleOwner(cli.Owner.Values)
 
 	// Apply output mode overrides based on action flags
 	cli.ApplyOutputOverrides()
@@ -143,7 +143,7 @@ func run() error {
 
 	// Dry run mode
 	if cli.Dry {
-		lipgloss.Println(prl.buildDryRunOutput(params, &cli, cfg))
+		lipgloss.Println(prl.buildDryRunOutput(params, &cli))
 		return nil
 	}
 
@@ -586,9 +586,12 @@ func renderOutput(
 ) (string, error) {
 	switch cli.OutputFormat() {
 	case OutputTable:
-		resolver := NewAuthorResolver(cfg)
-		orgFilter := singleOrg(cli.Organization.Values)
-		models := buildPRRowModels(prs, orgFilter, resolver)
+		resolver, resolveErr := NewAuthorResolver(cfg)
+		if resolveErr != nil {
+			return "", resolveErr
+		}
+		ownerFilter := singleOwner(cli.Owner.Values)
+		models := buildPRRowModels(prs, ownerFilter, resolver)
 		renderer := p.NewTableRenderer(cli, tty)
 		output := renderer.Render(models).String()
 		return output, nil
@@ -598,12 +601,6 @@ func renderOutput(
 		return renderBullets(prs), nil
 	case OutputJSON:
 		return renderJSON(prs)
-	case OutputSlack:
-		if cli.Send && cli.SendTo == "" {
-			return renderSlackDisplay(prs, cfg), nil
-		}
-		output, _ := renderSlack(prs, cfg)
-		return output, nil
 	case OutputRepo:
 		return renderRepos(prs), nil
 	default:
@@ -741,9 +738,12 @@ func runOnce(
 
 	switch cli.OutputFormat() {
 	case OutputTable:
-		resolver := NewAuthorResolver(cfg)
-		orgFilter := singleOrg(cli.Organization.Values)
-		models := buildPRRowModels(prs, orgFilter, resolver)
+		resolver, resolveErr := NewAuthorResolver(cfg)
+		if resolveErr != nil {
+			return "", resolveErr
+		}
+		ownerFilter := singleOwner(cli.Owner.Values)
+		models := buildPRRowModels(prs, ownerFilter, resolver)
 		renderer := prl.NewTableRenderer(cli, tty)
 		rt := renderer.Render(models)
 		output = rt.String()
@@ -756,12 +756,6 @@ func runOnce(
 		output, err = renderJSON(prs)
 		if err != nil {
 			return "", err
-		}
-	case OutputSlack:
-		if cli.Send && cli.SendTo == "" {
-			output = renderSlackDisplay(prs, cfg)
-		} else {
-			output, _ = renderSlack(prs, cfg)
 		}
 	case OutputRepo:
 		output = renderRepos(prs)
@@ -815,9 +809,9 @@ func runOnce(
 		return "", openBrowser(urls...)
 	}
 
-	// Send to Slack (after actions, if any)
+	// Send to Slack via plugin
 	if cli.Send {
-		if _, err := sendSlack(cli, cfg, prs); err != nil {
+		if err := pluginSlackSend(cfg, cli.SendTo, prs); err != nil {
 			return "", err
 		}
 	}
@@ -891,23 +885,9 @@ func runActions(cli *CLI, rest *api.RESTClient, prs []PullRequest) error {
 	return nil
 }
 
-// runInteractiveSend renders and sends selected PRs to Slack after interactive selection.
+// runInteractiveSend sends selected PRs to Slack via the plugin.
 func runInteractiveSend(cli *CLI, cfg *Config, prs []PullRequest) error {
-	var slackOutput string
-	if cli.SendTo == "" {
-		slackOutput = renderSlackDisplay(prs, cfg)
-	} else {
-		slackOutput, _ = renderSlack(prs, cfg)
-	}
-	if slackOutput == "" {
-		return nil
-	}
-	if err := copyToClipboard(slackOutput); err != nil {
-		clog.Warn().Err(err).Msg("Clipboard copy failed")
-	}
-	fmt.Println(slackOutput)
-	_, err := sendSlack(cli, cfg, prs)
-	return err
+	return pluginSlackSend(cfg, cli.SendTo, prs)
 }
 
 // buildActionHeader creates the interactive selection header from active action flags.
