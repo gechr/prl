@@ -10,7 +10,9 @@ import (
 
 func TestResolveConfiguredPluginPathSupportsShortName(t *testing.T) {
 	dir := t.TempDir()
-	want := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\nexit 0\n")
+	want := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+exit 0
+`)
 
 	resetPluginCacheForTest(t)
 	t.Setenv("PATH", dir)
@@ -22,8 +24,12 @@ func TestResolveConfiguredPluginPathSupportsShortName(t *testing.T) {
 
 func TestDiscoverPluginErrorsOnAmbiguousPATH(t *testing.T) {
 	dir := t.TempDir()
-	writeExecutable(t, dir, "prl-plugin-alpha", "#!/bin/sh\nexit 0\n")
-	writeExecutable(t, dir, "prl-plugin-beta", "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, dir, "prl-plugin-alpha", `#!/bin/sh
+exit 0
+`)
+	writeExecutable(t, dir, "prl-plugin-beta", `#!/bin/sh
+exit 0
+`)
 
 	resetPluginCacheForTest(t)
 	t.Setenv("PATH", dir)
@@ -35,7 +41,9 @@ func TestDiscoverPluginErrorsOnAmbiguousPATH(t *testing.T) {
 
 func TestPluginCompleteTreatsExitCodeOneAsNotImplemented(t *testing.T) {
 	dir := t.TempDir()
-	path := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\nexit 1\n")
+	path := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+exit 1
+`)
 
 	results, err := (&Plugin{path: path}).Complete("author")
 	require.NoError(t, err)
@@ -44,7 +52,10 @@ func TestPluginCompleteTreatsExitCodeOneAsNotImplemented(t *testing.T) {
 
 func TestPluginResolveSurfacesRealFailure(t *testing.T) {
 	dir := t.TempDir()
-	path := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\necho boom >&2\nexit 2\n")
+	path := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+echo boom >&2
+exit 2
+`)
 
 	results, err := (&Plugin{path: path}).Resolve("team", "ops")
 	require.Nil(t, results)

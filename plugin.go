@@ -365,7 +365,7 @@ func parsePluginLines(output string) []string {
 	}
 
 	var lines []string
-	for line := range strings.SplitSeq(output, "\n") {
+	for line := range strings.SplitSeq(output, nl) {
 		if line != "" {
 			lines = append(lines, line)
 		}

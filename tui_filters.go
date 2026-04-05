@@ -434,10 +434,10 @@ func (m tuiModel) renderOptionsOverlay() string {
 		} else {
 			b.WriteString(line)
 		}
-		b.WriteString("\n")
+		b.WriteString(nl)
 	}
 
-	b.WriteString("\n")
+	b.WriteString(nl)
 	b.WriteString(footer)
 
 	return m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX).Render(b.String())

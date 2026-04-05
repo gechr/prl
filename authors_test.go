@@ -23,8 +23,12 @@ func TestAuthorResolverConfigOverridesBuiltInAliases(t *testing.T) {
 
 func TestAuthorResolverFallsBackToConfigWhenPluginDiscoveryFails(t *testing.T) {
 	dir := t.TempDir()
-	writeExecutable(t, dir, "prl-plugin-alpha", "#!/bin/sh\nexit 0\n")
-	writeExecutable(t, dir, "prl-plugin-beta", "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, dir, "prl-plugin-alpha", `#!/bin/sh
+exit 0
+`)
+	writeExecutable(t, dir, "prl-plugin-beta", `#!/bin/sh
+exit 0
+`)
 
 	resetPluginCacheForTest(t)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -39,8 +43,12 @@ func TestAuthorResolverFallsBackToConfigWhenPluginDiscoveryFails(t *testing.T) {
 
 func TestCompleteAuthorsFallsBackToConfigWhenPluginDiscoveryFails(t *testing.T) {
 	dir := t.TempDir()
-	writeExecutable(t, dir, "prl-plugin-alpha", "#!/bin/sh\nexit 0\n")
-	writeExecutable(t, dir, "prl-plugin-beta", "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, dir, "prl-plugin-alpha", `#!/bin/sh
+exit 0
+`)
+	writeExecutable(t, dir, "prl-plugin-beta", `#!/bin/sh
+exit 0
+`)
 
 	resetPluginCacheForTest(t)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -63,7 +71,9 @@ func TestCompleteAuthorsIncludesConfigAuthorsAlongsidePluginResults(t *testing.T
 		t,
 		dir,
 		"prl-plugin-example",
-		"#!/bin/sh\nprintf '@me\\tCurrent user\\nall\\tAll authors\\n'\n",
+		`#!/bin/sh
+printf '@me\tCurrent user\nall\tAll authors\n'
+`,
 	)
 
 	resetPluginCacheForTest(t)

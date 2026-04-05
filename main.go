@@ -771,7 +771,7 @@ func runOnce(
 			urls[i] = pr.URL
 		}
 		natsort(urls)
-		if err := copyToClipboard(strings.Join(urls, "\n")); err != nil {
+		if err := copyToClipboard(strings.Join(urls, nl)); err != nil {
 			clog.Warn().Err(err).Msg("Clipboard copy failed")
 		}
 	}

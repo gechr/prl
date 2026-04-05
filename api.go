@@ -249,7 +249,7 @@ func (a *ActionRunner) runParallel(prs []PullRequest, fn func(PullRequest) error
 	wg.Wait()
 
 	if len(errs) > 0 {
-		return fmt.Errorf("action errors:\n%s", strings.Join(errs, "\n"))
+		return fmt.Errorf("action errors:\n%s", strings.Join(errs, nl))
 	}
 	return nil
 }

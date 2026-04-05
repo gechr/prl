@@ -2,6 +2,8 @@ package main
 
 import "time"
 
+const nl = "\n"
+
 // valueEllipsis is the Unicode ellipsis character (U+2026).
 const valueEllipsis = "…"
 

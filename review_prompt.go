@@ -47,14 +47,19 @@ func reviewPromptPlaceholderNames() []string {
 }
 
 func defaultReviewPromptTemplate(_ reviewProvider) string {
-	return "Perform a comprehensive code review of PR #{prNumber} in {ownerWithRepo}.\n\n" +
-		"The PR branch is checked out.\n\n" +
-		"First read the PR context with:\n" +
-		"gh pr view {prNumber} --repo {ownerWithRepo}\n\n" +
-		"Then get the diff with:\n" +
-		"gh api repos/{ownerWithRepo}/pulls/{prNumber} -H 'Accept: application/vnd.github.v3.diff'\n\n" +
-		"Focus on: correctness, edge cases, error handling, performance, readability, and style.\n\n" +
-		"Be thorough but concise."
+	return `Perform a comprehensive code review of PR #{prNumber} in {ownerWithRepo}.
+
+The PR branch is checked out.
+
+First read the PR context with:
+gh pr view {prNumber} --repo {ownerWithRepo}
+
+Then get the diff with:
+gh api repos/{ownerWithRepo}/pulls/{prNumber} -H 'Accept: application/vnd.github.v3.diff'
+
+Focus on: correctness, edge cases, error handling, performance, readability, and style.
+
+Be thorough but concise.`
 }
 
 func reviewPromptTemplate(cfg *Config, provider reviewProvider) string {

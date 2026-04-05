@@ -311,7 +311,7 @@ func (m editModel) View() tea.View {
 			fmt.Sprintf("(%d/%d)", m.current+1, len(m.entries)),
 		))
 	}
-	b.WriteString("\n\n")
+	b.WriteString(nl + nl)
 
 	// Title field
 	titleLabel := m.styles.label
@@ -319,12 +319,12 @@ func (m editModel) View() tea.View {
 		titleLabel = m.styles.dimLabel
 	}
 	b.WriteString(titleLabel.Render("Title"))
-	b.WriteString("\n")
+	b.WriteString(nl)
 
 	titleView := e.title.View()
-	titleLines := strings.Count(titleView, "\n") + 1
+	titleLines := strings.Count(titleView, nl) + 1
 	b.WriteString(titleView)
-	b.WriteString("\n\n")
+	b.WriteString(nl + nl)
 
 	// Body field
 	bodyLabel := m.styles.label
@@ -332,7 +332,7 @@ func (m editModel) View() tea.View {
 		bodyLabel = m.styles.dimLabel
 	}
 	b.WriteString(bodyLabel.Render("Body"))
-	b.WriteString("\n")
+	b.WriteString(nl)
 
 	switch {
 	case e.bodyFetching:
@@ -342,7 +342,7 @@ func (m editModel) View() tea.View {
 	default:
 		b.WriteString(e.body.View())
 	}
-	b.WriteString("\n\n")
+	b.WriteString(nl + nl)
 
 	// Help
 	b.WriteString(m.renderHelp())

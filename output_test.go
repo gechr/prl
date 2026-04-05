@@ -206,7 +206,9 @@ func TestRenderRepos(t *testing.T) {
 		{Repository: Repository{Name: "alpha"}},
 	}
 	got := renderRepos(prs)
-	require.Equal(t, "alpha\nbravo\nzulu", got)
+	require.Equal(t, `alpha
+bravo
+zulu`, got)
 }
 
 func TestRenderURLs(t *testing.T) {
@@ -215,7 +217,8 @@ func TestRenderURLs(t *testing.T) {
 		{URL: "https://github.com/owner/repo2/pull/2"},
 	}
 	got := renderURLs(prs)
-	want := "https://github.com/owner/repo1/pull/1\nhttps://github.com/owner/repo2/pull/2"
+	want := `https://github.com/owner/repo1/pull/1
+https://github.com/owner/repo2/pull/2`
 	require.Equal(t, want, got)
 }
 

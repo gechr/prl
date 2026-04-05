@@ -1519,7 +1519,7 @@ func (m tuiModel) viewList() tea.View {
 			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
 			prefix = frame + " " + indexPad + tuiNonCursorPrefix
 		}
-		b.WriteString(prefix + m.header + "\n")
+		b.WriteString(prefix + m.header + nl)
 	}
 
 	// Determine visible slice based on offset.
@@ -1532,7 +1532,7 @@ func (m tuiModel) viewList() tea.View {
 		index := m.renderTuiIndex(start+pos+1, m.selected[m.rowKeyAt(idx)])
 		display := index + tuiNonCursorPrefix + m.rows[idx].Display
 		if idx != m.cursor {
-			b.WriteString(tuiNonCursorPrefix + display + "\n")
+			b.WriteString(tuiNonCursorPrefix + display + nl)
 			continue
 		}
 		line := m.styles.cursor.Render(tuiCursorPrefix) + display
@@ -1548,18 +1548,18 @@ func (m tuiModel) viewList() tea.View {
 		} else {
 			b.WriteString(line)
 		}
-		b.WriteString("\n")
+		b.WriteString(nl)
 	}
 
 	// Pad to fill viewport.
 	rendered := end - start
 	for range viewport - rendered {
-		b.WriteString("\n")
+		b.WriteString(nl)
 	}
 
 	// Filter bar.
 	if m.filterInput.Focused() || filterVal != "" {
-		b.WriteString(styleHeading.Bold(true).Render("/") + m.filterInput.View() + "\n")
+		b.WriteString(styleHeading.Bold(true).Render("/") + m.filterInput.View() + nl)
 	}
 
 	// Separator line, with active tags embedded inline when present.
@@ -1567,11 +1567,11 @@ func (m tuiModel) viewList() tea.View {
 	var help string
 	if m.filterInput.Focused() {
 		b.WriteString(m.renderListSeparator(m.filterHelpPipeCol()))
-		b.WriteString("\n")
+		b.WriteString(nl)
 		help = m.renderFilterHelp()
 	} else {
 		b.WriteString(m.renderListSeparator())
-		b.WriteString("\n")
+		b.WriteString(nl)
 		help = m.renderHelp(m.listHelpPairs())
 	}
 	if m.statusMsg != "" {
@@ -1711,29 +1711,29 @@ func (m tuiModel) renderFullScreenView(
 
 	if header != "" {
 		b.WriteString(header)
-		b.WriteString("\n")
+		b.WriteString(nl)
 		if m.width > 0 {
 			b.WriteString(m.styles.separator.Render(strings.Repeat(sepHorizontal, m.width)))
 		}
-		b.WriteString("\n")
+		b.WriteString(nl)
 	}
 
 	totalLines := vp.TotalLineCount()
 	vpHeight := vp.Height()
 	switch {
 	case vpHeight <= 0:
-		b.WriteString("\n")
+		b.WriteString(nl)
 	case totalLines > vpHeight:
 		b.WriteString(m.renderViewportContent(renderLines, vp, true))
 	default:
 		b.WriteString(m.renderViewportContent(renderLines, vp, false))
 	}
-	b.WriteString("\n")
+	b.WriteString(nl)
 
 	if m.width > 0 {
 		b.WriteString(m.styles.separator.Render(strings.Repeat(sepHorizontal, m.width)))
 	}
-	b.WriteString("\n")
+	b.WriteString(nl)
 
 	if m.statusMsg != "" {
 		b.WriteString(m.appendStatus(help))
@@ -1768,12 +1768,12 @@ func (m tuiModel) fillViewToTerminal(output string) string {
 
 	// Extend short views to the terminal height so the next fullscreen render
 	// has blank rows available below the content.
-	lines := strings.Split(output, "\n")
+	lines := strings.Split(output, nl)
 	blank := strings.Repeat(" ", m.width)
 	for len(lines) < m.height {
 		lines = append(lines, blank)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, nl)
 }
 
 func requestWindowSizeCmd() tea.Cmd {
@@ -2008,7 +2008,7 @@ func (m tuiModel) renderMarkdown(body string) []string {
 		return m.plainBodyLines(body)
 	}
 	var lines []string
-	for line := range strings.SplitSeq(strings.TrimRight(rendered, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(rendered, nl), nl) {
 		lines = append(lines, line)
 	}
 	return lines
@@ -2016,7 +2016,7 @@ func (m tuiModel) renderMarkdown(body string) []string {
 
 func (m tuiModel) plainBodyLines(body string) []string {
 	var lines []string
-	for line := range strings.SplitSeq(body, "\n") {
+	for line := range strings.SplitSeq(body, nl) {
 		lines = append(lines, detailIndent+line)
 	}
 	return lines
@@ -2560,14 +2560,14 @@ func (m tuiModel) renderHelpOverlay() string {
 		} else {
 			b.WriteString(left)
 		}
-		b.WriteString("\n")
+		b.WriteString(nl)
 	}
 	dismiss := styleDismiss.Bold(true).Render("Press any key to dismiss")
 	pad := (totalWidth - lg.Width(dismiss)) / 2 //nolint:mnd // center
 	if pad > 0 {
-		b.WriteString("\n" + strings.Repeat(" ", pad) + dismiss)
+		b.WriteString(nl + strings.Repeat(" ", pad) + dismiss)
 	} else {
-		b.WriteString("\n" + dismiss)
+		b.WriteString(nl + dismiss)
 	}
 
 	return m.styles.overlayBox.Render(b.String())
@@ -2591,7 +2591,7 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 		return help
 	}
 	usableWidth := max(1, m.width-1)
-	lastNL := strings.LastIndex(help, "\n")
+	lastNL := strings.LastIndex(help, nl)
 	prefix := ""
 	lastLine := help
 	if lastNL >= 0 {
@@ -2705,12 +2705,12 @@ func (m tuiModel) renderHelp(pairs []helpPair) string {
 	if line != "" {
 		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, nl)
 }
 
 // helpLines returns the number of lines the help bar occupies at the current width.
 func (m tuiModel) helpLines(pairs []helpPair) int {
-	return strings.Count(m.renderHelp(pairs), "\n") + 1
+	return strings.Count(m.renderHelp(pairs), nl) + 1
 }
 
 func (m tuiModel) renderEmptyOverlay() string {
@@ -2776,8 +2776,8 @@ func styledRef(pr *PullRequest) string {
 
 // overlayCenter places a box on top of a background string, centered.
 func overlayCenter(bg, fg string, width, height int) string {
-	bgLines := strings.Split(bg, "\n")
-	fgLines := strings.Split(fg, "\n")
+	bgLines := strings.Split(bg, nl)
+	fgLines := strings.Split(fg, nl)
 
 	// Use WcWidth consistently - it matches terminal rendering for emoji
 	// with variation selectors (e.g. ⬆️) where GraphemeWidth disagrees.
@@ -2830,7 +2830,7 @@ func overlayCenter(bg, fg string, width, height int) string {
 		bgLines[row] = left + "\033[0m" + fgLine + right
 	}
 
-	return strings.Join(bgLines, "\n")
+	return strings.Join(bgLines, nl)
 }
 
 // injectLineBackground wraps a line with a background color that persists
@@ -2874,7 +2874,7 @@ func expandTabs(text string) string {
 }
 
 func wrapDiffLines(diff string, width int) []string {
-	logicalLines := strings.Split(expandTabs(diff), "\n")
+	logicalLines := strings.Split(expandTabs(diff), nl)
 	if width <= 0 {
 		return logicalLines
 	}
@@ -2892,7 +2892,7 @@ func hardWrapDiffLine(line string, width int) []string {
 	}
 
 	wrapped := xansi.Hardwrap(line, width, true)
-	if !strings.Contains(wrapped, "\n") {
+	if !strings.Contains(wrapped, nl) {
 		return []string{line}
 	}
 
@@ -2900,7 +2900,7 @@ func hardWrapDiffLine(line string, width int) []string {
 	writer := lg.NewWrapWriter(&buf)
 	_, _ = writer.Write([]byte(wrapped))
 	_ = writer.Close()
-	return strings.Split(buf.String(), "\n")
+	return strings.Split(buf.String(), nl)
 }
 
 // highlightDiff highlights a unified diff using delta if available,

@@ -31,7 +31,16 @@ func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
 
 	require.Equal(
 		t,
-		"Provider\nclaude  codex\n\nModel\nsonnet  opus\n\nEffort\nlow  medium  high  max  auto\n\n",
+		`Provider
+claude  codex
+
+Model
+sonnet  opus
+
+Effort
+low  medium  high  max  auto
+
+`,
 		stripped,
 	)
 	require.Equal(t, 0, strings.Count(rendered, cursorLineBG))
@@ -242,7 +251,7 @@ func TestRenderHelpOverlayAlignsExtendedSelectionKey(t *testing.T) {
 	m := tuiModel{styles: newTuiStyles()}
 
 	overlay := ansi.Strip(m.renderHelpOverlay())
-	lines := strings.Split(overlay, "\n")
+	lines := strings.Split(overlay, nl)
 
 	spaceLine := ""
 	shiftLine := ""
@@ -349,7 +358,7 @@ func TestViewListShowsRefreshingHeaderWithoutRows(t *testing.T) {
 	m.header, m.rows, m.colWidths = m.rerender()
 
 	out := ansi.Strip(m.viewList().Content)
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 
 	require.NotEmpty(t, lines)
 	require.Contains(t, lines[0], "*")
@@ -395,7 +404,7 @@ func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
 	}
 
 	out := ansi.Strip(m.viewList().Content)
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 
 	found := false
 	for _, line := range lines {
@@ -797,7 +806,7 @@ func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 	}
 
 	lines := m.renderDetailContent()
-	rendered := strings.Join(lines, "\n")
+	rendered := strings.Join(lines, nl)
 
 	stripped := ansi.Strip(rendered)
 	require.Contains(t, stripped, "🤖 Copilot")
@@ -916,16 +925,16 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	m.syncDiffView()
 
 	out := ansi.Strip(m.viewDiff().Content)
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " ")
 	}
-	out = strings.Join(lines, "\n")
+	out = strings.Join(lines, nl)
 
 	require.Contains(t, out, strings.Join([]string{
 		ansi.Strip(diffLines[0]),
 		ansi.Strip(diffLines[1]),
-	}, "\n"))
+	}, nl))
 }
 
 func TestViewDiffFillsTerminalRectangle(t *testing.T) {
@@ -993,8 +1002,8 @@ func TestAppendRightStatusDoesNotIncreaseFooterLineCount(t *testing.T) {
 
 	got := m.appendRightStatus(help, status)
 
-	require.Equal(t, strings.Count(help, "\n"), strings.Count(got, "\n"))
-	lines := strings.Split(ansi.Strip(got), "\n")
+	require.Equal(t, strings.Count(help, nl), strings.Count(got, nl))
+	lines := strings.Split(ansi.Strip(got), nl)
 	require.Len(t, lines, 2)
 	require.LessOrEqual(t, lg.Width(lines[1]), m.width)
 	require.Contains(t, lines[1], "Diffing")
@@ -1005,7 +1014,7 @@ func TestAppendRightStatusTruncatesLongStatusToSingleLine(t *testing.T) {
 
 	got := ansi.Strip(m.appendRightStatus("", "Diffing owner/repo#42…"))
 
-	require.NotContains(t, got, "\n")
+	require.NotContains(t, got, nl)
 	require.LessOrEqual(t, lg.Width(got), m.width)
 	require.Contains(t, got, "…")
 }
@@ -1041,8 +1050,8 @@ func TestViewListDiffingStatusDoesNotAddFooterLines(t *testing.T) {
 			withStatus.statusMsg = withStatus.styles.statusPending.Render(statusDiffing) +
 				" " + styleRef.Render("foo/bar#123") + valueEllipsis
 
-			baseLines := strings.Split(ansi.Strip(base.viewList().Content), "\n")
-			lines := strings.Split(ansi.Strip(withStatus.viewList().Content), "\n")
+			baseLines := strings.Split(ansi.Strip(base.viewList().Content), nl)
+			lines := strings.Split(ansi.Strip(withStatus.viewList().Content), nl)
 			require.Len(t, lines, len(baseLines))
 			for _, line := range lines {
 				require.LessOrEqual(t, lg.Width(line), withStatus.width)
@@ -1088,7 +1097,7 @@ func TestRenderViewportContentUsesCachedLinesWithScrollbar(t *testing.T) {
 	vp.SetYOffset(1)
 
 	got := ansi.Strip(m.renderViewportContent(lines, vp, true))
-	rows := strings.Split(got, "\n")
+	rows := strings.Split(got, nl)
 
 	require.Len(t, rows, 3)
 	require.Contains(t, rows[0], "line 2")
@@ -1226,7 +1235,7 @@ func TestScrollbarThumbDragMovesDiffViewport(t *testing.T) {
 func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
 	m := tuiModel{
 		confirmAction: tuiActionInfo,
-		confirmPrompt: strings.TrimSuffix(strings.Repeat("line\n", 40), "\n"),
+		confirmPrompt: strings.TrimSuffix(strings.Repeat("line\n", 40), nl),
 		confirmView:   newScrollViewSoftWrap(),
 		confirmInput:  newConfirmInput(),
 		width:         80,
@@ -1278,7 +1287,7 @@ func TestFillViewToTerminalExpandsTabs(t *testing.T) {
 	got := m.fillViewToTerminal("left\tright")
 
 	require.NotContains(t, got, "\t")
-	lines := strings.Split(got, "\n")
+	lines := strings.Split(got, nl)
 	require.Len(t, lines, 2)
 	require.Contains(t, lines[0], "left    right")
 	require.Equal(t, 12, lg.Width(lines[1]))
@@ -1287,7 +1296,7 @@ func TestFillViewToTerminalExpandsTabs(t *testing.T) {
 func assertRenderedFullScreen(t *testing.T, content string, width, height int) {
 	t.Helper()
 
-	lines := strings.Split(ansi.Strip(content), "\n")
+	lines := strings.Split(ansi.Strip(content), nl)
 	require.Len(t, lines, height)
 	for _, line := range lines {
 		require.LessOrEqual(t, lg.Width(line), width)

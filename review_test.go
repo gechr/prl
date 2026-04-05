@@ -164,7 +164,9 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 
 func TestBuildAIReviewCommandPreservesPromptNewlines(t *testing.T) {
 	pr := testReviewPullRequest()
-	prompt := "line one\n\nline two"
+	prompt := `line one
+
+line two`
 
 	cmd := buildAIReviewCommand(
 		pr,
@@ -174,7 +176,9 @@ func TestBuildAIReviewCommandPreservesPromptNewlines(t *testing.T) {
 		codexReviewEffortMedium,
 	)
 
-	require.Contains(t, cmd, "'line one\n\nline two'")
+	require.Contains(t, cmd, `'line one
+
+line two'`)
 	require.NotContains(t, cmd, `line one\n\nline two`)
 }
 

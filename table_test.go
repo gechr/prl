@@ -102,7 +102,7 @@ func simpleColumns() []Column {
 // extractVisibleColumn extracts the visible text of a given column index from aligned output.
 // Strips ANSI for field splitting only. Skips header (line 0). Returns values in display order.
 func extractVisibleColumn(output string, col int) []string {
-	lines := strings.Split(output, "\n")
+	lines := strings.Split(output, nl)
 	var vals []string
 	for i, line := range lines {
 		if i == 0 { // skip header
@@ -217,7 +217,7 @@ func TestRender_IndexLeftPadding(t *testing.T) {
 	rt := r.Render(models)
 	out := rt.String()
 
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 	// First data line = newest = #1. The dim style wraps " 1", so the visible
 	// text should be " 1" (left-padded to 2-digit width).
 	firstDataLine := ansi.Strip(lines[1]) // skip header
@@ -423,7 +423,7 @@ func TestRender_HeaderPresent(t *testing.T) {
 	rt := r.Render(models)
 
 	out := rt.String()
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 	require.Len(t, lines, 2, "expected header + 1 data line")
 
 	// Col widths: max(vw("REPO")=4, vw("alpha")=5)=5, max(vw("NUMBER")=6, vw("#1")=2)=6
@@ -441,7 +441,7 @@ func TestRender_SingleRow(t *testing.T) {
 	out := rt.String()
 
 	// Single row should still show index.
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 	require.Len(t, lines, 2, "expected header + 1 data line")
 
 	// Data line should have 3 visible fields (index, repo, number)
@@ -531,7 +531,7 @@ func TestRender_ColumnAlignment(t *testing.T) {
 	rt := r.Render(models)
 	out := rt.String()
 
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 	require.GreaterOrEqual(t, len(lines), 2, "expected header + data lines")
 
 	// All lines should have consistent column alignment (same number of visual columns).
@@ -550,7 +550,7 @@ func TestRender_IndexHeaderPadding(t *testing.T) {
 	rt := r.Render(models)
 	out := rt.String()
 
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(out, nl)
 	header := ansi.Strip(lines[0])
 	// Header should start with space(s) then the first real column header.
 	fields := strings.Fields(header)
@@ -760,7 +760,7 @@ func TestRender_FlexTruncation(t *testing.T) {
 	rt := r.Render(models)
 
 	// Every line should fit within 80 columns.
-	for i, line := range strings.Split(rt.String(), "\n") {
+	for i, line := range strings.Split(rt.String(), nl) {
 		w := lipgloss.Width(line)
 		require.LessOrEqual(t, w, 80,
 			"line %d has visible width %d, exceeds terminal width 80", i, w)
@@ -1041,7 +1041,7 @@ func TestRenderedTable_String(t *testing.T) {
 	rt := r.Render(models)
 
 	s := rt.String()
-	lines := strings.Split(s, "\n")
+	lines := strings.Split(s, nl)
 	// Header + 2 data lines
 	require.Len(t, lines, 3)
 	// First line is header

@@ -460,7 +460,7 @@ func (p *prl) buildDryRunOutput(params *SearchParams, cli *CLI) string {
 	if cli.Send {
 		parts = append(parts, p.theme.Bold.Render("slack:")+" "+formatSlackDryRun(cli))
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, nl)
 }
 
 // formatSlackDryRun returns a human-readable summary of where --send will route.

@@ -417,11 +417,11 @@ func saveConfigKey(key string, value any) error {
 	if mErr != nil {
 		return fmt.Errorf("marshalling new key: %w", mErr)
 	}
-	base := strings.TrimRight(f.String(), "\n")
-	sectionBody := strings.TrimRight(string(section), "\n")
+	base := strings.TrimRight(f.String(), nl)
+	sectionBody := strings.TrimRight(string(section), nl)
 	out := sectionBody
 	if base != "" {
-		out = base + "\n\n" + sectionBody
+		out = base + nl + nl + sectionBody
 	}
 
 	//nolint:gosec // config file, not sensitive
@@ -433,20 +433,20 @@ func marshalYAMLValue(value any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimRight(string(encoded), "\n"), nil
+	return strings.TrimRight(string(encoded), nl), nil
 }
 
 func withSingleTrailingNewline(content string) string {
-	return strings.TrimRight(content, "\n") + "\n"
+	return strings.TrimRight(content, nl) + nl
 }
 
 func indentBlock(content string, indent int) string {
 	prefix := strings.Repeat(" ", indent)
-	lines := strings.Split(content, "\n")
+	lines := strings.Split(content, nl)
 	for i, line := range lines {
 		lines[i] = prefix + line
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, nl)
 }
 
 // mergeIntoAncestor finds the top-level ancestor of a dotted key in the YAML

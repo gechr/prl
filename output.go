@@ -445,7 +445,7 @@ func filterByTimelineActors(
 					%s
 				}
 			}
-		}`, strings.Join(fields, "\n"))
+		}`, strings.Join(fields, nl))
 
 	if err := gql.Do(query, map[string]any{"ids": ids}, &result); err != nil {
 		return nil, fmt.Errorf("querying timeline actors: %w", err)
@@ -657,7 +657,7 @@ func renderURLs(prs []PullRequest) string {
 	for _, pr := range prs {
 		lines = append(lines, pr.URL)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, nl)
 }
 
 // renderBullets outputs "* <url>" per line.
@@ -666,7 +666,7 @@ func renderBullets(prs []PullRequest) string {
 	for _, pr := range prs {
 		lines = append(lines, "* "+pr.URL)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, nl)
 }
 
 // renderRepos outputs unique repo names in alphabetical order.
@@ -681,7 +681,7 @@ func renderRepos(prs []PullRequest) string {
 		}
 	}
 	sort.Strings(names)
-	return strings.Join(names, "\n")
+	return strings.Join(names, nl)
 }
 
 // renderJSON outputs pretty-printed sorted JSON.

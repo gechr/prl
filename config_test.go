@@ -31,8 +31,8 @@ func TestSaveConfigKeyClearsPersistedSortWithoutPanic(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `key: ""`)
 	require.Contains(t, string(data), `order: ""`)
-	require.True(t, strings.HasSuffix(string(data), "\n"))
-	require.False(t, strings.HasSuffix(string(data), "\n\n"))
+	require.True(t, strings.HasSuffix(string(data), nl))
+	require.False(t, strings.HasSuffix(string(data), nl+nl))
 }
 
 func TestLoadConfigRejectsInvalidAIReviewPromptPlaceholder(t *testing.T) {

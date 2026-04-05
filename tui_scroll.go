@@ -374,7 +374,7 @@ func (m tuiModel) scrollbarChars(height, totalLines int, percent float64) []stri
 // renderScrollbar returns a single-column scrollbar string for use with
 // lg.JoinHorizontal in the confirm modal overlay.
 func (m tuiModel) renderScrollbar(height, totalLines int, percent float64) string {
-	return strings.Join(m.scrollbarChars(height, totalLines, percent), "\n")
+	return strings.Join(m.scrollbarChars(height, totalLines, percent), nl)
 }
 
 func scrollbarThumbMetrics(height, totalLines int, percent float64) (int, int) {
@@ -556,7 +556,7 @@ func (m tuiModel) scrollbarHitbox(target scrollbarTarget) (scrollbarHitbox, bool
 func (m tuiModel) confirmScrollbarHitbox() (scrollbarHitbox, bool) {
 	const centerDivisor = 2
 
-	lines := strings.Split(xansi.Strip(m.renderConfirmModal()), "\n")
+	lines := strings.Split(xansi.Strip(m.renderConfirmModal()), nl)
 	if len(lines) == 0 {
 		return scrollbarHitbox{}, false
 	}
@@ -703,7 +703,7 @@ func (m tuiModel) renderConfirmModal() string {
 // viewport for clipping and a scrollbar when the content exceeds the terminal.
 func (m tuiModel) renderConfirmScrollable(boxStyle lg.Style, boxWidth int, content string) string {
 	vpHeight := m.confirmViewport()
-	lines := strings.Split(content, "\n")
+	lines := strings.Split(content, nl)
 	if len(lines) <= vpHeight {
 		if boxWidth > 0 {
 			return boxStyle.Width(boxWidth).Render(content)
@@ -749,22 +749,22 @@ func (m tuiModel) confirmModalContent() string {
 		if label == "" {
 			label = "Comment"
 		}
-		b.WriteString("\n\n")
+		b.WriteString(nl + nl)
 		if m.hasConfirmOptions() {
 			b.WriteString(m.renderConfirmOptionsHeader())
 		}
 		b.WriteString(m.styles.helpKey.Render(label))
-		b.WriteString("\n")
+		b.WriteString(nl)
 		b.WriteString(m.confirmInput.View())
 
 		// Only include hints when there is enough room.
-		hints := "\n\n" + m.renderConfirmInputHints()
-		total := strings.Count(b.String(), "\n") + 1 + strings.Count(hints, "\n")
+		hints := nl + nl + m.renderConfirmInputHints()
+		total := strings.Count(b.String(), nl) + 1 + strings.Count(hints, nl)
 		if total <= m.confirmViewport() {
 			b.WriteString(hints)
 		}
 	} else {
-		b.WriteString("\n\n")
+		b.WriteString(nl + nl)
 	}
 	return b.String()
 }
@@ -821,7 +821,7 @@ func (m tuiModel) renderConfirmOptionsHeader() string {
 	var b strings.Builder
 	for i, def := range m.confirmOptions {
 		b.WriteString(m.styles.helpKey.Render(def.label))
-		b.WriteString("\n")
+		b.WriteString(nl)
 
 		var choicesLine strings.Builder
 		for j, choice := range def.choices {
@@ -842,7 +842,7 @@ func (m tuiModel) renderConfirmOptionsHeader() string {
 			}
 		}
 		b.WriteString(choicesLine.String())
-		b.WriteString("\n\n")
+		b.WriteString(nl + nl)
 	}
 	return b.String()
 }
@@ -865,7 +865,7 @@ func (m tuiModel) renderConfirmInputHints() string {
 		helpKey.Render("←/→") + " " + helpText.Render("select"),
 		helpKey.Render(tuiKeySpace) + " " + helpText.Render("cycle"),
 	}
-	return strings.Join(firstLine, "  ") + "\n" + strings.Join(secondLine, "  ")
+	return strings.Join(firstLine, "  ") + nl + strings.Join(secondLine, "  ")
 }
 
 func newConfirmInput() textarea.Model {

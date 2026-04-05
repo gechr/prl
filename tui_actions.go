@@ -295,7 +295,7 @@ func renderBatchFailurePrompt(msg batchActionMsg) string {
 	if remaining := len(msg.failures) - limit; remaining > 0 {
 		fmt.Fprintf(&b, "\n...and %d more.", remaining)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), nl)
 }
 
 // updateListActions handles action keybinds in the list view.
@@ -756,7 +756,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			urls[i] = t.pr.URL
 		}
 		natsort(urls)
-		_ = copyToClipboard(strings.Join(urls, "\n"))
+		_ = copyToClipboard(strings.Join(urls, nl))
 		last := targets[len(targets)-1]
 		msg := last.pr.Ref()
 		if len(targets) > 1 {
