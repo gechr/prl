@@ -21,6 +21,8 @@ import (
 	"github.com/gechr/prl/internal/term"
 )
 
+var version = "dev"
+
 // Sentinel errors for controlled exits.
 var (
 	errOK    = errors.New("ok")    // caller handled it; exit 0
@@ -61,6 +63,11 @@ func run() error {
 	_, err = parser.Parse(os.Args[1:])
 	if err != nil {
 		parser.FatalIfErrorf(err)
+	}
+
+	if cli.Version {
+		fmt.Println(version)
+		return errOK
 	}
 
 	// Handle completion (before validation/search logic)

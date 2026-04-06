@@ -95,6 +95,7 @@ type CLI struct {
 	Debug   bool   `name:"debug"   help:"Log HTTP requests to stderr"                          clib:"terse='Debug mode',group='Miscellaneous/1'"`
 	Quick   bool   `name:"quick"   help:"Skip enrichment (merge status, auto-merge)" short:"Q" clib:"terse='Skip enrichment',group='Miscellaneous/1'"`
 	Verbose bool   `name:"verbose" help:"Enable verbose logging"                     short:"v" clib:"terse='Verbose',group='Miscellaneous/1'"`
+	Version bool   `name:"version" help:"Print version"                                        clib:"terse='Version',group='Miscellaneous/2'"`
 
 	stateExplicit    bool `kong:"-"`
 	draftExplicit    bool `kong:"-"`
