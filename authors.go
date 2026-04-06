@@ -42,14 +42,13 @@ func NewAuthorResolver(cfg *Config) *AuthorResolver {
 }
 
 // loadPluginNames loads author names from the plugin binary.
-// Uses the "complete author" output which returns "username\tDisplay Name" lines.
 func (r *AuthorResolver) loadPluginNames(cfg *Config) {
 	plug, err := discoverPlugin(cfg)
 	if err != nil {
 		clog.Debug().Err(err).Msg("Skipping plugin author names")
 		return
 	}
-	results, err := plug.Complete("author")
+	results, err := plug.Resolve("authors", "")
 	if err != nil {
 		clog.Debug().Err(err).Msg("Skipping plugin author names")
 		return
@@ -59,13 +58,13 @@ func (r *AuthorResolver) loadPluginNames(cfg *Config) {
 	}
 
 	for _, line := range results {
-		val, desc, hasSep := strings.Cut(line, "\t")
-		if val == valueAtMe || val == "all" {
+		val, name, hasSep := strings.Cut(line, "\t")
+		if val == "" {
 			continue
 		}
 		lower := strings.ToLower(val)
-		if hasSep && desc != "" {
-			r.names[lower] = desc
+		if hasSep && name != "" {
+			r.names[lower] = name
 		}
 		r.activeNames[lower] = true
 	}
