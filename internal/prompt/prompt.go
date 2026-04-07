@@ -3,10 +3,20 @@ package prompt
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/huh/v2"
+	"github.com/gechr/prl/internal/term"
 )
+
+func terminalWidthForPrompt(file *os.File) int {
+	width, _ := term.Size(file)
+	if width <= 0 {
+		return 0
+	}
+	return width
+}
 
 // ErrCancelled is returned when the user cancels an interactive selection.
 var ErrCancelled = errors.New("cancelled")
@@ -77,6 +87,13 @@ func MultiSelect[T any](
 				Height(selectHeight(maxHeight, len(items))),
 		),
 	)
+
+	// Seed the form with the live terminal width so the first frame doesn't
+	// render with huh's default width and then "snap" into place on resize.
+	// Let huh negotiate height from the actual startup WindowSize event.
+	if width := terminalWidthForPrompt(os.Stderr); width > 0 {
+		form.WithWidth(width)
+	}
 
 	km := huh.NewDefaultKeyMap()
 	km.Quit = key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit"))

@@ -21,6 +21,8 @@ func (prlHuhTheme) Theme(isDark bool) *huh.Styles {
 
 	// Header: orange bold.
 	t.Focused.Title = styleHeading.Bold(true)
+	t.Blurred.Title = styleHeading.Bold(true)
+	t.Group.Title = styleHeading.Bold(true)
 
 	// Cursor: ❯ in orchid.
 	t.Focused.MultiSelectSelector = styleLabel.SetString("❯ ")
