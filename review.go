@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 
 	"al.essio.dev/pkg/shellescape"
@@ -21,7 +20,7 @@ const (
 )
 
 func currentAIReviewLauncher() aiReviewLauncher {
-	if runtime.GOOS != "darwin" {
+	if !isDarwin() {
 		return aiReviewLauncherNone
 	}
 	switch os.Getenv("TERM_PROGRAM") {

@@ -11,6 +11,12 @@ import (
 )
 
 func TestCurrentAIReviewLauncher(t *testing.T) {
+	if !isDarwin() {
+		t.Setenv("TERM_PROGRAM", "ghostty")
+		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+		return
+	}
+
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	require.Equal(t, aiReviewLauncherGhostty, currentAIReviewLauncher())
 

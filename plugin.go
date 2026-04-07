@@ -163,9 +163,10 @@ func discoverPluginsOnPATH() []pluginCandidate {
 				continue
 			}
 
-			full := filepath.Join(dir, name)
-			canonical := canonicalPluginPath(full)
-			seen[canonical] = pluginCandidate{name: name, path: full}
+			// Deduplicate by name - first on PATH wins.
+			if _, ok := seen[name]; !ok {
+				seen[name] = pluginCandidate{name: name, path: filepath.Join(dir, name)}
+			}
 		}
 	}
 
@@ -174,20 +175,10 @@ func discoverPluginsOnPATH() []pluginCandidate {
 		candidates = append(candidates, candidate)
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].name == candidates[j].name {
-			return candidates[i].path < candidates[j].path
-		}
 		return candidates[i].name < candidates[j].name
 	})
 
 	return candidates
-}
-
-func canonicalPluginPath(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
-	}
-	return filepath.Clean(path)
 }
 
 // Complete calls the plugin for tab completions.

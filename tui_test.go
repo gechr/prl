@@ -53,6 +53,10 @@ func TestShellSingleQuoteEscapesSingleQuotes(t *testing.T) {
 }
 
 func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
+	if !isDarwin() {
+		t.Skip("AI review requires macOS")
+	}
+
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	pr := testReviewPullRequest()
 	m := tuiModel{
@@ -87,9 +91,13 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 
 	overlay := m.renderHelpOverlay()
 
-	require.Contains(t, overlay, "Launch AI review")
-	require.Contains(t, overlay, "alt+r")
-	require.Contains(t, overlay, "Launch AI review (no confirm)")
+	if isDarwin() {
+		require.Contains(t, overlay, "Launch AI review")
+		require.Contains(t, overlay, "alt+r")
+		require.Contains(t, overlay, "Launch AI review (no confirm)")
+	} else {
+		require.NotContains(t, overlay, "Launch AI review")
+	}
 	require.Contains(t, overlay, "shift+↑↓")
 }
 
