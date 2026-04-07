@@ -105,7 +105,7 @@ type prl struct {
 // New creates a new prl with the configured theme.
 func New() *prl {
 	return &prl{
-		theme: theme.New(
+		theme: theme.Default().With(
 			theme.WithEnumStyle(theme.EnumStyleHighlightBoth),
 		),
 	}
