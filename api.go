@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -347,7 +348,7 @@ func (a *ActionRunner) closePR(
 
 // mergeOrAutomerge picks the right merge strategy based on the PR's known status:
 //   - Ready/Unknown: try direct merge, then enqueue (merge queue), then automerge.
-//   - Not ready: try automerge, then enqueue, then direct merge.
+//   - Not ready: try automerge, then enqueue.
 //
 // Returns the log message on success.
 func (a *ActionRunner) mergeOrAutomerge(owner, repo string, pr PullRequest) (string, error) {
@@ -367,18 +368,19 @@ func (a *ActionRunner) mergeOrAutomerge(owner, repo string, pr PullRequest) (str
 		return resultAutomerged, nil
 	}
 	// Not ready - enable automerge first.
-	if err := a.enableAutomerge(pr.NodeID); err == nil {
+	autoErr := a.enableAutomerge(pr.NodeID)
+	if autoErr == nil {
 		return resultAutomerged, nil
 	}
 	// Try merge queue.
-	if err := a.enqueuePR(pr.NodeID); err == nil {
+	queueErr := a.enqueuePR(pr.NodeID)
+	if queueErr == nil {
 		return resultEnqueued, nil
 	}
-	// Last resort: direct merge.
-	if err := a.mergePR(owner, repo, pr.Number); err != nil {
-		return "", err
-	}
-	return resultMerged, nil
+	return "", errors.Join(
+		fmt.Errorf("enable automerge: %w", autoErr),
+		fmt.Errorf("enqueue PR: %w", queueErr),
+	)
 }
 
 func (a *ActionRunner) mergePR(owner, repo string, number int) error {
