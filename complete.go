@@ -55,7 +55,7 @@ func completeAuthors(cfg *Config) []string {
 	}
 
 	// Try plugin
-	if pluginResults := tryPluginComplete(cfg, "author"); pluginResults != nil {
+	if pluginResults := tryPluginComplete(cfg, "authors"); pluginResults != nil {
 		for _, r := range pluginResults {
 			val, _, _ := strings.Cut(r, "\t")
 			if !seen[val] {
@@ -96,7 +96,7 @@ func completeTeams(cfg *Config) []string {
 		return nil
 	}
 
-	if pluginResults := tryPluginComplete(cfg, "team"); pluginResults != nil {
+	if pluginResults := tryPluginComplete(cfg, "teams"); pluginResults != nil {
 		seen := make(map[string]bool)
 		var results []string
 
@@ -144,7 +144,7 @@ func completeRepositories(cfg *Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	return tryPluginComplete(cfg, "repo")
+	return tryPluginComplete(cfg, "repos")
 }
 
 // completeTopics returns topic completions from the plugin.
@@ -152,7 +152,7 @@ func completeTopics(cfg *Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	return tryPluginComplete(cfg, "topic")
+	return tryPluginComplete(cfg, "topics")
 }
 
 // completeSlackRecipients returns Slack recipient completions from the plugin.
@@ -161,7 +161,7 @@ func completeSlackRecipients(cfg *Config) []string {
 		return nil
 	}
 
-	return tryPluginComplete(cfg, "slack-recipient")
+	return tryPluginComplete(cfg, "slack-recipients")
 }
 
 func tryPluginComplete(cfg *Config, kind string) []string {

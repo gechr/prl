@@ -216,7 +216,11 @@ func (p *Plugin) Resolve(kind, value string) ([]string, error) {
 		return nil, nil
 	}
 
-	out, err := p.run("resolve", kind, value)
+	args := []string{"resolve", kind}
+	if value != "" {
+		args = append(args, value)
+	}
+	out, err := p.run(args...)
 	if err != nil {
 		if errors.Is(err, errPluginNotImplemented) {
 			return nil, nil
