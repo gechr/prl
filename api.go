@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,17 +75,9 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 		return err
 	}
 
-	// Phase 3: Force-merge (sequential - each PR blocks on check polling)
+	// Phase 3: Force-merge (parallel per-PR so multiple selections wait concurrently)
 	if cli.ForceMerge {
-		for _, pr := range prs {
-			if err := a.forceMerge(pr); err != nil {
-				clog.Warn().
-					Err(err).
-					Link("pr", pr.URL, pr.Ref()).
-					Str("title", truncateTitle(pr.Title)).
-					Msg("Force-merge failed")
-			}
-		}
+		a.forceMergeAll(prs)
 	}
 
 	// Phase 4: Open in browser (if --open)
@@ -99,6 +92,68 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 	}
 
 	return nil
+}
+
+func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
+	if len(prs) == 0 {
+		return
+	}
+
+	group := clog.Group(
+		context.Background(),
+		clog.WithParallelism(maxConcurrency),
+		clog.WithHideDone(),
+		clog.WithMaxHeightPercent(0.5), //nolint:mnd // half the terminal window
+		clog.WithFooter(
+			clog.Spinner("Force-merging"),
+			func(done, total int, u *clog.Update) {
+				msg := "Force-merging"
+				if done == total {
+					msg = "Force-merged"
+				}
+				u.Msg(msg).Fraction("progress", done, total).Send()
+			},
+		),
+	)
+
+	type forceMergeTask struct {
+		pr     PullRequest
+		result *clog.TaskResult
+	}
+
+	tasks := make([]forceMergeTask, 0, len(prs))
+	for _, pr := range prs {
+		b := clog.Spinner("Waiting for checks").
+			Symbol("·").
+			Link("pr", pr.URL, pr.Ref())
+		if pr.Title != "" {
+			b = b.Str("title", truncateTitle(pr.Title))
+		}
+		result := group.Add(b).Progress(func(ctx context.Context, update *clog.Update) error {
+			return a.forceMerge(ctx, pr, update)
+		})
+		tasks = append(tasks, forceMergeTask{pr: pr, result: result})
+	}
+
+	_ = group.Wait().Silent()
+
+	var failed []PullRequest
+	for _, task := range tasks {
+		if err := task.result.Silent(); err != nil {
+			failed = append(failed, task.pr)
+			clog.Warn().
+				Err(err).
+				Link("pr", task.pr.URL, task.pr.Ref()).
+				Str("title", truncateTitle(task.pr.Title)).
+				Msg("Force-merge failed")
+		}
+	}
+
+	if len(failed) == 0 {
+		clog.Info().
+			Int("count", len(prs)).
+			Msgf("All %s force-merged", pluralize(len(prs), "PR", "PRs"))
+	}
 }
 
 func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
@@ -688,20 +743,14 @@ func (a *ActionRunner) fetchDiff(owner, repo string, number int) (string, string
 // mergePullRequest mutation. This works like gh pr merge --admin: the mutation
 // itself requires the caller to have bypass/admin permissions on the repo;
 // no special API field is needed.
-func (a *ActionRunner) forceMerge(pr PullRequest) error {
-	clog.Info().
-		Link("pr", pr.URL, pr.Ref()).
-		Str("title", truncateTitle(pr.Title)).
-		Msg("Waiting for checks")
-
-	if err := a.waitForChecks(pr); err != nil {
+func (a *ActionRunner) forceMerge(ctx context.Context, pr PullRequest, update *clog.Update) error {
+	if err := a.waitForChecks(ctx, pr, update); err != nil {
 		return err
 	}
 
-	clog.Info().
-		Link("pr", pr.URL, pr.Ref()).
-		Str("title", truncateTitle(pr.Title)).
-		Msg("Force-merging with bypass permissions")
+	if update != nil {
+		update.Msg("Force-merging with bypass permissions").Send()
+	}
 	return a.forceMergePR(pr.NodeID)
 }
 
@@ -895,9 +944,16 @@ func checkSortOrder(c PRCheck) int {
 const forceMergeInterval = 10 * time.Second
 
 // waitForChecks polls the PR's statusCheckRollup until checks pass, fail, or the PR is no longer open.
-func (a *ActionRunner) waitForChecks(pr PullRequest) error {
-	ref := pr.Ref()
+func (a *ActionRunner) waitForChecks(
+	ctx context.Context,
+	pr PullRequest,
+	update *clog.Update,
+) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		state, prState, err := a.queryCheckState(pr.NodeID)
 		if err != nil {
 			return fmt.Errorf("querying check status for %s: %w", pr.URL, err)
@@ -905,29 +961,43 @@ func (a *ActionRunner) waitForChecks(pr PullRequest) error {
 
 		// Check if PR state changed
 		if prState == "MERGED" {
-			clog.Info().
-				Link("pr", pr.URL, ref).
-				Str("title", truncateTitle(pr.Title)).
-				Msg("PR already merged")
+			if update != nil {
+				update.Msg("PR already merged").SetSymbol("✔︎").Send()
+			}
 			return fmt.Errorf("PR already merged: %s", pr.URL)
 		}
 		if prState == "CLOSED" {
+			if update != nil {
+				update.Msg("PR was closed").SetSymbol("✘").SetLevel(clog.LevelWarn).Send()
+			}
 			return fmt.Errorf("PR was closed: %s", pr.URL)
 		}
 
 		switch state {
 		case checksSuccess:
-			clog.Info().
-				Link("pr", pr.URL, ref).
-				Str("title", truncateTitle(pr.Title)).
-				Msg("All checks passed")
+			if update != nil {
+				update.Msg("All checks passed").Send()
+			}
 			return nil
 		case checksFailed:
+			if update != nil {
+				update.Msg("Checks failed").SetSymbol("✘").SetLevel(clog.LevelError).Send()
+			}
 			return fmt.Errorf("checks failed for %s", pr.URL)
 		case checksPending:
-			time.Sleep(forceMergeInterval)
+			if update != nil {
+				update.Msg("Waiting for checks").Send()
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(forceMergeInterval):
+			}
 		case checksNone:
 			// No checks configured - proceed immediately
+			if update != nil {
+				update.Msg("No checks configured").Send()
+			}
 			return nil
 		}
 	}

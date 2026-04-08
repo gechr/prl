@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,121 @@ func TestMergeOrAutomergeReadyStillPrefersDirectMerge(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, resultMerged, result)
 	require.EqualValues(t, 1, mergeCalls.Load())
+}
+
+func TestExecuteForceMergePollsSelectedPRsConcurrently(t *testing.T) {
+	t.Helper()
+
+	checksStarted := make(chan string, 2)
+	mergesStarted := make(chan string, 2)
+	releaseChecks := make(chan struct{})
+
+	nodeIDFromBody := func(body string) string {
+		switch {
+		case strings.Contains(body, `"PR_1"`):
+			return "PR_1"
+		case strings.Contains(body, `"PR_2"`):
+			return "PR_2"
+		default:
+			t.Fatalf("missing PR node id in GraphQL body: %s", body)
+			return ""
+		}
+	}
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/graphql" {
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+
+		body := readBody(t, req.Body)
+		switch {
+		case strings.Contains(body, "query CheckState"):
+			nodeID := nodeIDFromBody(body)
+			checksStarted <- nodeID
+			<-releaseChecks
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"node":{"state":"OPEN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}`,
+			), nil
+		case strings.Contains(body, "mutation ForceMerge"):
+			mergesStarted <- nodeIDFromBody(body)
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"mergePullRequest":{"clientMutationId":"ok"}}}`,
+			), nil
+		default:
+			t.Fatalf("unexpected GraphQL request: %s", body)
+			return nil, errUnexpectedGraphQLCall
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+	prs := []PullRequest{
+		{
+			NodeID:     "PR_1",
+			Number:     1,
+			URL:        "https://github.com/owner/repo/pull/1",
+			Repository: Repository{NameWithOwner: "owner/repo", Name: "repo"},
+		},
+		{
+			NodeID:     "PR_2",
+			Number:     2,
+			URL:        "https://github.com/owner/repo/pull/2",
+			Repository: Repository{NameWithOwner: "owner/repo", Name: "repo"},
+		},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- actions.Execute(&CLI{ForceMerge: true}, prs)
+	}()
+
+	select {
+	case <-checksStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first force-merge check poll did not start")
+	}
+
+	select {
+	case <-checksStarted:
+	case <-time.After(2 * time.Second):
+		close(releaseChecks)
+		t.Fatal("second force-merge check poll did not start before the first completed")
+	}
+
+	select {
+	case nodeID := <-mergesStarted:
+		close(releaseChecks)
+		t.Fatalf("merge started too early before all waiting PRs began polling: %s", nodeID)
+	default:
+	}
+
+	close(releaseChecks)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("force-merge execution did not finish")
+	}
+
+	require.ElementsMatch(t, []string{"PR_1", "PR_2"}, []string{<-mergesStarted, <-mergesStarted})
 }
 
 func jsonResponse(req *http.Request, status int, body string) *http.Response {
