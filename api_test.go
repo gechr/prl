@@ -118,6 +118,119 @@ func TestMergeOrAutomergeReadyStillPrefersDirectMerge(t *testing.T) {
 	require.EqualValues(t, 1, mergeCalls.Load())
 }
 
+func TestMergeOrAutomergeBlockedFallsBackToAutoMergeWhenQueueUnavailable(t *testing.T) {
+	t.Helper()
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/graphql":
+			body := readBody(t, req.Body)
+			switch {
+			case strings.Contains(body, "enablePullRequestAutoMerge"):
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"data":{"enablePullRequestAutoMerge":{"clientMutationId":"ok"}}}`,
+				), nil
+			case strings.Contains(body, "enqueuePullRequest"):
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"errors":[{"message":"merge queue unavailable"}]}`,
+				), nil
+			default:
+				t.Fatalf("unexpected GraphQL call: %s", body)
+				return nil, errUnexpectedGraphQLCall
+			}
+		case "/repos/owner/repo/pulls/42/merge":
+			return jsonResponse(
+				req,
+				http.StatusMethodNotAllowed,
+				`{"message":"merge not allowed"}`,
+			), nil
+		default:
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+	pr := PullRequest{
+		MergeStatus: MergeStatusBlocked,
+		NodeID:      "PR_node",
+		Number:      42,
+	}
+
+	result, err := actions.mergeOrAutomerge("owner", "repo", pr)
+	require.NoError(t, err)
+	require.Equal(t, resultAutomerged, result)
+}
+
+func TestAutomergeMutationsUseCurrentGitHubFieldNames(t *testing.T) {
+	t.Helper()
+
+	var seen []string
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/graphql" {
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+
+		body := readBody(t, req.Body)
+		switch {
+		case strings.Contains(body, "enablePullRequestAutoMerge"):
+			seen = append(seen, "enable")
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"enablePullRequestAutoMerge":{"clientMutationId":"ok"}}}`,
+			), nil
+		case strings.Contains(body, "disablePullRequestAutoMerge"):
+			seen = append(seen, "disable")
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"disablePullRequestAutoMerge":{"clientMutationId":"ok"}}}`,
+			), nil
+		default:
+			t.Fatalf("unexpected GraphQL call: %s", body)
+			return nil, errUnexpectedGraphQLCall
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+
+	require.NoError(t, actions.enableAutomerge("PR_node"))
+	require.NoError(t, actions.disableAutomerge("PR_node"))
+	require.Equal(t, []string{"enable", "disable"}, seen)
+}
+
 func TestExecuteForceMergePollsSelectedPRsConcurrently(t *testing.T) {
 	t.Helper()
 

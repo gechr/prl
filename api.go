@@ -626,7 +626,7 @@ func (a *ActionRunner) markDraft(nodeID string) error {
 func (a *ActionRunner) enableAutomerge(nodeID string) error {
 	return a.doNodeMutation(
 		`mutation EnableAutomerge($id: ID!) {
-			enablePullRequestAutomerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) {
+			enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: SQUASH}) {
 				clientMutationId
 			}
 		}`, nodeID)
@@ -644,7 +644,7 @@ func (a *ActionRunner) enqueuePR(nodeID string) error {
 func (a *ActionRunner) disableAutomerge(nodeID string) error {
 	return a.doNodeMutation(
 		`mutation DisableAutomerge($id: ID!) {
-			disablePullRequestAutomerge(input: {pullRequestId: $id}) {
+			disablePullRequestAutoMerge(input: {pullRequestId: $id}) {
 				clientMutationId
 			}
 		}`, nodeID)
