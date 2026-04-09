@@ -17,6 +17,7 @@ import (
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clib/complete"
 	"github.com/gechr/clog"
+	cspinner "github.com/gechr/clog/fx/spinner"
 	"github.com/gechr/prl/internal/prompt"
 	"github.com/gechr/prl/internal/term"
 )
@@ -182,6 +183,7 @@ func run() error {
 	}
 
 	s := buildSpinner(cfg.Spinner)
+	clog.SetSpinnerStyle(cspinner.Style{Frames: s.frames, Interval: s.interval})
 
 	// Watch mode: loop search+render with screen clear
 	if cli.Watch {
@@ -793,6 +795,9 @@ func runOnce(
 	}
 
 	// Non-interactive actions: pass PRs directly
+	if stopSpinner != nil {
+		stopSpinner()
+	}
 	if err := runActions(cli, rest, prs); err != nil {
 		return "", err
 	}

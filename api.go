@@ -747,11 +747,27 @@ func (a *ActionRunner) forceMerge(ctx context.Context, pr PullRequest, update *c
 	if err := a.waitForChecks(ctx, pr, update); err != nil {
 		return err
 	}
-
 	if update != nil {
 		update.Msg("Force-merging with bypass permissions").Send()
 	}
-	return a.forceMergePR(pr.NodeID)
+	for attempt := range forceMergeMaxRetries {
+		if err := a.forceMergePR(pr.NodeID); err == nil {
+			return nil
+		} else if attempt+1 >= forceMergeMaxRetries {
+			return err
+		}
+		// Checks may have been rescheduled after a recent push; wait for GitHub
+		// to register the new runs, then re-poll silently before retrying.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(forceMergeInterval):
+		}
+		if err := a.waitForChecks(ctx, pr, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkState represents the aggregate CI check state for a PR.
@@ -940,8 +956,10 @@ func checkSortOrder(c PRCheck) int {
 	}
 }
 
-// forceMergeInterval is the polling interval for check status.
-const forceMergeInterval = 10 * time.Second
+const (
+	forceMergeInterval   = 5 * time.Second // polling interval for check status
+	forceMergeMaxRetries = 3               // silent retry attempts for the merge mutation
+)
 
 // waitForChecks polls the PR's statusCheckRollup until checks pass, fail, or the PR is no longer open.
 func (a *ActionRunner) waitForChecks(
@@ -1011,12 +1029,19 @@ func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error
 
 	var result struct {
 		Node struct {
-			State   string `json:"state"`
-			Commits struct {
+			State            string `json:"state"`
+			MergeStateStatus string `json:"mergeStateStatus"`
+			Commits          struct {
 				Nodes []struct {
 					Commit struct {
 						StatusCheckRollup *struct {
-							State string `json:"state"`
+							State    string `json:"state"`
+							Contexts struct {
+								Nodes []struct {
+									Status string `json:"status"` // CheckRun: QUEUED, IN_PROGRESS, COMPLETED
+									State  string `json:"state"`  // StatusContext: ERROR, EXPECTED, FAILURE, PENDING, SUCCESS
+								} `json:"nodes"`
+							} `json:"contexts"`
 						} `json:"statusCheckRollup"`
 					} `json:"commit"`
 				} `json:"nodes"`
@@ -1029,10 +1054,19 @@ func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error
 			node(id: $id) {
 				... on PullRequest {
 					state
+					mergeStateStatus
 					commits(last: 1) {
 						nodes {
 							commit {
-								statusCheckRollup { state }
+								statusCheckRollup {
+									state
+									contexts(last: 100) {
+										nodes {
+											... on CheckRun { status }
+											... on StatusContext { state }
+										}
+									}
+								}
 							}
 						}
 					}
@@ -1048,15 +1082,51 @@ func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error
 
 	prState := result.Node.State
 
-	if len(result.Node.Commits.Nodes) == 0 {
-		return checksNone, prState, nil
+	var rollupState string
+	var contexts []struct {
+		Status string `json:"status"`
+		State  string `json:"state"`
 	}
-	rollup := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup
-	if rollup == nil {
-		return checksNone, prState, nil
+	if len(result.Node.Commits.Nodes) > 0 {
+		if r := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup; r != nil {
+			rollupState = r.State
+			contexts = r.Contexts.Nodes
+		}
 	}
 
-	switch rollup.State {
+	anyInProgress := false
+	for _, c := range contexts {
+		if c.Status == valueCIInProgress || c.Status == valueCIQueued ||
+			c.State == valueCIPending || c.State == valueCIExpected {
+			anyInProgress = true
+			break
+		}
+	}
+
+	// UNKNOWN means GitHub hasn't determined merge-readiness yet - checks are
+	// being rescheduled after a recent push. Treat it as pending regardless of
+	// what statusCheckRollup reports.
+	if result.Node.MergeStateStatus == valueCIUnknown {
+		return checksPending, prState, nil
+	}
+
+	// Empty rollup with a non-CLEAN merge state means checks are still being
+	// registered (e.g. immediately after a push). Treat as pending, not as
+	// "no checks configured".
+	if rollupState == "" {
+		if result.Node.MergeStateStatus == "CLEAN" {
+			return checksNone, prState, nil
+		}
+		return checksPending, prState, nil
+	}
+
+	// Even if the aggregate rollup shows SUCCESS, individual runs may still be
+	// IN_PROGRESS or QUEUED (e.g. newly scheduled after a push). Wait for them.
+	if anyInProgress {
+		return checksPending, prState, nil
+	}
+
+	switch rollupState {
 	case valueCISuccess:
 		return checksSuccess, prState, nil
 	case valueCIFailure, valueCIError:
@@ -1066,6 +1136,26 @@ func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error
 	default:
 		return checksNone, prState, nil
 	}
+}
+
+// retryForceMergePR calls forceMergePR up to forceMergeMaxRetries times with a delay
+// between attempts. Used by the TUI path which does not poll checks first.
+func (a *ActionRunner) retryForceMergePR(ctx context.Context, nodeID string) error {
+	var lastErr error
+	for attempt := range forceMergeMaxRetries {
+		lastErr = a.forceMergePR(nodeID)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt+1 < forceMergeMaxRetries {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(forceMergeInterval):
+			}
+		}
+	}
+	return lastErr
 }
 
 // forceMergePR merges a PR via the mergePullRequest GraphQL mutation with SQUASH method.

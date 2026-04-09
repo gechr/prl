@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -474,7 +475,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			m.confirmPrompt = "Force-merge " + styledRef(&targets[0].pr) + "?"
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
-				err := actions.forceMergePR(t.pr.NodeID)
+				err := actions.retryForceMergePR(context.Background(), t.pr.NodeID)
 				return actionMsg{
 					index:  t.index,
 					key:    makePRKey(t.pr),
@@ -491,7 +492,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 					batch,
 					tuiActionForceMerged,
 					func(a *ActionRunner, pr PullRequest) error {
-						return a.forceMergePR(pr.NodeID)
+						return a.retryForceMergePR(context.Background(), pr.NodeID)
 					},
 				)
 			}
