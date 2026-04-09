@@ -2622,32 +2622,58 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
 }
 
-// inlineHelpKey tries to embed a single-letter key into its description
-// (e.g. "a" + "approve" → "approve" with 'a' key-styled). Returns false
-// if the key isn't a single letter or doesn't appear in the description.
+// inlineHelpKey tries to embed a single-letter key into its description.
+// It supports plain keys ("a" + "approve" -> "approve" with 'a' key-styled)
+// and modified keys ("alt+c" + "copy" -> "alt+copy" with the prefix and
+// leading 'c' key-styled). Returns false if the key doesn't end in a single
+// ASCII letter or that letter doesn't appear in the description.
 func (m tuiModel) inlineHelpKey(p helpPair, helpText lg.Style) (string, bool) {
-	if len(p.key) != 1 {
+	keyPrefix, keyLetter, ok := splitInlineHelpKey(p.key)
+	if !ok {
 		return "", false
 	}
-	ch := p.key[0] | 0x20 //nolint:mnd // ASCII lowercase
-	if ch < 'a' || ch > 'z' {
-		return "", false
-	}
-	idx := strings.Index(strings.ToLower(p.desc), strings.ToLower(p.key))
+	idx := strings.Index(strings.ToLower(p.desc), strings.ToLower(keyLetter))
 	if idx < 0 {
 		return "", false
 	}
 	before := p.desc[:idx]
 	after := p.desc[idx+1:]
 	var part string
-	if before != "" {
-		part = helpText.Render(before)
+	if keyPrefix != "" {
+		part = m.styles.helpKey.Render(keyPrefix)
 	}
-	part += m.styles.helpKey.Render(p.key)
+	if before != "" {
+		part += helpText.Render(before)
+	}
+	part += m.styles.helpKey.Render(keyLetter)
 	if after != "" {
 		part += helpText.Render(after)
 	}
 	return part, true
+}
+
+func splitInlineHelpKey(key string) (string, string, bool) {
+	if len(key) == 1 {
+		ch := key[0] | 0x20 //nolint:mnd // ASCII lowercase
+		if ch < 'a' || ch > 'z' {
+			return "", "", false
+		}
+		return "", key, true
+	}
+
+	idx := strings.LastIndex(key, "+")
+	if idx <= 0 || idx == len(key)-1 {
+		return "", "", false
+	}
+	letter := key[idx+1:]
+	if len(letter) != 1 {
+		return "", "", false
+	}
+	ch := letter[0] | 0x20 //nolint:mnd // ASCII lowercase
+	if ch < 'a' || ch > 'z' {
+		return "", "", false
+	}
+	return key[:idx+1], letter, true
 }
 
 func (m tuiModel) renderHelp(pairs []helpPair) string {

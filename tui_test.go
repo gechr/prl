@@ -101,6 +101,44 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	require.Contains(t, overlay, "shift+↑↓")
 }
 
+func TestInlineHelpKeyEmbedsModifiedSingleLetterShortcut(t *testing.T) {
+	m := tuiModel{styles: newTuiStyles()}
+
+	rendered, ok := m.inlineHelpKey(
+		helpPair{key: "alt+c", desc: "copy"},
+		m.styles.helpText,
+	)
+
+	require.True(t, ok)
+	require.Equal(
+		t,
+		m.styles.helpKey.Render("alt+")+
+			m.styles.helpKey.Render("c")+
+			m.styles.helpText.Render("opy"),
+		rendered,
+	)
+	require.Equal(t, "alt+copy", ansi.Strip(rendered))
+}
+
+func TestInlineHelpKeyEmbedsModifiedCtrlShiftChord(t *testing.T) {
+	m := tuiModel{styles: newTuiStyles()}
+
+	rendered, ok := m.inlineHelpKey(
+		helpPair{key: "ctrl+shift+t", desc: "toggle"},
+		m.styles.helpText,
+	)
+
+	require.True(t, ok)
+	require.Equal(
+		t,
+		m.styles.helpKey.Render("ctrl+shift+")+
+			m.styles.helpKey.Render("t")+
+			m.styles.helpText.Render("oggle"),
+		rendered,
+	)
+	require.Equal(t, "ctrl+shift+toggle", ansi.Strip(rendered))
+}
+
 func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) {
 	m := tuiModel{
 		confirmInput: newConfirmInput(),
