@@ -152,7 +152,7 @@ func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
 	if len(failed) == 0 {
 		clog.Info().
 			Int("count", len(prs)).
-			Msgf("All %s force-merged", pluralize(len(prs), "PR", "PRs"))
+			Msg("All PRs force-merged")
 	}
 }
 

@@ -44,16 +44,20 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	ownerVals := filterAllValue(cli.Owner.Values)
 
 	// Repo filter
-	if cli.Repo != "" {
-		repo := cli.Repo
-		if !strings.Contains(repo, "/") && len(ownerVals) == 1 {
-			repo = ownerVals[0] + "/" + repo
+	repos := cli.Repo.Values
+	if len(repos) > 0 {
+		qualified := make([]string, len(repos))
+		for i, repo := range repos {
+			if !strings.Contains(repo, "/") && len(ownerVals) == 1 {
+				repo = ownerVals[0] + "/" + repo
+			}
+			qualified[i] = repo
 		}
-		qualifiers = append(qualifiers, "repo:"+repo)
+		qualifiers = append(qualifiers, buildORQualifier("repo", qualified))
 	}
 
 	// Owner filter
-	if cli.Repo == "" {
+	if len(repos) == 0 {
 		if q := buildOwnerQualifier(ownerVals); q != "" {
 			qualifiers = append(qualifiers, q)
 		}

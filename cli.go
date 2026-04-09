@@ -26,7 +26,7 @@ type CLI struct {
 
 	// Filter flags
 	Owner           CSVFlag  `name:"owner"       help:"Limit to GitHub owner"                                        short:"O"                                                                                    clib:"terse='Owner',group='Filters/1'"`
-	Repo            string   `name:"repo"        help:"Limit to specific repo"                                       short:"R" aliases:"repository"                                                               clib:"terse='Repository',complete='predictor=repo',group='Filters/1'"`
+	Repo            CSVFlag  `name:"repo"        help:"Limit to specific repo(s)"                                    short:"R" aliases:"repository"                                                               clib:"terse='Repository',complete='predictor=repo,comma',group='Filters/1'"`
 	Filter          []string `name:"filter"      help:"Search qualifier"                                             short:"f"                                                                                    clib:"terse='Search qualifier',group='Filters/2'"`
 	Match           string   `name:"match"       help:"Restrict text search to field"                                                                                          placeholder:"<field>"              clib:"terse='Search field',complete='values=title body comments',group='Filters/2',enum='title,body,comments',highlight='t,b,c',default='title'"`
 	Author          *CSVFlag `name:"author"      help:"Filter by author"                                             short:"a"                                                 placeholder:"<user>"               clib:"terse='Author',complete='predictor=author',order=keep,group='Filters/3'"`
