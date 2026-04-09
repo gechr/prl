@@ -17,7 +17,7 @@ require (
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/cli/go-gh/v2 v2.13.0
-	github.com/gechr/clib v0.3.1
+	github.com/gechr/clib v0.3.2
 	github.com/gechr/clog v0.8.5
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.0
@@ -255,7 +255,7 @@ require (
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
