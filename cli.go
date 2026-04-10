@@ -302,6 +302,8 @@ func (c *CLI) Normalize(cfg *Config) {
 	// Normalize owner
 	c.Owner.Values = normalizeCSV(c.Owner.Values)
 
+	c.Comment = strings.TrimSpace(c.Comment)
+
 	// --since is a hidden alias for --created
 	if c.Since != "" && c.Created == "" {
 		c.Created = c.Since
