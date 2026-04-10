@@ -210,6 +210,12 @@ func (c *CLI) Validate() error {
 	if c.Since != "" && c.Created != "" {
 		return fmt.Errorf("--since and --created are mutually exclusive")
 	}
+	for _, f := range c.Filter {
+		lower := strings.ToLower(f)
+		if strings.HasPrefix(lower, "type:") || strings.HasPrefix(lower, "-type:") {
+			return fmt.Errorf("--filter %q conflicts with the implicit type:pr qualifier", f)
+		}
+	}
 
 	// Validate limit
 	if c.Limit != nil && *c.Limit <= 0 {
