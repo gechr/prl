@@ -1,8 +1,6 @@
 # prl
 
-Search, filter, display, and act on GitHub pull requests across one or more owners.
-
-`prl` wraps GitHub search with opinionated defaults, rich terminal output, an interactive TUI, bulk actions, optional plugin-backed resolution/completion, and Slack sending.
+A Swiss Army knife for GitHub pull requests.
 
 ## Install
 
@@ -18,13 +16,7 @@ brew install gechr/tap/prl
 go install github.com/gechr/prl@latest
 ```
 
-Runtime requirements:
-
-- [`gh`](https://cli.github.com/) must be installed and authenticated
-- Go `1.26+` is required if you build from source
-- Optional plugins must be available on `PATH` as `prl-plugin-*`, or configured explicitly
-
-`make install` runs `go install` and then installs shell completion.
+Requires [`gh`](https://cli.github.com/) (installed and authenticated). Go `1.26+` if building from source.
 
 ## Quickstart
 
@@ -34,15 +26,9 @@ prl --init
 
 This writes `~/.config/prl/config.yaml`. Edit it to set defaults such as owners, authors, output mode, plugin, and TUI behavior.
 
-## Usage
-
-```text
-prl [flags] [query...]
-```
-
-There are no subcommands. Everything is driven by flags plus optional free-text query terms.
-
 ## Examples
+
+Everything is flags plus optional free-text query terms - no subcommands.
 
 ```sh
 # Your open PRs
@@ -181,13 +167,9 @@ prl -o json
 
 ## TUI
 
-`--interactive` opens a full-screen browser for inspecting PRs, filtering results, and triggering actions without leaving the terminal.
-
-The TUI also supports configurable AI review launchers through `tui.review.*` settings in `config.yaml`.
+`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`.
 
 ## Date Syntax
-
-Relative durations, exact dates, and comparison operators are supported:
 
 ```text
 2weeks      # since 2 weeks ago (>=)
@@ -204,7 +186,7 @@ Units: `m`/`min`/`mins`/`minute`/`minutes`, `h`/`hr`/`hrs`/`hour`/`hours`, `d`/`
 
 ## Drift
 
-Drift measures the gap between PR creation and last update. The default operator is `<=`.
+Gap between PR creation and last update. Default operator is `<=`.
 
 ```text
 --drift 0         # never updated after creation
@@ -212,13 +194,13 @@ Drift measures the gap between PR creation and last update. The default operator
 --drift '>1week'  # updated more than 1 week after creation
 ```
 
-Drift also supports seconds: `s`, `sec`, `secs`, `second`, `seconds`.
+Also supports seconds: `s`, `sec`, `secs`, `second`, `seconds`.
 
 ## Table Columns
 
 Default columns: `index`, `title`, `ref`, `created`, `updated`.
 
-`author` is added automatically when multiple authors are in play, such as `--team`.
+`author` is added automatically when multiple authors are in play (e.g. `--team`).
 
 Available columns: `index`, `owner`, `ref`, `repo`, `number`, `title`, `labels`, `author`, `state`, `created`, `updated`, `url`
 
@@ -226,19 +208,11 @@ Available columns: `index`, `owner`, `ref`, `repo`, `number`, `title`, `labels`,
 prl --columns title,ref,author,labels
 ```
 
-In table mode, the default sort is automatically shifted to `updated` unless you explicitly pass `--sort`.
+In table mode, sort defaults to `updated` unless `--sort` is set explicitly.
 
 ## Configuration
 
-The config file lives at `~/.config/prl/config.yaml`.
-
-Load order:
-
-1. Hardcoded defaults
-2. `~/.config/prl/config.yaml`
-3. `PRL_*` environment variables
-
-Example:
+Lives at `~/.config/prl/config.yaml`. Overridden by `PRL_*` environment variables.
 
 ```yaml
 default:
@@ -300,22 +274,13 @@ authors:
   jdoe: Jane Doe
 ```
 
-Notes:
-
-- If `plugin` is empty, `prl` auto-discovers `prl-plugin-*` binaries on `PATH`
-- `--team`, `--topic`, Slack sending, and richer completion all rely on the plugin interface
-- `vcs` controls whether `--clone` uses `git` or `jj`
-- Supported AI review prompt placeholders are `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, and `{title}`
+- `plugin`: if empty, auto-discovers `prl-plugin-*` on `PATH`
+- `vcs`: controls whether `--clone` uses `git` or `jj`
+- AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
 
 ## Plugins
 
-Plugins are external binaries. `prl` can call them for:
-
-- completion: `author`, `team`, `repo`, `topic`, `slack-recipient`
-- resolution: `team`, `topic`
-- Slack sending
-
-If more than one `prl-plugin-*` binary is present on `PATH`, set `plugin:` explicitly in the config.
+External binaries (`prl-plugin-*`) that provide completion (`author`, `team`, `repo`, `topic`, `slack-recipient`), resolution (`team`, `topic`), and Slack sending. Set `plugin:` in config if multiple are on `PATH`.
 
 ## Development
 
