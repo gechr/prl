@@ -274,6 +274,15 @@ func (c *CLI) Validate() error {
 			)
 		}
 	}
+	switch c.Color {
+	case "", "auto", "always", "never":
+		// valid
+	default:
+		return fmt.Errorf(
+			"invalid --color value %q (valid: auto, always, never)",
+			c.Color,
+		)
+	}
 
 	return nil
 }
