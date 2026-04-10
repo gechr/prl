@@ -334,7 +334,7 @@ func TestBuildORQualifier_Two(t *testing.T) {
 
 func TestBuildOwnerQualifier(t *testing.T) {
 	got := buildOwnerQualifier([]string{"acme", "octocat"})
-	require.Equal(t, "(org:acme OR user:acme OR org:octocat OR user:octocat)", got)
+	require.Equal(t, "(user:acme OR user:octocat)", got)
 }
 
 func TestBuildExcludedOwnerQualifiers(t *testing.T) {
@@ -364,7 +364,7 @@ func TestBuildSearchQuery_UsesOwnerQualifier(t *testing.T) {
 		Owner: CSVFlag{Values: []string{"acme"}},
 	}, &Config{})
 	require.NoError(t, err)
-	require.Contains(t, params.Query, "(org:acme OR user:acme)")
+	require.Equal(t, "type:pr archived:false state:open user:acme", params.Query)
 }
 
 func TestBuildSearchQuery_TopicRequiresPlugin(t *testing.T) {

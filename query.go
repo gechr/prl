@@ -305,18 +305,19 @@ func buildORQualifier(qualifier string, values []string) string {
 	return "(" + strings.Join(parts, " OR ") + ")"
 }
 
-// buildOwnerQualifier constructs a GitHub search OR expression that matches
-// either an organization or a user owner for each provided value.
+// buildOwnerQualifier constructs a GitHub search owner expression.
+// GitHub's search API accepts user:<owner> for both personal accounts and orgs.
 func buildOwnerQualifier(values []string) string {
 	if len(values) == 0 {
 		return ""
 	}
 
-	const ownerQualifierKinds = 2
-
-	parts := make([]string, 0, len(values)*ownerQualifierKinds)
+	parts := make([]string, 0, len(values))
 	for _, v := range values {
-		parts = append(parts, "org:"+v, "user:"+v)
+		parts = append(parts, "user:"+v)
+	}
+	if len(parts) == 1 {
+		return parts[0]
 	}
 	return "(" + strings.Join(parts, " OR ") + ")"
 }
