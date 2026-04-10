@@ -608,17 +608,36 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 		return nil, err
 	}
 
-	// Post-fetch filters: --closed-by, --merged-by
-	prs = applyTimelineFilters(r.rest, r.cli, prs)
-
 	// Determine if post-enrichment filters require GraphQL data.
 	needsEnrich := r.cli.PRState() == StateReady || r.cli.CIStatus() != CINone
+	closedAllowed, err := resolveTimelineLogins(r.rest, r.cli.ClosedBy.Values)
+	if err != nil {
+		clog.Debug().Err(err).Msg("timeline filters failed")
+		closedAllowed = map[string]bool{}
+	}
+	mergedAllowed, err := resolveTimelineLogins(r.rest, r.cli.MergedBy.Values)
+	if err != nil {
+		clog.Debug().Err(err).Msg("timeline filters failed")
+		mergedAllowed = map[string]bool{}
+	}
+	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
+	needMergeStatus := len(prs) > 0 && (!r.cli.Quick || needsEnrich)
 
-	if len(prs) > 0 && (!r.cli.Quick || needsEnrich) {
+	if len(prs) > 0 && (needTimeline || needMergeStatus) {
 		if gql, gqlErr := newGraphQLClient(withDebug(r.cli.Debug)); gqlErr == nil {
-			enrichMergeStatus(gql, prs)
+			actors, hydrateErr := hydrateListMetadata(gql, prs, listMetadataRequest{
+				mergeStatus:    needMergeStatus,
+				timelineClosed: len(closedAllowed) > 0,
+				timelineMerged: len(mergedAllowed) > 0,
+			})
+			if hydrateErr != nil {
+				clog.Debug().Err(hydrateErr).Msg("list metadata hydration failed")
+			} else if needTimeline {
+				prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
+			}
 		}
-	} else if len(prs) > 0 {
+	}
+	if len(prs) > 0 && !needMergeStatus {
 		for i := range prs {
 			if prs[i].State == valueOpen {
 				prs[i].MergeStatus = MergeStatusBlocked

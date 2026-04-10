@@ -289,33 +289,6 @@ func filterByAutomerge(
 
 // applyTimelineFilters applies --closed-by and --merged-by post-fetch filters.
 // Errors are logged and swallowed so the TUI refresh path can call this without error handling.
-func applyTimelineFilters(rest *api.RESTClient, cli *CLI, prs []PullRequest) []PullRequest {
-	if len(prs) == 0 {
-		return prs
-	}
-	needsGQL := len(cli.ClosedBy.Values) > 0 || len(cli.MergedBy.Values) > 0
-	if !needsGQL {
-		return prs
-	}
-	gql, err := newGraphQLClient(withDebug(cli.Debug))
-	if err != nil {
-		clog.Debug().Err(err).Msg("skipping timeline filters")
-		return prs
-	}
-	filtered, fErr := filterByTimelineActors(
-		rest,
-		gql,
-		prs,
-		cli.ClosedBy.Values,
-		cli.MergedBy.Values,
-	)
-	if fErr != nil {
-		clog.Debug().Err(fErr).Msg("timeline filters failed")
-		return prs
-	}
-	return filtered
-}
-
 func resolveTimelineLogins(rest *api.RESTClient, logins []string) (map[string]bool, error) {
 	if len(logins) == 0 {
 		return map[string]bool{}, nil
@@ -342,6 +315,334 @@ func resolveTimelineLogins(rest *api.RESTClient, logins []string) (map[string]bo
 	}
 
 	return resolved, nil
+}
+
+type listMetadataRequest struct {
+	automerge      bool
+	mergeStatus    bool
+	timelineClosed bool
+	timelineMerged bool
+}
+
+type listTimelineNode struct {
+	ID     string `json:"id"`
+	Closed struct {
+		Nodes []struct {
+			Actor struct {
+				Login string `json:"login"`
+			} `json:"actor"`
+		} `json:"nodes"`
+	} `json:"closed"`
+	Merged struct {
+		Nodes []struct {
+			Actor struct {
+				Login string `json:"login"`
+			} `json:"actor"`
+		} `json:"nodes"`
+	} `json:"merged"`
+}
+
+type listAutomergeNode struct {
+	ID               string `json:"id"`
+	AutomergeRequest *struct {
+		EnabledAt string `json:"enabledAt"`
+	} `json:"autoMergeRequest"`
+}
+
+type listMergeStatusNode struct {
+	ID               string  `json:"id"`
+	ReviewDecision   *string `json:"reviewDecision"`
+	AutomergeRequest *struct {
+		EnabledAt string `json:"enabledAt"`
+	} `json:"autoMergeRequest"`
+	Commits struct {
+		Nodes []struct {
+			Commit struct {
+				StatusCheckRollup *struct {
+					State string `json:"state"`
+				} `json:"statusCheckRollup"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"commits"`
+}
+
+func collectPRNodeIDs(prs []PullRequest) []string {
+	ids := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		if pr.NodeID == "" {
+			continue
+		}
+		ids = append(ids, pr.NodeID)
+	}
+	return ids
+}
+
+func collectMergeStatusNodeIDs(prs []PullRequest) []string {
+	openIDs := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		if pr.State != valueOpen || pr.NodeID == "" {
+			continue
+		}
+		openIDs = append(openIDs, pr.NodeID)
+	}
+	if len(openIDs) <= maxEnrichCount {
+		return openIDs
+	}
+
+	clog.Debug().
+		Int("open", len(openIDs)).
+		Int("max", maxEnrichCount).
+		Msg("Enriching most recent PRs only, too expensive")
+
+	return openIDs[len(openIDs)-maxEnrichCount:]
+}
+
+func resolveMergeStatus(ciState string, reviewDecision *string) MergeStatus {
+	switch {
+	case ciState == valueCIFailure || ciState == valueCIError:
+		return MergeStatusCIFailed
+	case ciState == valueCIPending || ciState == valueCIExpected:
+		return MergeStatusCIPending
+	case ciState == valueCISuccess &&
+		reviewDecision != nil &&
+		*reviewDecision == valueReviewApproved:
+		return MergeStatusReady
+	default:
+		return MergeStatusBlocked
+	}
+}
+
+func applyMergeStatusResult(
+	prs []PullRequest,
+	openIdx map[string][]int,
+	nodeID string,
+	ciState string,
+	reviewDecision *string,
+	automergeEnabled bool,
+) {
+	indices, ok := openIdx[nodeID]
+	if !ok {
+		return
+	}
+
+	review := ""
+	if reviewDecision != nil {
+		review = *reviewDecision
+	}
+	status := resolveMergeStatus(ciState, reviewDecision)
+	for _, idx := range indices {
+		prs[idx].MergeStatus = status
+		prs[idx].Automerge = automergeEnabled
+		prs[idx].automergeLoaded = true
+		prs[idx].ReviewDecision = review
+		prs[idx].reviewDecisionLoaded = true
+	}
+}
+
+func applyListAutomergeNodes(prs []PullRequest, ids []string, nodes []listAutomergeNode) {
+	if len(ids) == 0 {
+		return
+	}
+
+	enabled := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		enabled[id] = false
+	}
+	for _, node := range nodes {
+		enabled[node.ID] = node.AutomergeRequest != nil
+	}
+	for i := range prs {
+		automerge, ok := enabled[prs[i].NodeID]
+		if !ok {
+			continue
+		}
+		prs[i].Automerge = automerge
+		prs[i].automergeLoaded = true
+	}
+}
+
+func applyListMergeStatusNodes(prs []PullRequest, nodes []listMergeStatusNode) {
+	if len(nodes) == 0 {
+		return
+	}
+
+	openIdx := make(map[string][]int)
+	for i := range prs {
+		if prs[i].State != valueOpen || prs[i].NodeID == "" {
+			continue
+		}
+		openIdx[prs[i].NodeID] = append(openIdx[prs[i].NodeID], i)
+	}
+
+	for _, node := range nodes {
+		var ciState string
+		if len(node.Commits.Nodes) > 0 {
+			if rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+				ciState = rollup.State
+			}
+		}
+		applyMergeStatusResult(
+			prs,
+			openIdx,
+			node.ID,
+			ciState,
+			node.ReviewDecision,
+			node.AutomergeRequest != nil,
+		)
+	}
+}
+
+func timelineActorsFromNodes(nodes []listTimelineNode) timelineActors {
+	actors := timelineActors{
+		closed: make(map[string]string, len(nodes)),
+		merged: make(map[string]string, len(nodes)),
+	}
+	for _, node := range nodes {
+		if len(node.Closed.Nodes) > 0 {
+			actors.closed[node.ID] = strings.ToLower(node.Closed.Nodes[0].Actor.Login)
+		}
+		if len(node.Merged.Nodes) > 0 {
+			actors.merged[node.ID] = strings.ToLower(node.Merged.Nodes[0].Actor.Login)
+		}
+	}
+	return actors
+}
+
+// hydrateListMetadata batches the list-view GraphQL lookups needed for
+// automerge filtering, timeline filtering, and merge-status enrichment.
+func hydrateListMetadata(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	req listMetadataRequest,
+) (timelineActors, error) {
+	if len(prs) == 0 {
+		return timelineActors{
+			closed: map[string]string{},
+			merged: map[string]string{},
+		}, nil
+	}
+
+	timelineIDs := []string{}
+	if req.timelineClosed || req.timelineMerged {
+		timelineIDs = collectPRNodeIDs(prs)
+	}
+
+	mergeIDs := []string{}
+	if req.mergeStatus {
+		mergeIDs = collectMergeStatusNodeIDs(prs)
+	}
+	mergeIDSet := make(map[string]bool, len(mergeIDs))
+	for _, id := range mergeIDs {
+		mergeIDSet[id] = true
+	}
+
+	automergeIDs := []string{}
+	if req.automerge {
+		for _, pr := range prs {
+			if pr.NodeID == "" || mergeIDSet[pr.NodeID] {
+				continue
+			}
+			automergeIDs = append(automergeIDs, pr.NodeID)
+		}
+	}
+
+	var (
+		queryDefs  []string
+		queryRoots []string
+		variables  = make(map[string]any)
+	)
+
+	if len(timelineIDs) > 0 {
+		queryDefs = append(queryDefs, "$timelineIDs: [ID!]!")
+		var fields []string
+		if req.timelineClosed {
+			fields = append(fields, `closed: timelineItems(itemTypes: [CLOSED_EVENT], last: 1) {
+				nodes {
+					... on ClosedEvent {
+						actor { login }
+					}
+				}
+			}`)
+		}
+		if req.timelineMerged {
+			fields = append(fields, `merged: timelineItems(itemTypes: [MERGED_EVENT], last: 1) {
+				nodes {
+					... on MergedEvent {
+						actor { login }
+					}
+				}
+			}`)
+		}
+		queryRoots = append(
+			queryRoots,
+			fmt.Sprintf(`timelineNodes: nodes(ids: $timelineIDs) {
+				... on PullRequest {
+					id
+					%s
+				}
+			}`, strings.Join(fields, nl)),
+		)
+		variables["timelineIDs"] = timelineIDs
+	}
+
+	if len(automergeIDs) > 0 {
+		queryDefs = append(queryDefs, "$automergeIDs: [ID!]!")
+		queryRoots = append(queryRoots, `automergeNodes: nodes(ids: $automergeIDs) {
+			... on PullRequest {
+				id
+				autoMergeRequest { enabledAt }
+			}
+		}`)
+		variables["automergeIDs"] = automergeIDs
+	}
+
+	if len(mergeIDs) > 0 {
+		queryDefs = append(queryDefs, "$mergeIDs: [ID!]!")
+		queryRoots = append(queryRoots, `mergeNodes: nodes(ids: $mergeIDs) {
+			... on PullRequest {
+				id
+				reviewDecision
+				autoMergeRequest { enabledAt }
+				commits(last: 1) {
+					nodes {
+						commit {
+							statusCheckRollup { state }
+						}
+					}
+				}
+			}
+		}`)
+		variables["mergeIDs"] = mergeIDs
+	}
+
+	if len(queryRoots) == 0 {
+		return timelineActors{
+			closed: map[string]string{},
+			merged: map[string]string{},
+		}, nil
+	}
+
+	var result struct {
+		TimelineNodes  []listTimelineNode    `json:"timelineNodes"`
+		AutomergeNodes []listAutomergeNode   `json:"automergeNodes"`
+		MergeNodes     []listMergeStatusNode `json:"mergeNodes"`
+	}
+
+	query := fmt.Sprintf(
+		`query ListMetadata(%s) {
+			%s
+		}`,
+		strings.Join(queryDefs, ", "),
+		strings.Join(queryRoots, nl),
+	)
+	if err := gql.Do(query, variables, &result); err != nil {
+		return timelineActors{}, fmt.Errorf("querying list metadata: %w", err)
+	}
+
+	applyListAutomergeNodes(prs, automergeIDs, result.AutomergeNodes)
+	applyListMergeStatusNodes(prs, result.MergeNodes)
+
+	return timelineActorsFromNodes(result.TimelineNodes), nil
 }
 
 func filterByTimelineActorsLoaded(
@@ -557,42 +858,20 @@ func enrichMergeStatus(gql *api.GraphQLClient, prs []PullRequest) {
 	}
 
 	for _, node := range result.Nodes {
-		indices, ok := openIdx[node.ID]
-		if !ok {
-			continue
-		}
-
 		var ciState string
 		if len(node.Commits.Nodes) > 0 {
 			if rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
 				ciState = rollup.State
 			}
 		}
-
-		var status MergeStatus
-		switch {
-		case ciState == valueCIFailure || ciState == valueCIError:
-			status = MergeStatusCIFailed
-		case ciState == valueCIPending || ciState == valueCIExpected:
-			status = MergeStatusCIPending
-		case ciState == valueCISuccess && node.ReviewDecision != nil && *node.ReviewDecision == valueReviewApproved:
-			status = MergeStatusReady
-		default:
-			status = MergeStatusBlocked
-		}
-
-		automerge := node.AutomergeRequest != nil
-		reviewDecision := ""
-		if node.ReviewDecision != nil {
-			reviewDecision = *node.ReviewDecision
-		}
-		for _, idx := range indices {
-			prs[idx].MergeStatus = status
-			prs[idx].Automerge = automerge
-			prs[idx].automergeLoaded = true
-			prs[idx].ReviewDecision = reviewDecision
-			prs[idx].reviewDecisionLoaded = true
-		}
+		applyMergeStatusResult(
+			prs,
+			openIdx,
+			node.ID,
+			ciState,
+			node.ReviewDecision,
+			node.AutomergeRequest != nil,
+		)
 	}
 }
 

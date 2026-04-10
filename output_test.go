@@ -1,9 +1,11 @@
 package main
 
 import (
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/stretchr/testify/require"
 )
 
@@ -150,6 +152,70 @@ func TestFilterByTimelineActorsLoaded(t *testing.T) {
 	)
 	require.Len(t, filtered, 1)
 	require.Equal(t, "pr-1", filtered[0].NodeID)
+}
+
+func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
+	t.Helper()
+
+	var calls int
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		calls++
+
+		body := readBody(t, req.Body)
+		require.Contains(t, body, "timelineNodes: nodes")
+		require.Contains(t, body, "automergeNodes: nodes")
+		require.Contains(t, body, "mergeNodes: nodes")
+
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{
+				"timelineNodes":[
+					{"id":"PR_1","closed":{"nodes":[{"actor":{"login":"alice"}}]},"merged":{"nodes":[]}},
+					{"id":"PR_2","closed":{"nodes":[]},"merged":{"nodes":[{"actor":{"login":"bob"}}]}}
+				],
+				"automergeNodes":[
+					{"id":"PR_2","autoMergeRequest":{"enabledAt":"2026-04-10T00:00:00Z"}}
+				],
+				"mergeNodes":[
+					{"id":"PR_1","reviewDecision":"APPROVED","autoMergeRequest":null,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
+				]
+			}}`,
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{
+		{NodeID: "PR_1", State: valueOpen},
+		{NodeID: "PR_2", State: valueClosed},
+	}
+
+	actors, err := hydrateListMetadata(gql, prs, listMetadataRequest{
+		automerge:      true,
+		mergeStatus:    true,
+		timelineClosed: true,
+		timelineMerged: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+
+	require.Equal(t, MergeStatusReady, prs[0].MergeStatus)
+	require.True(t, prs[0].automergeLoaded)
+	require.Equal(t, valueReviewApproved, prs[0].ReviewDecision)
+	require.True(t, prs[0].reviewDecisionLoaded)
+
+	require.True(t, prs[1].Automerge)
+	require.True(t, prs[1].automergeLoaded)
+
+	require.Equal(t, "alice", actors.closed["PR_1"])
+	require.Equal(t, "bob", actors.merged["PR_2"])
 }
 
 func TestSortPRs(t *testing.T) {
