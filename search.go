@@ -68,13 +68,25 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 
 	// Date filters
 	if cli.Created != "" {
-		qualifiers = append(qualifiers, "created:"+parseDate(cli.Created))
+		d, dErr := parseDate(cli.Created)
+		if dErr != nil {
+			return nil, fmt.Errorf("invalid --created value: %w", dErr)
+		}
+		qualifiers = append(qualifiers, "created:"+d)
 	}
 	if cli.Updated != "" {
-		qualifiers = append(qualifiers, "updated:"+parseDate(cli.Updated))
+		d, dErr := parseDate(cli.Updated)
+		if dErr != nil {
+			return nil, fmt.Errorf("invalid --updated value: %w", dErr)
+		}
+		qualifiers = append(qualifiers, "updated:"+d)
 	}
 	if cli.Merged != "" {
-		qualifiers = append(qualifiers, "merged:"+parseDate(cli.Merged))
+		d, dErr := parseDate(cli.Merged)
+		if dErr != nil {
+			return nil, fmt.Errorf("invalid --merged value: %w", dErr)
+		}
+		qualifiers = append(qualifiers, "merged:"+d)
 	}
 
 	// Review filter - review:required only makes sense for open PRs (it means

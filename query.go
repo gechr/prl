@@ -31,15 +31,15 @@ func flipOperator(op string) string {
 }
 
 // parseDate converts human-readable durations to ISO 8601 dates for GitHub's search API.
-func parseDate(input string) string {
+func parseDate(input string) (string, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
-		return ""
+		return "", nil
 	}
 
 	// Passthrough: already ISO format
 	if isoDateRe.MatchString(input) {
-		return input
+		return input, nil
 	}
 
 	// Extract operator prefix
@@ -54,12 +54,10 @@ func parseDate(input string) string {
 	now := time.Now().UTC()
 	switch strings.ToLower(value) {
 	case "today":
-		// today always hardcodes >=
-		return ">=" + now.Format("2006-01-02")
+		return ">=" + now.Format("2006-01-02"), nil
 	case "yesterday":
-		// yesterday has no default operator
 		y := now.AddDate(0, 0, -1)
-		return op + y.Format("2006-01-02")
+		return op + y.Format("2006-01-02"), nil
 	}
 
 	// Compound relative duration parsing (e.g. "2weeks", "1y6mo", "1d12h")
@@ -74,19 +72,22 @@ func parseDate(input string) string {
 	for len(s) > 0 {
 		seg := driftSegmentRe.FindStringSubmatch(s)
 		if seg == nil {
-			return input // unknown format: passthrough
+			return "", fmt.Errorf("invalid date specification: %s", input)
 		}
 
 		n, err := strconv.Atoi(seg[1])
 		if err != nil {
-			return input
+			return "", fmt.Errorf("invalid date specification: %s", input)
 		}
 
 		unit := seg[2]
 		mult := driftUnitMultiplier(unit)
 
 		if parsed && mult >= prevMultiplier {
-			return input // ordering violation: passthrough
+			return "", fmt.Errorf(
+				"invalid date specification: units must be in descending order: %s",
+				input,
+			)
 		}
 
 		switch unit {
@@ -115,7 +116,7 @@ func parseDate(input string) string {
 	}
 
 	if !parsed {
-		return input
+		return "", fmt.Errorf("invalid date specification: %s", input)
 	}
 
 	t := now.AddDate(-years, -months, -days)
@@ -127,14 +128,13 @@ func parseDate(input string) string {
 	if op != "" {
 		op = flipOperator(op)
 	} else {
-		// Default: >= (since N ago)
 		op = ">="
 	}
 
 	if useDateTime {
-		return op + t.Format("2006-01-02T15:04:05Z")
+		return op + t.Format("2006-01-02T15:04:05Z"), nil
 	}
-	return op + t.Format("2006-01-02")
+	return op + t.Format("2006-01-02"), nil
 }
 
 var (

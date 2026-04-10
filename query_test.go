@@ -21,40 +21,46 @@ func TestParseDate_ISO_Passthrough(t *testing.T) {
 		{"2024-01-15T10:30:00", "2024-01-15T10:30:00"},
 	}
 	for _, tt := range tests {
-		got := parseDate(tt.input)
+		got, err := parseDate(tt.input)
+		require.NoError(t, err, "parseDate(%q)", tt.input)
 		require.Equal(t, tt.want, got, "parseDate(%q)", tt.input)
 	}
 }
 
 func TestParseDate_Today(t *testing.T) {
-	got := parseDate("today")
+	got, err := parseDate("today")
+	require.NoError(t, err)
 	today := time.Now().UTC().Format("2006-01-02")
 	want := ">=" + today
 	require.Equal(t, want, got)
 }
 
 func TestParseDate_Yesterday(t *testing.T) {
-	got := parseDate("yesterday")
+	got, err := parseDate("yesterday")
+	require.NoError(t, err)
 	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 	require.Equal(t, yesterday, got)
 }
 
 func TestParseDate_YesterdayWithOperator(t *testing.T) {
-	got := parseDate(">yesterday")
+	got, err := parseDate(">yesterday")
+	require.NoError(t, err)
 	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
 	want := ">" + yesterday
 	require.Equal(t, want, got)
 }
 
 func TestParseDate_RelativeDays(t *testing.T) {
-	got := parseDate("3days")
+	got, err := parseDate("3days")
+	require.NoError(t, err)
 	threeDaysAgo := time.Now().UTC().AddDate(0, 0, -3).Format("2006-01-02")
 	want := ">=" + threeDaysAgo
 	require.Equal(t, want, got)
 }
 
 func TestParseDate_RelativeWeeks(t *testing.T) {
-	got := parseDate("2weeks")
+	got, err := parseDate("2weeks")
+	require.NoError(t, err)
 	twoWeeksAgo := time.Now().UTC().AddDate(0, 0, -14).Format("2006-01-02")
 	want := ">=" + twoWeeksAgo
 	require.Equal(t, want, got)
@@ -71,7 +77,8 @@ func TestParseDate_OperatorFlipping(t *testing.T) {
 		{"<=3days", ">="},
 	}
 	for _, tt := range tests {
-		got := parseDate(tt.input)
+		got, err := parseDate(tt.input)
+		require.NoError(t, err, "parseDate(%q)", tt.input)
 		require.True(t, strings.HasPrefix(got, tt.wantOp),
 			"parseDate(%q) = %q, want prefix %q", tt.input, got, tt.wantOp)
 	}
@@ -79,7 +86,8 @@ func TestParseDate_OperatorFlipping(t *testing.T) {
 
 func TestParseDate_RelativeHours(t *testing.T) {
 	expected := ">=" + time.Now().UTC().Add(-2*time.Hour).Format("2006-01-02T15:04:05Z")
-	got := parseDate("2hours")
+	got, err := parseDate("2hours")
+	require.NoError(t, err)
 	require.Equal(t, expected, got)
 }
 
@@ -99,7 +107,8 @@ func TestParseDate_UnitAliases(t *testing.T) {
 		"1years",
 	}
 	for _, a := range aliases {
-		got := parseDate(a)
+		got, err := parseDate(a)
+		require.NoError(t, err, "parseDate(%q)", a)
 		require.NotEqual(t, a, got, "parseDate(%q) was not parsed (returned unchanged)", a)
 	}
 }
@@ -124,7 +133,8 @@ func TestParseDate_CompoundDurations(t *testing.T) {
 		{"1d1h30m", now.AddDate(0, 0, -1).Add(-1*time.Hour - 30*time.Minute), true},
 	}
 	for _, tt := range tests {
-		got := parseDate(tt.input)
+		got, err := parseDate(tt.input)
+		require.NoError(t, err, "parseDate(%q)", tt.input)
 		var wantDate string
 		if tt.dt {
 			wantDate = ">=" + tt.want.Format("2006-01-02T15:04:05Z")
@@ -149,14 +159,14 @@ func TestParseDate_CompoundWithOperator(t *testing.T) {
 		{"<=1mo2w", ">=", now.AddDate(0, -1, -14)},
 	}
 	for _, tt := range tests {
-		got := parseDate(tt.input)
+		got, err := parseDate(tt.input)
+		require.NoError(t, err, "parseDate(%q)", tt.input)
 		wantDate := tt.wantOp + tt.want.Format("2006-01-02")
 		require.Equal(t, wantDate, got, "parseDate(%q)", tt.input)
 	}
 }
 
 func TestParseDate_CompoundOrderingViolation(t *testing.T) {
-	// Invalid ordering should passthrough unchanged
 	tests := []string{
 		"2m5y",
 		"1d2w",
@@ -164,25 +174,27 @@ func TestParseDate_CompoundOrderingViolation(t *testing.T) {
 		"1w1w",
 	}
 	for _, input := range tests {
-		got := parseDate(input)
-		require.Equal(
-			t,
-			input,
-			got,
-			"parseDate(%q) should passthrough on ordering violation",
-			input,
-		)
+		_, err := parseDate(input)
+		require.Error(t, err, "parseDate(%q) should error on ordering violation", input)
 	}
 }
 
 func TestParseDate_Empty(t *testing.T) {
-	got := parseDate("")
+	got, err := parseDate("")
+	require.NoError(t, err)
 	require.Empty(t, got)
 }
 
-func TestParseDate_UnknownPassthrough(t *testing.T) {
-	got := parseDate("foobar")
-	require.Equal(t, "foobar", got)
+func TestParseDate_InvalidInput(t *testing.T) {
+	tests := []string{
+		"foobar",
+		"notadate",
+		">",
+	}
+	for _, input := range tests {
+		_, err := parseDate(input)
+		require.Error(t, err, "parseDate(%q) should error on invalid input", input)
+	}
 }
 
 func TestParseDrift(t *testing.T) {
