@@ -346,6 +346,148 @@ func TestExecuteForceMergeBatchesCheckPolling(t *testing.T) {
 	require.ElementsMatch(t, []string{"PR_1", "PR_2"}, []string{<-mergesStarted, <-mergesStarted})
 }
 
+func TestFetchPRDetailUsesSingleGraphQLPageWhenItFits(t *testing.T) {
+	t.Helper()
+
+	var restCalls atomic.Int32
+	var gqlCalls atomic.Int32
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/graphql":
+			gqlCalls.Add(1)
+			body := readBody(t, req.Body)
+			require.Contains(t, body, "query PRDetailPage")
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"node":{
+					"body":"hello world",
+					"mergeStateStatus":"BEHIND",
+					"reviews":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+						{"author":{"login":"alice"},"state":"COMMENTED"},
+						{"author":{"login":"alice"},"state":"APPROVED"},
+						{"author":{"login":"bob"},"state":"CHANGES_REQUESTED"}
+					]},
+					"files":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+						{"path":"gone.txt","changeType":"DELETED","additions":0,"deletions":4}
+					]},
+					"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+						{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-04-10T00:00:00Z","completedAt":"2026-04-10T00:01:00Z"},
+						{"__typename":"StatusContext","context":"lint","state":"PENDING"}
+					]}}}}]}
+				}}}`,
+			), nil
+		default:
+			restCalls.Add(1)
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+	detail, err := actions.fetchPRDetail("owner", "repo", 42, "PR_node")
+	require.NoError(t, err)
+
+	require.Zero(t, restCalls.Load())
+	require.EqualValues(t, 1, gqlCalls.Load())
+	require.Equal(t, "hello world", detail.Body)
+	require.Equal(t, valueBehind, detail.MergeableState)
+	require.Equal(t, []PRReview{
+		{User: "alice", State: "APPROVED"},
+		{User: "bob", State: "CHANGES_REQUESTED"},
+	}, detail.Reviews)
+	require.Equal(t, []PRFile{{
+		Filename:  "gone.txt",
+		Status:    "removed",
+		Additions: 0,
+		Deletions: 4,
+	}}, detail.Files)
+	require.Len(t, detail.Checks, 2)
+	require.Equal(t, "lint", detail.Checks[0].Name)
+	require.Equal(t, "build", detail.Checks[1].Name)
+}
+
+func TestFetchPRDetailPaginatesFilesWhenNeeded(t *testing.T) {
+	t.Helper()
+
+	var gqlCalls atomic.Int32
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/graphql" {
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+
+		gqlCalls.Add(1)
+		body := readBody(t, req.Body)
+		switch {
+		case strings.Contains(body, "query PRDetailPage"):
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"node":{
+					"body":"body",
+					"mergeStateStatus":"CLEAN",
+					"reviews":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},
+					"files":{"pageInfo":{"hasNextPage":true,"endCursor":"files-2"},"nodes":[
+						{"path":"a.txt","changeType":"ADDED","additions":1,"deletions":0}
+					]},
+					"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}]}
+				}}}`,
+			), nil
+		case strings.Contains(body, "query PRDetailFiles"):
+			require.Contains(t, body, "files-2")
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"node":{"files":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+					{"path":"b.txt","changeType":"RENAMED","additions":2,"deletions":1}
+				]}}}}`,
+			), nil
+		default:
+			t.Fatalf("unexpected GraphQL request: %s", body)
+			return nil, errUnexpectedGraphQLCall
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+	detail, err := actions.fetchPRDetail("owner", "repo", 42, "PR_node")
+	require.NoError(t, err)
+
+	require.EqualValues(t, 2, gqlCalls.Load())
+	require.Equal(t, []PRFile{
+		{Filename: "a.txt", Status: "added", Additions: 1, Deletions: 0},
+		{Filename: "b.txt", Status: "renamed", Additions: 2, Deletions: 1},
+	}, detail.Files)
+}
+
 func jsonResponse(req *http.Request, status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,

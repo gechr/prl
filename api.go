@@ -495,7 +495,108 @@ type PRFile struct {
 	Deletions int
 }
 
+type detailPageInfo struct {
+	HasNextPage bool    `json:"hasNextPage"`
+	EndCursor   *string `json:"endCursor"`
+}
+
+type prDetailFirstPage struct {
+	Body           string
+	MergeableState string
+	Reviews        []PRReview
+	ReviewsPage    detailPageInfo
+	Files          []PRFile
+	FilesPage      detailPageInfo
+	Checks         []PRCheck
+	ChecksPage     detailPageInfo
+}
+
+func normalizePRFileStatus(changeType string) string {
+	switch strings.ToLower(changeType) {
+	case "deleted":
+		return "removed"
+	default:
+		return strings.ToLower(changeType)
+	}
+}
+
+func appendLatestReviews(detail *PRDetail, seen map[string]int, reviews []PRReview) {
+	for _, review := range reviews {
+		if review.User == "" {
+			continue
+		}
+		if idx, ok := seen[review.User]; ok {
+			detail.Reviews[idx] = review
+			continue
+		}
+		seen[review.User] = len(detail.Reviews)
+		detail.Reviews = append(detail.Reviews, review)
+	}
+}
+
 func (a *ActionRunner) fetchPRDetail(
+	owner, repo string,
+	number int,
+	nodeID string,
+) (PRDetail, error) {
+	if nodeID == "" || a.gql == nil {
+		return a.fetchPRDetailREST(owner, repo, number, nodeID)
+	}
+
+	firstPage, err := a.fetchPRDetailFirstPage(nodeID)
+	if err != nil {
+		clog.Debug().
+			Err(err).
+			Str("node_id", nodeID).
+			Msg("Falling back to REST detail loading")
+		return a.fetchPRDetailREST(owner, repo, number, nodeID)
+	}
+
+	detail := PRDetail{
+		Body:           firstPage.Body,
+		MergeableState: firstPage.MergeableState,
+		Files:          append([]PRFile(nil), firstPage.Files...),
+		Checks:         append([]PRCheck(nil), firstPage.Checks...),
+	}
+
+	seenReviews := make(map[string]int)
+	appendLatestReviews(&detail, seenReviews, firstPage.Reviews)
+
+	reviewsPage := firstPage.ReviewsPage
+	for reviewsPage.HasNextPage {
+		reviews, nextPage, pageErr := a.fetchPRDetailReviewPage(nodeID, reviewsPage.EndCursor)
+		if pageErr != nil {
+			return detail, pageErr
+		}
+		appendLatestReviews(&detail, seenReviews, reviews)
+		reviewsPage = nextPage
+	}
+
+	filesPage := firstPage.FilesPage
+	for filesPage.HasNextPage {
+		files, nextPage, pageErr := a.fetchPRDetailFilePage(nodeID, filesPage.EndCursor)
+		if pageErr != nil {
+			return detail, pageErr
+		}
+		detail.Files = append(detail.Files, files...)
+		filesPage = nextPage
+	}
+
+	checksPage := firstPage.ChecksPage
+	for checksPage.HasNextPage {
+		checks, nextPage, pageErr := a.fetchPRDetailCheckPage(nodeID, checksPage.EndCursor)
+		if pageErr != nil {
+			return detail, pageErr
+		}
+		detail.Checks = append(detail.Checks, checks...)
+		checksPage = nextPage
+	}
+
+	sortChecks(detail.Checks)
+	return detail, nil
+}
+
+func (a *ActionRunner) fetchPRDetailREST(
 	owner, repo string,
 	number int,
 	nodeID string,
@@ -525,25 +626,21 @@ func (a *ActionRunner) fetchPRDetail(
 
 	var wg sync.WaitGroup
 
-	// Fetch body + mergeable state.
 	wg.Go(func() {
 		prPath := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
 		prErr = a.rest.Get(prPath, &pr)
 	})
 
-	// Fetch reviews.
 	wg.Go(func() {
 		reviewPath := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, number)
 		revErr = a.rest.Get(reviewPath, &reviews)
 	})
 
-	// Fetch changed files.
 	wg.Go(func() {
 		filesPath := fmt.Sprintf("repos/%s/%s/pulls/%d/files", owner, repo, number)
 		filesErr = a.rest.Get(filesPath, &files)
 	})
 
-	// Fetch checks (GraphQL, optional).
 	if nodeID != "" {
 		wg.Go(func() {
 			var err error
@@ -570,15 +667,12 @@ func (a *ActionRunner) fetchPRDetail(
 	detail.MergeableState = pr.MergeableState
 	detail.Checks = checks
 
-	// Keep only the latest review per user.
 	seen := make(map[string]int)
 	for _, r := range reviews {
-		if idx, ok := seen[r.User.Login]; ok {
-			detail.Reviews[idx] = PRReview{User: r.User.Login, State: r.State}
-		} else {
-			seen[r.User.Login] = len(detail.Reviews)
-			detail.Reviews = append(detail.Reviews, PRReview{User: r.User.Login, State: r.State})
-		}
+		appendLatestReviews(&detail, seen, []PRReview{{
+			User:  r.User.Login,
+			State: r.State,
+		}})
 	}
 
 	detail.Files = make([]PRFile, len(files))
@@ -592,6 +686,334 @@ func (a *ActionRunner) fetchPRDetail(
 	}
 
 	return detail, nil
+}
+
+func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage, error) {
+	var result struct {
+		Node *struct {
+			Body             string `json:"body"`
+			MergeStateStatus string `json:"mergeStateStatus"`
+			Reviews          struct {
+				PageInfo detailPageInfo `json:"pageInfo"`
+				Nodes    []struct {
+					Author *struct {
+						Login string `json:"login"`
+					} `json:"author"`
+					State string `json:"state"`
+				} `json:"nodes"`
+			} `json:"reviews"`
+			Files struct {
+				PageInfo detailPageInfo `json:"pageInfo"`
+				Nodes    []struct {
+					Path       string `json:"path"`
+					ChangeType string `json:"changeType"`
+					Additions  int    `json:"additions"`
+					Deletions  int    `json:"deletions"`
+				} `json:"nodes"`
+			} `json:"files"`
+			Commits struct {
+				Nodes []struct {
+					Commit struct {
+						StatusCheckRollup *struct {
+							Contexts struct {
+								PageInfo detailPageInfo    `json:"pageInfo"`
+								Nodes    []detailCheckNode `json:"nodes"`
+							} `json:"contexts"`
+						} `json:"statusCheckRollup"`
+					} `json:"commit"`
+				} `json:"nodes"`
+			} `json:"commits"`
+		} `json:"node"`
+	}
+
+	err := a.gql.Do(
+		`query PRDetailPage($id: ID!) {
+			node(id: $id) {
+				... on PullRequest {
+					body
+					mergeStateStatus
+					reviews(first: 100) {
+						pageInfo {
+							hasNextPage
+							endCursor
+						}
+						nodes {
+							author { login }
+							state
+						}
+					}
+					files(first: 100) {
+						pageInfo {
+							hasNextPage
+							endCursor
+						}
+						nodes {
+							path
+							changeType
+							additions
+							deletions
+						}
+					}
+					commits(last: 1) {
+						nodes {
+							commit {
+								statusCheckRollup {
+									contexts(first: 100) {
+										pageInfo {
+											hasNextPage
+											endCursor
+										}
+										nodes {
+											__typename
+											... on CheckRun {
+												name
+												status
+												conclusion
+												startedAt
+												completedAt
+											}
+											... on StatusContext {
+												context
+												state
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}`,
+		map[string]any{"id": nodeID},
+		&result,
+	)
+	if err != nil {
+		return prDetailFirstPage{}, err
+	}
+	if result.Node == nil {
+		return prDetailFirstPage{}, fmt.Errorf("pull request not found")
+	}
+
+	page := prDetailFirstPage{
+		Body:           result.Node.Body,
+		MergeableState: strings.ToLower(result.Node.MergeStateStatus),
+		ReviewsPage:    result.Node.Reviews.PageInfo,
+		FilesPage:      result.Node.Files.PageInfo,
+	}
+	for _, review := range result.Node.Reviews.Nodes {
+		if review.Author == nil || review.Author.Login == "" {
+			continue
+		}
+		page.Reviews = append(page.Reviews, PRReview{
+			User:  review.Author.Login,
+			State: review.State,
+		})
+	}
+	for _, file := range result.Node.Files.Nodes {
+		page.Files = append(page.Files, PRFile{
+			Filename:  file.Path,
+			Status:    normalizePRFileStatus(file.ChangeType),
+			Additions: file.Additions,
+			Deletions: file.Deletions,
+		})
+	}
+	if len(result.Node.Commits.Nodes) > 0 {
+		if rollup := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+			page.Checks = appendCheckNodes(nil, rollup.Contexts.Nodes)
+			page.ChecksPage = rollup.Contexts.PageInfo
+		}
+	}
+	return page, nil
+}
+
+func (a *ActionRunner) fetchPRDetailReviewPage(
+	nodeID string,
+	after *string,
+) ([]PRReview, detailPageInfo, error) {
+	var result struct {
+		Node *struct {
+			Reviews struct {
+				PageInfo detailPageInfo `json:"pageInfo"`
+				Nodes    []struct {
+					Author *struct {
+						Login string `json:"login"`
+					} `json:"author"`
+					State string `json:"state"`
+				} `json:"nodes"`
+			} `json:"reviews"`
+		} `json:"node"`
+	}
+
+	err := a.gql.Do(
+		`query PRDetailReviews($id: ID!, $after: String) {
+			node(id: $id) {
+				... on PullRequest {
+					reviews(first: 100, after: $after) {
+						pageInfo {
+							hasNextPage
+							endCursor
+						}
+						nodes {
+							author { login }
+							state
+						}
+					}
+				}
+			}
+		}`,
+		map[string]any{"id": nodeID, "after": after},
+		&result,
+	)
+	if err != nil {
+		return nil, detailPageInfo{}, err
+	}
+	if result.Node == nil {
+		return nil, detailPageInfo{}, fmt.Errorf("pull request not found")
+	}
+
+	reviews := make([]PRReview, 0, len(result.Node.Reviews.Nodes))
+	for _, review := range result.Node.Reviews.Nodes {
+		if review.Author == nil || review.Author.Login == "" {
+			continue
+		}
+		reviews = append(reviews, PRReview{
+			User:  review.Author.Login,
+			State: review.State,
+		})
+	}
+	return reviews, result.Node.Reviews.PageInfo, nil
+}
+
+func (a *ActionRunner) fetchPRDetailFilePage(
+	nodeID string,
+	after *string,
+) ([]PRFile, detailPageInfo, error) {
+	var result struct {
+		Node *struct {
+			Files struct {
+				PageInfo detailPageInfo `json:"pageInfo"`
+				Nodes    []struct {
+					Path       string `json:"path"`
+					ChangeType string `json:"changeType"`
+					Additions  int    `json:"additions"`
+					Deletions  int    `json:"deletions"`
+				} `json:"nodes"`
+			} `json:"files"`
+		} `json:"node"`
+	}
+
+	err := a.gql.Do(
+		`query PRDetailFiles($id: ID!, $after: String) {
+			node(id: $id) {
+				... on PullRequest {
+					files(first: 100, after: $after) {
+						pageInfo {
+							hasNextPage
+							endCursor
+						}
+						nodes {
+							path
+							changeType
+							additions
+							deletions
+						}
+					}
+				}
+			}
+		}`,
+		map[string]any{"id": nodeID, "after": after},
+		&result,
+	)
+	if err != nil {
+		return nil, detailPageInfo{}, err
+	}
+	if result.Node == nil {
+		return nil, detailPageInfo{}, fmt.Errorf("pull request not found")
+	}
+
+	files := make([]PRFile, 0, len(result.Node.Files.Nodes))
+	for _, file := range result.Node.Files.Nodes {
+		files = append(files, PRFile{
+			Filename:  file.Path,
+			Status:    normalizePRFileStatus(file.ChangeType),
+			Additions: file.Additions,
+			Deletions: file.Deletions,
+		})
+	}
+	return files, result.Node.Files.PageInfo, nil
+}
+
+func (a *ActionRunner) fetchPRDetailCheckPage(
+	nodeID string,
+	after *string,
+) ([]PRCheck, detailPageInfo, error) {
+	var result struct {
+		Node *struct {
+			Commits struct {
+				Nodes []struct {
+					Commit struct {
+						StatusCheckRollup *struct {
+							Contexts struct {
+								PageInfo detailPageInfo    `json:"pageInfo"`
+								Nodes    []detailCheckNode `json:"nodes"`
+							} `json:"contexts"`
+						} `json:"statusCheckRollup"`
+					} `json:"commit"`
+				} `json:"nodes"`
+			} `json:"commits"`
+		} `json:"node"`
+	}
+
+	err := a.gql.Do(
+		`query PRDetailChecks($id: ID!, $after: String) {
+			node(id: $id) {
+				... on PullRequest {
+					commits(last: 1) {
+						nodes {
+							commit {
+								statusCheckRollup {
+									contexts(first: 100, after: $after) {
+										pageInfo {
+											hasNextPage
+											endCursor
+										}
+										nodes {
+											__typename
+											... on CheckRun {
+												name
+												status
+												conclusion
+												startedAt
+												completedAt
+											}
+											... on StatusContext {
+												context
+												state
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}`,
+		map[string]any{"id": nodeID, "after": after},
+		&result,
+	)
+	if err != nil {
+		return nil, detailPageInfo{}, err
+	}
+	if result.Node == nil || len(result.Node.Commits.Nodes) == 0 {
+		return nil, detailPageInfo{}, nil
+	}
+	rollup := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup
+	if rollup == nil {
+		return nil, detailPageInfo{}, nil
+	}
+	return appendCheckNodes(nil, rollup.Contexts.Nodes), rollup.Contexts.PageInfo, nil
 }
 
 func (a *ActionRunner) updateBranch(owner, repo string, number int) error {
@@ -1027,6 +1449,43 @@ func mapStatusContextState(state string) (string, string) {
 	}
 }
 
+type detailCheckNode struct {
+	TypeName    string     `json:"__typename"`
+	Name        string     `json:"name"`
+	Status      string     `json:"status"`
+	Conclusion  string     `json:"conclusion"`
+	StartedAt   *time.Time `json:"startedAt"`
+	CompletedAt *time.Time `json:"completedAt"`
+	Context     string     `json:"context"`
+	State       string     `json:"state"`
+}
+
+func appendCheckNodes(checks []PRCheck, nodes []detailCheckNode) []PRCheck {
+	for _, node := range nodes {
+		switch node.TypeName {
+		case "CheckRun":
+			var dur time.Duration
+			if node.StartedAt != nil && node.CompletedAt != nil {
+				dur = node.CompletedAt.Sub(*node.StartedAt)
+			}
+			checks = append(checks, PRCheck{
+				Name:       node.Name,
+				Status:     strings.ToLower(node.Status),
+				Conclusion: strings.ToLower(node.Conclusion),
+				Duration:   dur,
+			})
+		case "StatusContext":
+			status, conclusion := mapStatusContextState(node.State)
+			checks = append(checks, PRCheck{
+				Name:       node.Context,
+				Status:     status,
+				Conclusion: conclusion,
+			})
+		}
+	}
+	return checks
+}
+
 func (a *ActionRunner) fetchChecksGraphQL(nodeID string) ([]PRCheck, error) {
 	if a.gql == nil {
 		return nil, fmt.Errorf("GraphQL client is not configured")
@@ -1080,20 +1539,8 @@ func (a *ActionRunner) fetchChecksGraphQL(nodeID string) ([]PRCheck, error) {
 						Commit struct {
 							StatusCheckRollup *struct {
 								Contexts struct {
-									PageInfo struct {
-										HasNextPage bool    `json:"hasNextPage"`
-										EndCursor   *string `json:"endCursor"`
-									} `json:"pageInfo"`
-									Nodes []struct {
-										TypeName    string     `json:"__typename"`
-										Name        string     `json:"name"`
-										Status      string     `json:"status"`
-										Conclusion  string     `json:"conclusion"`
-										StartedAt   *time.Time `json:"startedAt"`
-										CompletedAt *time.Time `json:"completedAt"`
-										Context     string     `json:"context"`
-										State       string     `json:"state"`
-									} `json:"nodes"`
+									PageInfo detailPageInfo    `json:"pageInfo"`
+									Nodes    []detailCheckNode `json:"nodes"`
 								} `json:"contexts"`
 							} `json:"statusCheckRollup"`
 						} `json:"commit"`
@@ -1119,28 +1566,7 @@ func (a *ActionRunner) fetchChecksGraphQL(nodeID string) ([]PRCheck, error) {
 		}
 
 		contexts := rollup.Contexts
-		for _, node := range contexts.Nodes {
-			switch node.TypeName {
-			case "CheckRun":
-				var dur time.Duration
-				if node.StartedAt != nil && node.CompletedAt != nil {
-					dur = node.CompletedAt.Sub(*node.StartedAt)
-				}
-				checks = append(checks, PRCheck{
-					Name:       node.Name,
-					Status:     strings.ToLower(node.Status),
-					Conclusion: strings.ToLower(node.Conclusion),
-					Duration:   dur,
-				})
-			case "StatusContext":
-				status, conclusion := mapStatusContextState(node.State)
-				checks = append(checks, PRCheck{
-					Name:       node.Context,
-					Status:     status,
-					Conclusion: conclusion,
-				})
-			}
-		}
+		checks = appendCheckNodes(checks, contexts.Nodes)
 
 		if !contexts.PageInfo.HasNextPage || contexts.PageInfo.EndCursor == nil {
 			break
