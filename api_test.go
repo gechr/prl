@@ -231,6 +231,69 @@ func TestAutomergeMutationsUseCurrentGitHubFieldNames(t *testing.T) {
 	require.Equal(t, []string{"enable", "disable"}, seen)
 }
 
+func TestExecuteBulkUnsubscribeResolvesCurrentLoginOnce(t *testing.T) {
+	t.Helper()
+
+	var userCalls atomic.Int32
+	var unsubCalls atomic.Int32
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/user":
+			userCalls.Add(1)
+			return jsonResponse(req, http.StatusOK, `{"login":"me"}`), nil
+		case "/graphql":
+			body := readBody(t, req.Body)
+			require.Contains(t, body, "updateSubscription")
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`{"data":{"updateSubscription":{"clientMutationId":"ok"}}}`,
+			), nil
+		case "/repos/owner/repo/pulls/1/requested_reviewers",
+			"/repos/owner/repo/pulls/2/requested_reviewers":
+			unsubCalls.Add(1)
+			require.Equal(t, http.MethodDelete, req.Method)
+			return jsonResponse(req, http.StatusNoContent, `{}`), nil
+		default:
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+	err = actions.Execute(&CLI{Unsubscribe: true}, []PullRequest{
+		{
+			NodeID:     "PR_1",
+			Number:     1,
+			URL:        "https://github.com/owner/repo/pull/1",
+			Repository: Repository{NameWithOwner: "owner/repo", Name: "repo"},
+		},
+		{
+			NodeID:     "PR_2",
+			Number:     2,
+			URL:        "https://github.com/owner/repo/pull/2",
+			Repository: Repository{NameWithOwner: "owner/repo", Name: "repo"},
+		},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, userCalls.Load())
+	require.EqualValues(t, 2, unsubCalls.Load())
+}
+
 func TestExecuteForceMergeBatchesCheckPolling(t *testing.T) {
 	t.Helper()
 

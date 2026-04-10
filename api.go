@@ -31,6 +31,10 @@ func (e *HintError) Unwrap() error { return e.Err }
 type ActionRunner struct {
 	rest *api.RESTClient
 	gql  *api.GraphQLClient
+
+	currentLoginOnce sync.Once
+	currentLogin     string
+	currentLoginErr  error
 }
 
 // NewActionRunner creates an ActionRunner with the given API clients.
@@ -43,6 +47,12 @@ func NewActionRunner(rest *api.RESTClient, gql *api.GraphQLClient) *ActionRunner
 func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 	if len(prs) == 0 {
 		return nil
+	}
+
+	if cli.Unsubscribe && len(cli.ReviewRequested.Values) == 0 {
+		if _, err := a.cachedCurrentLogin(); err != nil {
+			return err
+		}
 	}
 
 	if cli.Approve && a.gql != nil {
@@ -92,6 +102,13 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 	}
 
 	return nil
+}
+
+func (a *ActionRunner) cachedCurrentLogin() (string, error) {
+	a.currentLoginOnce.Do(func() {
+		a.currentLogin, a.currentLoginErr = getCurrentLogin(a.rest)
+	})
+	return a.currentLogin, a.currentLoginErr
 }
 
 func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
@@ -268,7 +285,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 func (a *ActionRunner) unsubscribeAll(cli *CLI, owner, repo string, pr PullRequest) []string {
 	logins := cli.ReviewRequested.Values
 	if len(logins) == 0 {
-		login, err := getCurrentLogin(a.rest)
+		login, err := a.cachedCurrentLogin()
 		if err != nil {
 			return []string{fmt.Sprintf("unsubscribe %s: %v", pr.URL, err)}
 		}
