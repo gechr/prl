@@ -207,6 +207,10 @@ func (c *CLI) Validate() error {
 		return fmt.Errorf("--watch and --web are mutually exclusive")
 	}
 
+	if c.Since != "" && c.Created != "" {
+		return fmt.Errorf("--since and --created are mutually exclusive")
+	}
+
 	// Validate limit
 	if c.Limit != nil && *c.Limit <= 0 {
 		return fmt.Errorf("--limit must be greater than 0")
