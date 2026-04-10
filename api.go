@@ -99,6 +99,11 @@ func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
 		return
 	}
 
+	pollerCtx, cancelPoller := context.WithCancel(context.Background())
+	defer cancelPoller()
+	checks := newCheckStateBatcher(a, prs)
+	go checks.run(pollerCtx)
+
 	group := clog.Group(
 		context.Background(),
 		clog.WithParallelism(maxConcurrency),
@@ -130,7 +135,7 @@ func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
 			b = b.Str("title", truncateTitle(pr.Title))
 		}
 		result := group.Add(b).Progress(func(ctx context.Context, update *clog.Update) error {
-			return a.forceMerge(ctx, pr, update)
+			return a.forceMerge(ctx, pr, update, checks)
 		})
 		tasks = append(tasks, forceMergeTask{pr: pr, result: result})
 	}
@@ -743,8 +748,13 @@ func (a *ActionRunner) fetchDiff(owner, repo string, number int) (string, string
 // mergePullRequest mutation. This works like gh pr merge --admin: the mutation
 // itself requires the caller to have bypass/admin permissions on the repo;
 // no special API field is needed.
-func (a *ActionRunner) forceMerge(ctx context.Context, pr PullRequest, update *clog.Update) error {
-	if err := a.waitForChecks(ctx, pr, update); err != nil {
+func (a *ActionRunner) forceMerge(
+	ctx context.Context,
+	pr PullRequest,
+	update *clog.Update,
+	batcher *checkStateBatcher,
+) error {
+	if err := a.waitForChecks(ctx, pr, update, batcher); err != nil {
 		return err
 	}
 	if update != nil {
@@ -763,7 +773,7 @@ func (a *ActionRunner) forceMerge(ctx context.Context, pr PullRequest, update *c
 			return ctx.Err()
 		case <-time.After(forceMergeInterval):
 		}
-		if err := a.waitForChecks(ctx, pr, nil); err != nil {
+		if err := a.waitForChecks(ctx, pr, nil, batcher); err != nil {
 			return err
 		}
 	}
@@ -779,6 +789,210 @@ const (
 	checksFailed
 	checksNone
 )
+
+type checkStateSnapshot struct {
+	state   checkState
+	prState string
+	err     error
+}
+
+type checkStateQueryNode struct {
+	ID               string `json:"id"`
+	State            string `json:"state"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+	Commits          struct {
+		Nodes []struct {
+			Commit struct {
+				StatusCheckRollup *struct {
+					State    string `json:"state"`
+					Contexts struct {
+						Nodes []struct {
+							Status string `json:"status"` // CheckRun: QUEUED, IN_PROGRESS, COMPLETED
+							State  string `json:"state"`  // StatusContext: ERROR, EXPECTED, FAILURE, PENDING, SUCCESS
+						} `json:"nodes"`
+					} `json:"contexts"`
+				} `json:"statusCheckRollup"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"commits"`
+}
+
+type checkStateBatcher struct {
+	runner  *ActionRunner
+	mu      sync.Mutex
+	pending map[string]struct{}
+	waiters map[string][]chan checkStateSnapshot
+	wake    chan struct{}
+}
+
+func newCheckStateBatcher(a *ActionRunner, prs []PullRequest) *checkStateBatcher {
+	b := &checkStateBatcher{
+		runner:  a,
+		pending: make(map[string]struct{}, len(prs)),
+		waiters: make(map[string][]chan checkStateSnapshot, len(prs)),
+		wake:    make(chan struct{}, 1),
+	}
+	for _, pr := range prs {
+		if pr.NodeID == "" {
+			continue
+		}
+		b.pending[pr.NodeID] = struct{}{}
+	}
+	return b
+}
+
+func (b *checkStateBatcher) notify() {
+	select {
+	case b.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (b *checkStateBatcher) register(nodeID string) chan checkStateSnapshot {
+	ch := make(chan checkStateSnapshot, 1)
+
+	b.mu.Lock()
+	b.pending[nodeID] = struct{}{}
+	b.waiters[nodeID] = append(b.waiters[nodeID], ch)
+	b.mu.Unlock()
+
+	b.notify()
+	return ch
+}
+
+func (b *checkStateBatcher) unregister(nodeID string, ch chan checkStateSnapshot) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	waiters := b.waiters[nodeID]
+	for i, waiter := range waiters {
+		if waiter != ch {
+			continue
+		}
+		waiters = append(waiters[:i], waiters[i+1:]...)
+		break
+	}
+	if len(waiters) == 0 {
+		delete(b.waiters, nodeID)
+		delete(b.pending, nodeID)
+		return
+	}
+	b.waiters[nodeID] = waiters
+}
+
+func (b *checkStateBatcher) pendingIDs() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	ids := make([]string, 0, len(b.pending))
+	for id := range b.pending {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func deliverCheckState(ch chan checkStateSnapshot, snapshot checkStateSnapshot) {
+	select {
+	case ch <- snapshot:
+	default:
+		select {
+		case <-ch:
+		default:
+		}
+		ch <- snapshot
+	}
+}
+
+func (b *checkStateBatcher) broadcast(nodeID string, snapshot checkStateSnapshot) {
+	b.mu.Lock()
+	waiters := append([]chan checkStateSnapshot(nil), b.waiters[nodeID]...)
+	b.mu.Unlock()
+
+	for _, ch := range waiters {
+		deliverCheckState(ch, snapshot)
+	}
+}
+
+func (b *checkStateBatcher) run(ctx context.Context) {
+	for {
+		ids := b.pendingIDs()
+		if len(ids) == 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-b.wake:
+				continue
+			}
+		}
+
+		results, err := b.runner.queryCheckStates(ids)
+		if err != nil {
+			for _, id := range ids {
+				b.broadcast(id, checkStateSnapshot{state: checksNone, err: err})
+			}
+		} else {
+			for _, id := range ids {
+				b.broadcast(id, results[id])
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(forceMergeInterval):
+		}
+	}
+}
+
+func (b *checkStateBatcher) wait(ctx context.Context, pr PullRequest, update *clog.Update) error {
+	ch := b.register(pr.NodeID)
+	defer b.unregister(pr.NodeID, ch)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case snapshot := <-ch:
+			if snapshot.err != nil {
+				return fmt.Errorf("querying check status for %s: %w", pr.URL, snapshot.err)
+			}
+			if snapshot.prState == "MERGED" {
+				if update != nil {
+					update.Msg("PR already merged").SetSymbol("✔︎").Send()
+				}
+				return fmt.Errorf("PR already merged: %s", pr.URL)
+			}
+			if snapshot.prState == "CLOSED" {
+				if update != nil {
+					update.Msg("PR was closed").SetSymbol("✘").SetLevel(clog.LevelWarn).Send()
+				}
+				return fmt.Errorf("PR was closed: %s", pr.URL)
+			}
+
+			switch snapshot.state {
+			case checksSuccess:
+				if update != nil {
+					update.Msg("All checks passed").Send()
+				}
+				return nil
+			case checksFailed:
+				if update != nil {
+					update.Msg("Checks failed").SetSymbol("✘").SetLevel(clog.LevelError).Send()
+				}
+				return fmt.Errorf("checks failed for %s", pr.URL)
+			case checksPending:
+				if update != nil {
+					update.Msg("Waiting for checks").Send()
+				}
+			case checksNone:
+				if update != nil {
+					update.Msg("No checks configured").Send()
+				}
+				return nil
+			}
+		}
+	}
+}
 
 // Check sort priorities: failures first, in-progress, successes, skipped last.
 const (
@@ -966,7 +1180,12 @@ func (a *ActionRunner) waitForChecks(
 	ctx context.Context,
 	pr PullRequest,
 	update *clog.Update,
+	batcher *checkStateBatcher,
 ) error {
+	if batcher != nil {
+		return batcher.wait(ctx, pr, update)
+	}
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1021,38 +1240,82 @@ func (a *ActionRunner) waitForChecks(
 	}
 }
 
-// queryCheckState fetches the aggregate CI status and PR state in a single GraphQL query.
-func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error) {
+func resolveCheckStateSnapshot(node checkStateQueryNode) checkStateSnapshot {
+	prState := node.State
+
+	var rollupState string
+	var contexts []struct {
+		Status string `json:"status"`
+		State  string `json:"state"`
+	}
+	if len(node.Commits.Nodes) > 0 {
+		if r := node.Commits.Nodes[0].Commit.StatusCheckRollup; r != nil {
+			rollupState = r.State
+			contexts = r.Contexts.Nodes
+		}
+	}
+
+	anyInProgress := false
+	for _, c := range contexts {
+		if c.Status == valueCIInProgress || c.Status == valueCIQueued ||
+			c.State == valueCIPending || c.State == valueCIExpected {
+			anyInProgress = true
+			break
+		}
+	}
+
+	// UNKNOWN means GitHub hasn't determined merge-readiness yet - checks are
+	// being rescheduled after a recent push. Treat it as pending regardless of
+	// what statusCheckRollup reports.
+	if node.MergeStateStatus == valueCIUnknown {
+		return checkStateSnapshot{state: checksPending, prState: prState}
+	}
+
+	// Empty rollup with a non-CLEAN merge state means checks are still being
+	// registered (e.g. immediately after a push). Treat as pending, not as
+	// "no checks configured".
+	if rollupState == "" {
+		if node.MergeStateStatus == "CLEAN" {
+			return checkStateSnapshot{state: checksNone, prState: prState}
+		}
+		return checkStateSnapshot{state: checksPending, prState: prState}
+	}
+
+	// Even if the aggregate rollup shows SUCCESS, individual runs may still be
+	// IN_PROGRESS or QUEUED (e.g. newly scheduled after a push). Wait for them.
+	if anyInProgress {
+		return checkStateSnapshot{state: checksPending, prState: prState}
+	}
+
+	switch rollupState {
+	case valueCISuccess:
+		return checkStateSnapshot{state: checksSuccess, prState: prState}
+	case valueCIFailure, valueCIError:
+		return checkStateSnapshot{state: checksFailed, prState: prState}
+	case valueCIPending, valueCIExpected:
+		return checkStateSnapshot{state: checksPending, prState: prState}
+	default:
+		return checkStateSnapshot{state: checksNone, prState: prState}
+	}
+}
+
+func (a *ActionRunner) queryCheckStates(nodeIDs []string) (map[string]checkStateSnapshot, error) {
 	if a.gql == nil {
-		return checksNone, "", fmt.Errorf("GraphQL client is not configured")
+		return nil, fmt.Errorf("GraphQL client is not configured")
+	}
+	if len(nodeIDs) == 0 {
+		return map[string]checkStateSnapshot{}, nil
 	}
 
 	var result struct {
-		Node struct {
-			State            string `json:"state"`
-			MergeStateStatus string `json:"mergeStateStatus"`
-			Commits          struct {
-				Nodes []struct {
-					Commit struct {
-						StatusCheckRollup *struct {
-							State    string `json:"state"`
-							Contexts struct {
-								Nodes []struct {
-									Status string `json:"status"` // CheckRun: QUEUED, IN_PROGRESS, COMPLETED
-									State  string `json:"state"`  // StatusContext: ERROR, EXPECTED, FAILURE, PENDING, SUCCESS
-								} `json:"nodes"`
-							} `json:"contexts"`
-						} `json:"statusCheckRollup"`
-					} `json:"commit"`
-				} `json:"nodes"`
-			} `json:"commits"`
-		} `json:"node"`
+		Nodes []checkStateQueryNode `json:"nodes"`
 	}
 
 	err := a.gql.Do(
-		`query CheckState($id: ID!) {
-			node(id: $id) {
+		`query CheckStates($ids: [ID!]!) {
+			nodes(ids: $ids) {
 				... on PullRequest {
+					id
 					state
 					mergeStateStatus
 					commits(last: 1) {
@@ -1073,69 +1336,31 @@ func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error
 				}
 			}
 		}`,
-		map[string]any{"id": nodeID},
+		map[string]any{"ids": nodeIDs},
 		&result,
 	)
 	if err != nil {
+		return nil, err
+	}
+
+	states := make(map[string]checkStateSnapshot, len(nodeIDs))
+	for _, id := range nodeIDs {
+		states[id] = checkStateSnapshot{state: checksNone}
+	}
+	for _, node := range result.Nodes {
+		states[node.ID] = resolveCheckStateSnapshot(node)
+	}
+	return states, nil
+}
+
+// queryCheckState fetches the aggregate CI status and PR state in a single GraphQL query.
+func (a *ActionRunner) queryCheckState(nodeID string) (checkState, string, error) {
+	states, err := a.queryCheckStates([]string{nodeID})
+	if err != nil {
 		return checksNone, "", err
 	}
-
-	prState := result.Node.State
-
-	var rollupState string
-	var contexts []struct {
-		Status string `json:"status"`
-		State  string `json:"state"`
-	}
-	if len(result.Node.Commits.Nodes) > 0 {
-		if r := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup; r != nil {
-			rollupState = r.State
-			contexts = r.Contexts.Nodes
-		}
-	}
-
-	anyInProgress := false
-	for _, c := range contexts {
-		if c.Status == valueCIInProgress || c.Status == valueCIQueued ||
-			c.State == valueCIPending || c.State == valueCIExpected {
-			anyInProgress = true
-			break
-		}
-	}
-
-	// UNKNOWN means GitHub hasn't determined merge-readiness yet - checks are
-	// being rescheduled after a recent push. Treat it as pending regardless of
-	// what statusCheckRollup reports.
-	if result.Node.MergeStateStatus == valueCIUnknown {
-		return checksPending, prState, nil
-	}
-
-	// Empty rollup with a non-CLEAN merge state means checks are still being
-	// registered (e.g. immediately after a push). Treat as pending, not as
-	// "no checks configured".
-	if rollupState == "" {
-		if result.Node.MergeStateStatus == "CLEAN" {
-			return checksNone, prState, nil
-		}
-		return checksPending, prState, nil
-	}
-
-	// Even if the aggregate rollup shows SUCCESS, individual runs may still be
-	// IN_PROGRESS or QUEUED (e.g. newly scheduled after a push). Wait for them.
-	if anyInProgress {
-		return checksPending, prState, nil
-	}
-
-	switch rollupState {
-	case valueCISuccess:
-		return checksSuccess, prState, nil
-	case valueCIFailure, valueCIError:
-		return checksFailed, prState, nil
-	case valueCIPending, valueCIExpected:
-		return checksPending, prState, nil
-	default:
-		return checksNone, prState, nil
-	}
+	snapshot := states[nodeID]
+	return snapshot.state, snapshot.prState, nil
 }
 
 // retryForceMergePR calls forceMergePR up to forceMergeMaxRetries times with a delay

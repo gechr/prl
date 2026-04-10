@@ -231,12 +231,13 @@ func TestAutomergeMutationsUseCurrentGitHubFieldNames(t *testing.T) {
 	require.Equal(t, []string{"enable", "disable"}, seen)
 }
 
-func TestExecuteForceMergePollsSelectedPRsConcurrently(t *testing.T) {
+func TestExecuteForceMergeBatchesCheckPolling(t *testing.T) {
 	t.Helper()
 
-	checksStarted := make(chan string, 2)
+	checksStarted := make(chan string, 1)
 	mergesStarted := make(chan string, 2)
 	releaseChecks := make(chan struct{})
+	var checkCalls atomic.Int32
 
 	nodeIDFromBody := func(body string) string {
 		switch {
@@ -257,14 +258,17 @@ func TestExecuteForceMergePollsSelectedPRsConcurrently(t *testing.T) {
 
 		body := readBody(t, req.Body)
 		switch {
-		case strings.Contains(body, "query CheckState"):
-			nodeID := nodeIDFromBody(body)
-			checksStarted <- nodeID
+		case strings.Contains(body, "query CheckStates"):
+			checkCalls.Add(1)
+			checksStarted <- body
 			<-releaseChecks
 			return jsonResponse(
 				req,
 				http.StatusOK,
-				`{"data":{"node":{"state":"OPEN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}`,
+				`{"data":{"nodes":[
+					{"id":"PR_1","state":"OPEN","mergeStateStatus":"CLEAN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}},
+					{"id":"PR_2","state":"OPEN","mergeStateStatus":"CLEAN","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
+				]}}`,
 			), nil
 		case strings.Contains(body, "mutation ForceMerge"):
 			mergesStarted <- nodeIDFromBody(body)
@@ -315,16 +319,11 @@ func TestExecuteForceMergePollsSelectedPRsConcurrently(t *testing.T) {
 	}()
 
 	select {
-	case <-checksStarted:
+	case body := <-checksStarted:
+		require.Contains(t, body, `"PR_1"`)
+		require.Contains(t, body, `"PR_2"`)
 	case <-time.After(2 * time.Second):
-		t.Fatal("first force-merge check poll did not start")
-	}
-
-	select {
-	case <-checksStarted:
-	case <-time.After(2 * time.Second):
-		close(releaseChecks)
-		t.Fatal("second force-merge check poll did not start before the first completed")
+		t.Fatal("batched force-merge check poll did not start")
 	}
 
 	select {
@@ -343,6 +342,7 @@ func TestExecuteForceMergePollsSelectedPRsConcurrently(t *testing.T) {
 		t.Fatal("force-merge execution did not finish")
 	}
 
+	require.EqualValues(t, 1, checkCalls.Load())
 	require.ElementsMatch(t, []string{"PR_1", "PR_2"}, []string{<-mergesStarted, <-mergesStarted})
 }
 
