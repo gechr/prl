@@ -188,6 +188,9 @@ func (c *CLI) Validate() error {
 	if c.Interactive && c.Count {
 		return fmt.Errorf("--interactive and --count are mutually exclusive")
 	}
+	if c.Watch && c.Count {
+		return fmt.Errorf("--watch and --count are mutually exclusive")
+	}
 	if c.Watch && c.HasAction() {
 		return fmt.Errorf("--watch cannot be combined with action flags")
 	}
