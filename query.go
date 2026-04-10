@@ -191,6 +191,9 @@ func parseDrift(input string) (string, int64, error) {
 
 	// Try bare integer (raw seconds) - only valid as standalone value.
 	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		if n < 0 {
+			return "", 0, fmt.Errorf("invalid drift specification: negative value: %s", input)
+		}
 		return op, n, nil
 	}
 

@@ -287,6 +287,10 @@ func TestParseDrift(t *testing.T) {
 		{"1d1d", "", 0, true},
 		{"1y1y", "", 0, true},
 		{"1s1s", "", 0, true},
+		// Negative values
+		{"-1", "", 0, true},
+		{"==-1", "", 0, true},
+		{">-100", "", 0, true},
 		// Invalid input
 		{"", "", 0, true},
 		{"abc", "", 0, true},
