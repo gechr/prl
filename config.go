@@ -676,7 +676,7 @@ func initConfig() error {
 
 	if _, err := os.Stat(cp); err == nil {
 		clog.Warn().Path("path", cp).Msg("Config already exists")
-		return errFatal
+		return errOK
 	}
 
 	if err := os.MkdirAll(
