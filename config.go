@@ -52,6 +52,7 @@ const (
 	keyTUIReviewDefaultProv  = "tui.review.default.provider"
 	keyTUIReviewClaudePrompt = "tui.review.providers.claude.prompt"
 	keyTUIReviewCodexPrompt  = "tui.review.providers.codex.prompt"
+	keyTUIReviewGeminiPrompt = "tui.review.providers.gemini.prompt"
 	keyTUIFilterArchived     = "tui.filters.archived"
 	keyTUIFilterBots         = "tui.filters.bots"
 	keyTUIFilterCI           = "tui.filters.ci"
@@ -112,6 +113,7 @@ type TUIReviewProviderConfig struct {
 type TUIReviewProvidersConfig struct {
 	Claude TUIReviewProviderConfig `koanf:"claude"`
 	Codex  TUIReviewProviderConfig `koanf:"codex"`
+	Gemini TUIReviewProviderConfig `koanf:"gemini"`
 }
 
 type TUIReviewDefaultConfig struct {
@@ -193,6 +195,7 @@ func defaultConfig() map[string]any {
 		keyTUIReviewDefaultModel: defaultReviewModel(defaultReviewProvider),
 		keyTUIReviewClaudePrompt: defaultReviewPromptTemplate(reviewProviderClaude),
 		keyTUIReviewCodexPrompt:  defaultReviewPromptTemplate(reviewProviderCodex),
+		keyTUIReviewGeminiPrompt: defaultReviewPromptTemplate(reviewProviderGemini),
 		keyTUIScreenRepair:       false,
 		keyTUIFilterArchived:     nil,
 		keyTUIFilterBots:         nil,
@@ -333,6 +336,9 @@ func loadConfig() (*Config, error) {
 	}
 	if err := validateReviewPromptTemplate(cfg.TUI.Review.Providers.Codex.Prompt); err != nil {
 		return nil, fmt.Errorf("invalid tui.review.providers.codex.prompt: %w", err)
+	}
+	if err := validateReviewPromptTemplate(cfg.TUI.Review.Providers.Gemini.Prompt); err != nil {
+		return nil, fmt.Errorf("invalid tui.review.providers.gemini.prompt: %w", err)
 	}
 
 	// Validate VCS
@@ -575,7 +581,7 @@ tui:
   review:
     default:
       # Default AI review provider and model.
-      # Providers: claude, codex
+      # Providers: claude, codex, gemini
       provider: claude
       model: opus
       effort: medium
@@ -594,6 +600,13 @@ tui:
         #   %[10]s
         prompt: |
 %[11]s
+
+      gemini:
+        # Default prompt for Gemini AI review.
+        # Available placeholders:
+        #   %[10]s
+        prompt: |
+%[12]s
 
   # Persisted filter overrides for TUI mode.
   # Set via the filter menu (alt+f) in the TUI.
@@ -665,6 +678,7 @@ team_aliases: {}
 		indentBlock(defaultReviewPromptTemplate(reviewProviderClaude), promptBlockIndent),
 		"`{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`",
 		indentBlock(defaultReviewPromptTemplate(reviewProviderCodex), promptBlockIndent),
+		indentBlock(defaultReviewPromptTemplate(reviewProviderGemini), promptBlockIndent),
 	)
 }()
 

@@ -254,6 +254,11 @@ tui:
           Review PR #{prNumber} in {ownerWithRepo}.
 
           URL: {prURL}
+      gemini:
+        prompt: |
+          Review PR #{prNumber} in {ownerWithRepo}.
+
+          URL: {prURL}
   filters: {}
   sort: {}
 

@@ -32,7 +32,7 @@ func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
 	require.Equal(
 		t,
 		`Provider
-claude  codex
+claude  codex  gemini
 
 Model
 sonnet  opus

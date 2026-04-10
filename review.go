@@ -59,11 +59,16 @@ const (
 	codexReviewEffortMedium  = "medium"
 	codexReviewEffortHigh    = "high"
 	codexReviewEffortXHigh   = "xhigh"
+
+	geminiReviewModel31Pro = "gemini-3.1-pro"
+	geminiReviewModel3Pro  = "gemini-3-pro"
+	geminiReviewModelFlash = "gemini-2.5-flash"
 )
 
 var reviewProviderChoices = []filterChoice{
 	{label: string(reviewProviderClaude), value: string(reviewProviderClaude)},
 	{label: string(reviewProviderCodex), value: string(reviewProviderCodex)},
+	{label: string(reviewProviderGemini), value: string(reviewProviderGemini)},
 }
 
 type reviewProviderConfig struct {
@@ -105,10 +110,23 @@ var codexReviewConfig = reviewProviderConfig{
 	defaultEffort: codexReviewEffortMedium,
 }
 
+var geminiReviewConfig = reviewProviderConfig{
+	models: []filterChoice{
+		{label: geminiReviewModel31Pro, value: geminiReviewModel31Pro},
+		{label: geminiReviewModel3Pro, value: geminiReviewModel3Pro},
+		{label: geminiReviewModelFlash, value: geminiReviewModelFlash},
+	},
+	defaultModel:  geminiReviewModel31Pro,
+	efforts:       nil,
+	defaultEffort: "",
+}
+
 func reviewConfig(provider reviewProvider) reviewProviderConfig {
 	switch provider {
 	case reviewProviderCodex:
 		return codexReviewConfig
+	case reviewProviderGemini:
+		return geminiReviewConfig
 	case reviewProviderClaude, reviewProviderUnknown:
 		return claudeReviewConfig
 	}
@@ -197,33 +215,64 @@ func (m tuiModel) selectedReviewProvider() reviewProvider {
 	return configuredReviewProvider(m.cfg)
 }
 
+func reviewProviderHasEffort(provider reviewProvider) bool {
+	return len(reviewConfig(provider).efforts) > 0
+}
+
+func reviewConfirmOptions(provider reviewProvider, model string) []filterOptionDef {
+	opts := []filterOptionDef{
+		{
+			label:   reviewProviderOptionLabel,
+			choices: reviewProviderChoices,
+		},
+		{
+			label:   reviewModelOptionLabel,
+			choices: reviewModelChoices(provider),
+		},
+	}
+	if reviewProviderHasEffort(provider) {
+		opts = append(opts, filterOptionDef{
+			label:   reviewEffortOptionLabel,
+			choices: reviewEffortChoices(provider, model),
+		})
+	}
+	return opts
+}
+
+func reviewConfirmOptValues(provider reviewProvider, model, effort string) []int {
+	vals := []int{
+		choiceIndex(reviewProviderChoices, string(provider)),
+		choiceIndex(reviewModelChoices(provider), model),
+	}
+	if reviewProviderHasEffort(provider) {
+		vals = append(vals, choiceIndex(reviewEffortChoices(provider, model), effort))
+	}
+	return vals
+}
+
 func (m tuiModel) syncReviewConfirmOptions(previousProvider reviewProvider) tuiModel {
-	if m.confirmAction != tuiActionReview || len(m.confirmOptions) < 3 {
+	if m.confirmAction != tuiActionReview || len(m.confirmOptions) < 2 {
 		return m
 	}
 
 	currentProvider := m.selectedReviewProvider()
 	currentModel := m.selectedConfirmOptionValue(reviewModelOptionRow)
-	m.confirmOptions[reviewModelOptionRow].choices = reviewModelChoices(currentProvider)
-	if len(m.confirmOptValues) < len(m.confirmOptions) {
-		m.confirmOptValues = append(
-			m.confirmOptValues,
-			make([]int, len(m.confirmOptions)-len(m.confirmOptValues))...)
+	currentEffort := ""
+	if reviewProviderHasEffort(previousProvider) && len(m.confirmOptions) > reviewEffortOptionRow {
+		currentEffort = m.selectedConfirmOptionValue(reviewEffortOptionRow)
 	}
-	m.confirmOptValues[reviewModelOptionRow] = choiceIndex(
-		m.confirmOptions[reviewModelOptionRow].choices,
-		normalizeReviewModel(currentProvider, currentModel),
-	)
-	currentModel = m.selectedConfirmOptionValue(reviewModelOptionRow)
-	currentEffort := m.selectedConfirmOptionValue(reviewEffortOptionRow)
-	m.confirmOptions[reviewEffortOptionRow].choices = reviewEffortChoices(
+
+	m.confirmOptions = reviewConfirmOptions(currentProvider, currentModel)
+	m.confirmOptValues = reviewConfirmOptValues(
 		currentProvider,
-		currentModel,
-	)
-	m.confirmOptValues[reviewEffortOptionRow] = choiceIndex(
-		m.confirmOptions[reviewEffortOptionRow].choices,
+		normalizeReviewModel(currentProvider, currentModel),
 		normalizeReviewEffort(currentProvider, currentModel, currentEffort),
 	)
+
+	// Clamp cursor to new option count.
+	if m.confirmOptCursor >= len(m.confirmOptions) {
+		m.confirmOptCursor = len(m.confirmOptions) - 1
+	}
 
 	if m.confirmReviewPR != nil && previousProvider != reviewProviderUnknown &&
 		previousProvider != currentProvider {
@@ -246,25 +295,8 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmHasInput = true
 	m = m.prepareConfirmInput()
 	m.confirmInputLabel = "Prompt"
-	m.confirmOptions = []filterOptionDef{
-		{
-			label:   reviewProviderOptionLabel,
-			choices: reviewProviderChoices,
-		},
-		{
-			label:   reviewModelOptionLabel,
-			choices: reviewModelChoices(provider),
-		},
-		{
-			label:   reviewEffortOptionLabel,
-			choices: reviewEffortChoices(provider, model),
-		},
-	}
-	m.confirmOptValues = []int{
-		choiceIndex(reviewProviderChoices, string(provider)),
-		choiceIndex(reviewModelChoices(provider), model),
-		choiceIndex(reviewEffortChoices(provider, model), effort),
-	}
+	m.confirmOptions = reviewConfirmOptions(provider, model)
+	m.confirmOptValues = reviewConfirmOptValues(provider, model, effort)
 	m.confirmOptCursor = 0
 	m.confirmOptFocus = true
 	m.confirmReviewPR = &prCopy
@@ -279,11 +311,14 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 			provider = configuredReviewProvider(m.cfg)
 		}
 		model := normalizeReviewModel(provider, submission.Option(reviewModelOptionLabel))
-		effort := normalizeReviewEffort(
-			provider,
-			model,
-			submission.Option(reviewEffortOptionLabel),
-		)
+		effort := ""
+		if reviewProviderHasEffort(provider) {
+			effort = normalizeReviewEffort(
+				provider,
+				model,
+				submission.Option(reviewEffortOptionLabel),
+			)
+		}
 		return func() tea.Msg {
 			err := launchAIReview(prCopy, prompt, provider, model, effort)
 			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
@@ -362,6 +397,12 @@ func buildAIReviewCommand(
 			"codex -m %s -c model_reasoning_effort=%s %s",
 			shellescape.Quote(normalizeReviewModel(provider, model)),
 			shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+			shellescape.Quote(prompt),
+		)
+	case reviewProviderGemini:
+		return baseCmd + fmt.Sprintf(
+			"gemini --model %s --prompt-interactive %s",
+			shellescape.Quote(normalizeReviewModel(provider, model)),
 			shellescape.Quote(prompt),
 		)
 	case reviewProviderUnknown:

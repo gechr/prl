@@ -166,6 +166,23 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 			shellescape.Quote("review prompt"),
 		),
 	)
+
+	cmd = buildAIReviewCommand(
+		pr,
+		"review prompt",
+		reviewProviderGemini,
+		geminiReviewModel3Pro,
+		"",
+	)
+	require.Contains(
+		t,
+		cmd,
+		fmt.Sprintf(
+			"gemini --model %s --prompt-interactive %s",
+			shellescape.Quote(geminiReviewModel3Pro),
+			shellescape.Quote("review prompt"),
+		),
+	)
 }
 
 func TestBuildAIReviewCommandPreservesPromptNewlines(t *testing.T) {
@@ -213,6 +230,35 @@ Be thorough but concise.`,
 		),
 		prompt,
 	)
+}
+
+func TestGeminiReviewHasNoEffortOptions(t *testing.T) {
+	require.Empty(t, reviewEffortChoices(reviewProviderGemini, geminiReviewModel31Pro))
+	require.False(t, reviewProviderHasEffort(reviewProviderGemini))
+	require.True(t, reviewProviderHasEffort(reviewProviderClaude))
+	require.True(t, reviewProviderHasEffort(reviewProviderCodex))
+}
+
+func TestGeminiPrepareAIReviewConfirmOmitsEffort(t *testing.T) {
+	pr := testReviewPullRequest()
+	cfg := &Config{
+		TUI: TUIConfig{
+			Review: TUIReviewConfig{
+				Default: TUIReviewDefaultConfig{
+					Provider: string(reviewProviderGemini),
+					Model:    geminiReviewModel31Pro,
+				},
+			},
+		},
+	}
+	m := tuiModel{confirmInput: newConfirmInput(), cfg: cfg}
+
+	m = m.prepareAIReviewConfirm(pr, 0)
+
+	require.Len(t, m.confirmOptions, 2)
+	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
+	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
+	require.Len(t, m.confirmOptValues, 2)
 }
 
 func TestReviewPromptUsesConfigTemplate(t *testing.T) {

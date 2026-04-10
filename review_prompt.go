@@ -19,13 +19,14 @@ const (
 	reviewProviderUnknown reviewProvider = ""
 	reviewProviderClaude  reviewProvider = "claude"
 	reviewProviderCodex   reviewProvider = "codex"
+	reviewProviderGemini  reviewProvider = "gemini"
 	defaultReviewProvider                = reviewProviderClaude
 )
 
 func normalizeReviewProvider(provider string) reviewProvider {
 	normalized := reviewProvider(strings.ToLower(provider))
 	switch normalized {
-	case reviewProviderClaude, reviewProviderCodex:
+	case reviewProviderClaude, reviewProviderCodex, reviewProviderGemini:
 		return normalized
 	case reviewProviderUnknown:
 		return reviewProviderUnknown
@@ -72,6 +73,10 @@ func reviewPromptTemplate(cfg *Config, provider reviewProvider) string {
 		case reviewProviderCodex:
 			if cfg.TUI.Review.Providers.Codex.Prompt != "" {
 				return cfg.TUI.Review.Providers.Codex.Prompt
+			}
+		case reviewProviderGemini:
+			if cfg.TUI.Review.Providers.Gemini.Prompt != "" {
+				return cfg.TUI.Review.Providers.Gemini.Prompt
 			}
 		case reviewProviderUnknown:
 			return defaultReviewPromptTemplate(defaultReviewProvider)
