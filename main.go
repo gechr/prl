@@ -44,6 +44,9 @@ func main() {
 }
 
 func run() error {
+	// Route all log output to stderr so stdout is reserved for machine-readable data.
+	clog.SetOutputWriter(os.Stderr)
+
 	prl := New()
 
 	// Load configuration
@@ -57,13 +60,12 @@ func run() error {
 	parser := kong.Must(&cli,
 		kong.Name("prl"),
 		kong.Description("Search, filter, display, and act on GitHub pull requests"),
-		kong.UsageOnError(),
 		kong.Help(prl.helpPrinter(cfg)),
 	)
 
 	_, err = parser.Parse(os.Args[1:])
 	if err != nil {
-		parser.FatalIfErrorf(err)
+		clog.Fatal().Msg(err.Error())
 	}
 
 	if cli.Version {
