@@ -101,9 +101,15 @@ func fetchAutomergeStatus(gql *api.GraphQLClient, prs []PullRequest) (map[string
 		return map[string]bool{}, nil
 	}
 
-	ids := make([]string, len(prs))
-	for i, pr := range prs {
-		ids[i] = pr.NodeID
+	ids := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		if pr.NodeID == "" || pr.automergeLoaded {
+			continue
+		}
+		ids = append(ids, pr.NodeID)
+	}
+	if len(ids) == 0 {
+		return map[string]bool{}, nil
 	}
 
 	var result struct {
@@ -130,7 +136,10 @@ func fetchAutomergeStatus(gql *api.GraphQLClient, prs []PullRequest) (map[string
 		return nil, fmt.Errorf("querying automerge status: %w", err)
 	}
 
-	enabled := make(map[string]bool, len(result.Nodes))
+	enabled := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		enabled[id] = false
+	}
 	for _, node := range result.Nodes {
 		enabled[node.ID] = node.AutomergeRequest != nil
 	}
@@ -140,7 +149,11 @@ func fetchAutomergeStatus(gql *api.GraphQLClient, prs []PullRequest) (map[string
 
 func applyAutomergeStatus(prs []PullRequest, enabled map[string]bool) {
 	for i := range prs {
-		prs[i].Automerge = enabled[prs[i].NodeID]
+		automerge, ok := enabled[prs[i].NodeID]
+		if !ok {
+			continue
+		}
+		prs[i].Automerge = automerge
 		prs[i].automergeLoaded = true
 	}
 }

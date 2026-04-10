@@ -87,6 +87,49 @@ func TestFilterByAutomergeState(t *testing.T) {
 	require.Equal(t, "https://example.com/2", disabled[0].URL)
 }
 
+func TestFetchAutomergeStatusOnlyQueriesMissingIDs(t *testing.T) {
+	t.Helper()
+
+	var calls int
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		calls++
+
+		body := readBody(t, req.Body)
+		require.NotContains(t, body, `"PR_1"`)
+		require.Contains(t, body, `"PR_2"`)
+
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{"nodes":[{"id":"PR_2","autoMergeRequest":{"enabledAt":"2026-04-10T00:00:00Z"}}]}}`,
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{
+		{NodeID: "PR_1", Automerge: false, automergeLoaded: true},
+		{NodeID: "PR_2"},
+	}
+
+	enabled, err := fetchAutomergeStatus(gql, prs)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Equal(t, map[string]bool{"PR_2": true}, enabled)
+
+	applyAutomergeStatus(prs, enabled)
+	require.False(t, prs[0].Automerge)
+	require.True(t, prs[0].automergeLoaded)
+	require.True(t, prs[1].Automerge)
+	require.True(t, prs[1].automergeLoaded)
+}
+
 func TestAllReviewDecisionsLoaded(t *testing.T) {
 	prs := []PullRequest{
 		{reviewDecisionLoaded: true},
