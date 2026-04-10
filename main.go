@@ -677,57 +677,45 @@ func runOnce(
 		return gql, nil
 	}
 
-	// Filter by automerge status: --merge shows PRs without automerge,
-	// --no-merge shows PRs with automerge.
-	if cli.Merge != nil {
-		g, gqlErr := getGQL()
-		if gqlErr != nil {
-			return "", gqlErr
-		}
-		prs, err = filterByAutomerge(g, prs, !*cli.Merge)
-		if err != nil {
-			return "", err
-		}
-		if len(prs) == 0 {
-			return "", nil
-		}
+	// Resolve timeline filter logins before the shared metadata pass.
+	closedAllowed, err := resolveTimelineLogins(rest, cli.ClosedBy.Values)
+	if err != nil {
+		return "", err
 	}
-
-	// Post-fetch filters: --closed-by, --merged-by
-	if len(cli.ClosedBy.Values) > 0 || len(cli.MergedBy.Values) > 0 {
-		g, gqlErr := getGQL()
-		if gqlErr != nil {
-			return "", gqlErr
-		}
-		prs, err = filterByTimelineActors(rest, g, prs, cli.ClosedBy.Values, cli.MergedBy.Values)
-		if err != nil {
-			return "", err
-		}
-		if len(prs) == 0 {
-			return "", nil
-		}
+	mergedAllowed, err := resolveTimelineLogins(rest, cli.MergedBy.Values)
+	if err != nil {
+		return "", err
 	}
 
 	ready := cli.PRState() == StateReady
 	ciFilter := cli.CIStatus()
 	needsEnrich := ready || ciFilter != CINone
+	needMergeStatus := (!cli.Quick || needsEnrich) &&
+		(cli.OutputFormat() == OutputTable || needsEnrich)
+	needAutomerge := cli.Merge != nil || (!cli.Quick && cli.Send)
+
+	prs, err = applyListMetadata(
+		cli,
+		getGQL,
+		prs,
+		needAutomerge,
+		needMergeStatus,
+		closedAllowed,
+		mergedAllowed,
+	)
+	if err != nil {
+		return "", err
+	}
+	if len(prs) == 0 {
+		return "", nil
+	}
 
 	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
-	if cli.Quick && !needsEnrich {
+	if cli.Quick && !needMergeStatus {
 		for i := range prs {
 			if prs[i].State == valueOpen {
 				prs[i].MergeStatus = MergeStatusBlocked
 			}
-		}
-	}
-
-	// Enrich open PRs with CI/review status for table coloring, status column,
-	// --state=ready post-filtering, and --ci post-filtering.
-	if (!cli.Quick || needsEnrich) && (cli.OutputFormat() == OutputTable || needsEnrich) {
-		if g, gqlErr := getGQL(); gqlErr == nil {
-			enrichMergeStatus(g, prs)
-		} else {
-			clog.Debug().Err(gqlErr).Msg("skipping merge status enrichment")
 		}
 	}
 
@@ -744,17 +732,6 @@ func runOnce(
 		prs = filterByCI(prs, ciFilter)
 		if len(prs) == 0 {
 			return "", nil
-		}
-	}
-
-	// Enrich auto-merge status for Slack reactions/display.
-	if !cli.Quick && cli.Send {
-		if g, gqlErr := getGQL(); gqlErr == nil {
-			if amErr := enrichAutomerge(g, prs); amErr != nil {
-				clog.Debug().Err(amErr).Msg("Failed to enrich auto-merge status")
-			}
-		} else {
-			clog.Debug().Err(gqlErr).Msg("Skipping auto-merge enrichment")
 		}
 	}
 
