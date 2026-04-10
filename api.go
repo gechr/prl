@@ -35,6 +35,10 @@ type ActionRunner struct {
 	currentLoginOnce sync.Once
 	currentLogin     string
 	currentLoginErr  error
+
+	diffClientOnce sync.Once
+	diffClient     *api.RESTClient
+	diffClientErr  error
 }
 
 // NewActionRunner creates an ActionRunner with the given API clients.
@@ -109,6 +113,18 @@ func (a *ActionRunner) cachedCurrentLogin() (string, error) {
 		a.currentLogin, a.currentLoginErr = getCurrentLogin(a.rest)
 	})
 	return a.currentLogin, a.currentLoginErr
+}
+
+func (a *ActionRunner) diffRESTClient() (*api.RESTClient, error) {
+	if a.diffClient != nil || a.diffClientErr != nil {
+		return a.diffClient, a.diffClientErr
+	}
+	a.diffClientOnce.Do(func() {
+		a.diffClient, a.diffClientErr = api.NewRESTClient(api.ClientOptions{
+			Headers: map[string]string{"Accept": "application/vnd.github.diff"},
+		})
+	})
+	return a.diffClient, a.diffClientErr
 }
 
 func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
@@ -1145,9 +1161,7 @@ func (a *ActionRunner) fetchDiff(owner, repo string, number int) (string, string
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		diffClient, err := api.NewRESTClient(api.ClientOptions{
-			Headers: map[string]string{"Accept": "application/vnd.github.diff"},
-		})
+		diffClient, err := a.diffRESTClient()
 		if err != nil {
 			diffErr = err
 			return

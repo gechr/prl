@@ -577,6 +577,7 @@ type refreshSnapshot struct {
 	cfg      *Config
 	p        *prl
 	tty      bool
+	gql      *api.GraphQLClient
 	resolver *AuthorResolver
 	rest     *api.RESTClient
 	params   *SearchParams
@@ -584,11 +585,16 @@ type refreshSnapshot struct {
 }
 
 func newRefreshSnapshot(m tuiModel) refreshSnapshot {
+	var gql *api.GraphQLClient
+	if m.actions != nil {
+		gql = m.actions.gql
+	}
 	return refreshSnapshot{
 		cli:      cloneCLI(m.cli),
 		cfg:      m.cfg,
 		p:        m.p,
 		tty:      m.tty,
+		gql:      gql,
 		resolver: m.resolver,
 		rest:     m.rest,
 		params:   cloneSearchParams(m.params),
@@ -624,8 +630,8 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	needMergeStatus := len(prs) > 0 && (!r.cli.Quick || needsEnrich)
 
 	if len(prs) > 0 && (needTimeline || needMergeStatus) {
-		if gql, gqlErr := newGraphQLClient(withDebug(r.cli.Debug)); gqlErr == nil {
-			actors, hydrateErr := hydrateListMetadata(gql, prs, listMetadataRequest{
+		if r.gql != nil {
+			actors, hydrateErr := hydrateListMetadata(r.gql, prs, listMetadataRequest{
 				mergeStatus:    needMergeStatus,
 				timelineClosed: len(closedAllowed) > 0,
 				timelineMerged: len(mergedAllowed) > 0,
@@ -3203,6 +3209,10 @@ func runTui(
 	}
 
 	resolver := NewAuthorResolver(cfg)
+	gql, err := newGraphQLClient(withDebug(cli.Debug))
+	if err != nil {
+		return fmt.Errorf("creating GraphQL client: %w", err)
+	}
 
 	type fetchResult struct {
 		rows      []TableRow
@@ -3217,6 +3227,7 @@ func runTui(
 			cfg:      cfg,
 			p:        p,
 			tty:      tty,
+			gql:      gql,
 			resolver: resolver,
 			rest:     rest,
 			params:   params,
@@ -3236,11 +3247,6 @@ func runTui(
 		return r.err
 	}
 
-	// Create ActionRunner with GraphQL (always needed for merge/automerge).
-	gql, err := newGraphQLClient(withDebug(cli.Debug))
-	if err != nil {
-		return fmt.Errorf("creating GraphQL client: %w", err)
-	}
 	actions := NewActionRunner(rest, gql)
 
 	fi := textinput.New()

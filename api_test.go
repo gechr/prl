@@ -551,6 +551,62 @@ func TestFetchPRDetailPaginatesFilesWhenNeeded(t *testing.T) {
 	}, detail.Files)
 }
 
+func TestFetchDiffReusesDedicatedClient(t *testing.T) {
+	t.Helper()
+
+	var diffCalls atomic.Int32
+	var shaCalls atomic.Int32
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/repos/owner/repo/pulls/42" {
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+		if req.Header.Get("Accept") == "application/vnd.github.diff" {
+			diffCalls.Add(1)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/plain"}},
+				Body:       io.NopCloser(strings.NewReader("diff --git a/a.txt b/a.txt")),
+				Request:    req,
+			}, nil
+		}
+		shaCalls.Add(1)
+		return jsonResponse(req, http.StatusOK, `{"head":{"sha":"abc123"}}`), nil
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	diffREST, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Headers:   map[string]string{"Accept": "application/vnd.github.diff"},
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, nil)
+	actions.diffClient = diffREST
+
+	diff, sha, err := actions.fetchDiff("owner", "repo", 42)
+	require.NoError(t, err)
+	require.Equal(t, "diff --git a/a.txt b/a.txt", diff)
+	require.Equal(t, "abc123", sha)
+	firstClient := actions.diffClient
+
+	diff, sha, err = actions.fetchDiff("owner", "repo", 42)
+	require.NoError(t, err)
+	require.Equal(t, "diff --git a/a.txt b/a.txt", diff)
+	require.Equal(t, "abc123", sha)
+	require.Same(t, firstClient, actions.diffClient)
+	require.EqualValues(t, 2, diffCalls.Load())
+	require.EqualValues(t, 2, shaCalls.Load())
+}
+
 func jsonResponse(req *http.Request, status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,
