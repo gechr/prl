@@ -107,7 +107,9 @@ type TUIFiltersConfig struct {
 }
 
 type TUIReviewProviderConfig struct {
-	Prompt string `koanf:"prompt"`
+	Prompt  string   `koanf:"prompt"`
+	Models  []string `koanf:"models"`
+	Efforts []string `koanf:"efforts"`
 }
 
 type TUIReviewProvidersConfig struct {
@@ -124,7 +126,20 @@ type TUIReviewDefaultConfig struct {
 
 type TUIReviewConfig struct {
 	Default   TUIReviewDefaultConfig   `koanf:"default"`
+	Enabled   []string                 `koanf:"enabled"`
 	Providers TUIReviewProvidersConfig `koanf:"providers"`
+}
+
+func (c TUIReviewConfig) providerConfig(provider reviewProvider) TUIReviewProviderConfig {
+	switch provider {
+	case reviewProviderCodex:
+		return c.Providers.Codex
+	case reviewProviderGemini:
+		return c.Providers.Gemini
+	case reviewProviderClaude, reviewProviderUnknown:
+		return c.Providers.Claude
+	}
+	return c.Providers.Claude
 }
 
 // TUIConfig holds TUI-specific configuration.
@@ -188,11 +203,12 @@ func defaultConfig() map[string]any {
 		keySpinnerStyle:       defaultSpinner,
 		keyTUIAutoRefresh:     true,
 		keyTUIReviewDefaultEff: defaultReviewEffort(
+			nil,
 			defaultReviewProvider,
-			defaultReviewModel(defaultReviewProvider),
+			defaultReviewModel(nil, defaultReviewProvider),
 		),
 		keyTUIReviewDefaultProv:  string(defaultReviewProvider),
-		keyTUIReviewDefaultModel: defaultReviewModel(defaultReviewProvider),
+		keyTUIReviewDefaultModel: defaultReviewModel(nil, defaultReviewProvider),
 		keyTUIReviewClaudePrompt: defaultReviewPromptTemplate(reviewProviderClaude),
 		keyTUIReviewCodexPrompt:  defaultReviewPromptTemplate(reviewProviderCodex),
 		keyTUIReviewGeminiPrompt: defaultReviewPromptTemplate(reviewProviderGemini),
@@ -295,6 +311,23 @@ func loadConfig() (*Config, error) {
 			return nil, fmt.Errorf("invalid tui.filters.review %q", cfg.TUI.Filters.Review)
 		}
 	}
+	if len(cfg.TUI.Review.Enabled) > 0 {
+		normalized := make([]string, 0, len(cfg.TUI.Review.Enabled))
+		seen := map[string]struct{}{}
+		for _, raw := range cfg.TUI.Review.Enabled {
+			provider := normalizeReviewProvider(raw)
+			if provider == reviewProviderUnknown {
+				return nil, fmt.Errorf("invalid tui.review.enabled provider %q", raw)
+			}
+			name := string(provider)
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			normalized = append(normalized, name)
+		}
+		cfg.TUI.Review.Enabled = normalized
+	}
 	provider := normalizeReviewProvider(cfg.TUI.Review.Default.Provider)
 	if provider == reviewProviderUnknown {
 		return nil, fmt.Errorf(
@@ -302,13 +335,54 @@ func loadConfig() (*Config, error) {
 			cfg.TUI.Review.Default.Provider,
 		)
 	}
+	if !isChoiceValue(reviewProviderChoices(&cfg), string(provider)) &&
+		cfg.TUI.Review.Default.Provider == string(defaultReviewProvider) {
+		provider = configuredReviewProvider(&cfg)
+	}
+	if !isChoiceValue(reviewProviderChoices(&cfg), string(provider)) {
+		return nil, fmt.Errorf(
+			"invalid tui.review.default.provider %q",
+			cfg.TUI.Review.Default.Provider,
+		)
+	}
 	cfg.TUI.Review.Default.Provider = string(provider)
+
+	for _, provider := range []reviewProvider{
+		reviewProviderClaude,
+		reviewProviderCodex,
+		reviewProviderGemini,
+	} {
+		pc := cfg.TUI.Review.providerConfig(provider)
+		if len(pc.Models) == 1 && pc.Models[0] == "" {
+			pc.Models = nil
+		}
+		if len(pc.Efforts) == 1 && pc.Efforts[0] == "" {
+			pc.Efforts = nil
+		}
+		switch provider {
+		case reviewProviderClaude:
+			cfg.TUI.Review.Providers.Claude.Models = pc.Models
+			cfg.TUI.Review.Providers.Claude.Efforts = pc.Efforts
+		case reviewProviderCodex:
+			cfg.TUI.Review.Providers.Codex.Models = pc.Models
+			cfg.TUI.Review.Providers.Codex.Efforts = pc.Efforts
+		case reviewProviderGemini:
+			cfg.TUI.Review.Providers.Gemini.Models = pc.Models
+			cfg.TUI.Review.Providers.Gemini.Efforts = pc.Efforts
+		case reviewProviderUnknown:
+			// The provider list above excludes unknown values.
+		}
+	}
 
 	model := cfg.TUI.Review.Default.Model
 	if model == "" {
-		model = defaultReviewModel(provider)
+		model = defaultReviewModel(&cfg, provider)
 	}
-	if !isValidReviewModel(provider, model) {
+	if !isValidReviewModel(&cfg, provider, model) &&
+		model == defaultReviewModel(nil, defaultReviewProvider) {
+		model = defaultReviewModel(&cfg, provider)
+	}
+	if !isValidReviewModel(&cfg, provider, model) {
 		return nil, fmt.Errorf(
 			"invalid tui.review.default.model %q for provider %q",
 			cfg.TUI.Review.Default.Model,
@@ -319,9 +393,17 @@ func loadConfig() (*Config, error) {
 
 	effort := cfg.TUI.Review.Default.Effort
 	if effort == "" {
-		effort = defaultReviewEffort(provider, model)
+		effort = defaultReviewEffort(&cfg, provider, model)
 	}
-	if !isValidReviewEffort(provider, model, effort) {
+	if effort != "" && !isValidReviewEffort(&cfg, provider, model, effort) &&
+		effort == defaultReviewEffort(
+			nil,
+			defaultReviewProvider,
+			defaultReviewModel(nil, defaultReviewProvider),
+		) {
+		effort = defaultReviewEffort(&cfg, provider, model)
+	}
+	if effort != "" && !isValidReviewEffort(&cfg, provider, model, effort) {
 		return nil, fmt.Errorf(
 			"invalid tui.review.default.effort %q for provider %q model %q",
 			cfg.TUI.Review.Default.Effort,
@@ -579,15 +661,21 @@ tui:
     enabled: true
 
   review:
+    # Optional: limit or reorder the available review providers.
+    # enabled: [claude, codex, gemini]
     default:
       # Default AI review provider and model.
       # Providers: claude, codex, gemini
       provider: claude
-      model: opus
+      model: sonnet
       effort: medium
 
     providers:
       claude:
+        # Optional overrides for the available model/effort choices.
+        # If omitted, prl uses the built-in Claude review options.
+        # models: [sonnet, opus]
+        # efforts: [low, medium, high, max, auto]
         # Default prompt for Claude AI review.
         # Available placeholders:
         #   %[10]s
@@ -595,6 +683,10 @@ tui:
 %[9]s
 
       codex:
+        # Optional overrides for the available model/effort choices.
+        # If omitted, prl uses the built-in Codex review options.
+        # models: [gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
+        # efforts: [low, medium, high, xhigh]
         # Default prompt for Codex AI review.
         # Available placeholders:
         #   %[10]s
@@ -602,6 +694,12 @@ tui:
 %[11]s
 
       gemini:
+        # Optional overrides for the available model/effort choices.
+        # If omitted, prl uses the built-in Gemini review options.
+        # models: [gemini-3.1-pro, gemini-3-pro, gemini-2.5-flash]
+        # efforts:
+        #   Gemini 3: [low, medium, high]
+        #   Gemini 2.5 Flash budgets: [0, 1024, 8192, 24576, dynamic]
         # Default prompt for Gemini AI review.
         # Available placeholders:
         #   %[10]s

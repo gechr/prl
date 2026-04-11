@@ -239,22 +239,35 @@ tui:
   refresh:
     enabled: true
   review:
+    # Optional: limit or reorder the available review providers.
+    # enabled: [claude, codex, gemini]
     default:
       provider: claude
-      model: opus
+      model: sonnet
       effort: medium
     providers:
       claude:
+        # Optional: override the available model/effort choices.
+        # models: [sonnet, opus]
+        # efforts: [low, medium, high, max, auto]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.
 
           URL: {prURL}
       codex:
+        # Optional: override the available model/effort choices.
+        # models: [gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
+        # efforts: [low, medium, high, xhigh]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.
 
           URL: {prURL}
       gemini:
+        # Optional: override the available model/effort choices.
+        # models: [gemini-3.1-pro, gemini-3-pro, gemini-2.5-flash]
+        # efforts:
+        #   Gemini 3: [low, medium, high]
+        #   Gemini 2.5 Flash budgets: [0, 1024, 8192, 24576, dynamic]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.
 
@@ -282,6 +295,8 @@ authors:
 - `plugin`: if empty, auto-discovers `prl-plugin-*` on `PATH`
 - `vcs`: controls whether `--clone` uses `git` or `jj`
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
+- Gemini review effort uses provider-specific semantics:
+  `Gemini 3` maps effort to `thinkingLevel`, while `gemini-2.5-flash` maps effort to `thinkingBudget`
 
 ## Plugins
 

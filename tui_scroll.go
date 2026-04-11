@@ -788,8 +788,8 @@ func (m tuiModel) confirmTextareaMaxHeight() int {
 		return tuiConfirmInputMaxHeight
 	}
 	// Reserve space for: border (2) + padding (2) + prompt (~2) + label (1) +
-	// options (~6) + hints (2) + blank lines (~3).
-	const overhead = 18
+	// options (~6) + hints (1) + blank lines (~3).
+	const overhead = 17
 	available := max(tuiConfirmInputMinHeight, m.height-overhead)
 	return min(available, tuiConfirmInputMaxHeight)
 }
@@ -856,7 +856,7 @@ func (m tuiModel) renderConfirmInputHints() string {
 		helpKey.Render(tuiKeyEsc) + " " + helpText.Render("cancel"),
 	}
 	if !m.hasConfirmOptions() {
-		return strings.Join(secondLine, "  ")
+		return strings.Join(secondLine, helpGap)
 	}
 
 	firstLine := []string{
@@ -865,7 +865,7 @@ func (m tuiModel) renderConfirmInputHints() string {
 		helpKey.Render("←/→") + " " + helpText.Render("select"),
 		helpKey.Render(tuiKeySpace) + " " + helpText.Render("cycle"),
 	}
-	return strings.Join(firstLine, "  ") + nl + strings.Join(secondLine, "  ")
+	return strings.Join(firstLine, helpGap) + helpGap + strings.Join(secondLine, helpGap)
 }
 
 func newConfirmInput() textarea.Model {

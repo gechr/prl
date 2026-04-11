@@ -2625,7 +2625,6 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	}
 	sw := lg.Width(status)
 	// Drop help pairs from the right until status fits.
-	const helpGap = "  "
 	for {
 		pad := usableWidth - lg.Width(lastLine) - sw
 		if pad > 0 {
@@ -2702,7 +2701,6 @@ func splitInlineHelpKey(key string) (string, string, bool) {
 }
 
 func (m tuiModel) renderHelp(pairs []helpPair) string {
-	const gap = "  "
 	var parts []string
 	helpText := m.styles.helpText
 	for _, p := range pairs {
@@ -2729,7 +2727,7 @@ func (m tuiModel) renderHelp(pairs []helpPair) string {
 	}
 
 	if m.width <= 0 {
-		return " " + strings.Join(parts, gap)
+		return " " + strings.Join(parts, helpGap)
 	}
 
 	// Wrap into multiple lines if needed.
@@ -2737,7 +2735,7 @@ func (m tuiModel) renderHelp(pairs []helpPair) string {
 	var lines []string
 	var line string
 	lineWidth := len(indent)
-	gapWidth := lg.Width(gap)
+	gapWidth := lg.Width(helpGap)
 	for i, part := range parts {
 		partWidth := lg.Width(part)
 		switch {
@@ -2749,7 +2747,7 @@ func (m tuiModel) renderHelp(pairs []helpPair) string {
 			line = part
 			lineWidth = partWidth
 		default:
-			line += gap + part
+			line += helpGap + part
 			lineWidth += gapWidth + partWidth
 		}
 	}

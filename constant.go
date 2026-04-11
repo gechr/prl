@@ -4,6 +4,9 @@ import "time"
 
 const nl = "\n"
 
+// helpGap is the two-space separator between help key pairs in TUI footer bars.
+const helpGap = "  "
+
 // valueEllipsis is the Unicode ellipsis character (U+2026).
 const valueEllipsis = "…"
 

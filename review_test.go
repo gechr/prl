@@ -74,10 +74,18 @@ func TestPrepareAIReviewConfirmUsesYesNo(t *testing.T) {
 	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
 	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
 	require.Equal(t, string(defaultReviewProvider), m.selectedConfirmOptionValue(0))
-	require.Equal(t, defaultReviewModel(defaultReviewProvider), m.selectedConfirmOptionValue(1))
 	require.Equal(
 		t,
-		defaultReviewEffort(defaultReviewProvider, defaultReviewModel(defaultReviewProvider)),
+		defaultReviewModel(nil, defaultReviewProvider),
+		m.selectedConfirmOptionValue(1),
+	)
+	require.Equal(
+		t,
+		defaultReviewEffort(
+			nil,
+			defaultReviewProvider,
+			defaultReviewModel(nil, defaultReviewProvider),
+		),
 		m.selectedConfirmOptionValue(2),
 	)
 	require.Equal(t, tuiAIReviewConfirmInputWid, m.confirmInput.Width())
@@ -130,6 +138,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	cmd := buildAIReviewCommand(
 		pr,
 		"review prompt",
+		nil,
 		reviewProviderClaude,
 		claudeReviewModelSonnet,
 		claudeReviewEffortHigh,
@@ -138,8 +147,8 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	require.Equal(t, 0, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelOpus)))
 	require.Equal(t, 1, strings.Count(cmd, "--effort="+shellescape.Quote(claudeReviewEffortHigh)))
 
-	cmd = buildAIReviewCommand(pr, "review prompt", reviewProviderClaude, "", "")
-	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelOpus)))
+	cmd = buildAIReviewCommand(pr, "review prompt", nil, reviewProviderClaude, "", "")
+	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelSonnet)))
 	require.Equal(
 		t,
 		1,
@@ -152,6 +161,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	cmd = buildAIReviewCommand(
 		pr,
 		"review prompt",
+		nil,
 		reviewProviderCodex,
 		codexReviewModel54Mini,
 		codexReviewEffortXHigh,
@@ -170,6 +180,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	cmd = buildAIReviewCommand(
 		pr,
 		"review prompt",
+		nil,
 		reviewProviderGemini,
 		geminiReviewModel3Pro,
 		"",
@@ -179,10 +190,11 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		cmd,
 		fmt.Sprintf(
 			"gemini --model %s --prompt-interactive %s",
-			shellescape.Quote(geminiReviewModel3Pro),
+			shellescape.Quote("prl-review"),
 			shellescape.Quote("review prompt"),
 		),
 	)
+	require.Contains(t, cmd, `"thinkingLevel":"HIGH"`)
 }
 
 func TestBuildAIReviewCommandPreservesPromptNewlines(t *testing.T) {
@@ -194,6 +206,7 @@ line two`
 	cmd := buildAIReviewCommand(
 		pr,
 		prompt,
+		nil,
 		reviewProviderCodex,
 		codexReviewModel54,
 		codexReviewEffortMedium,
@@ -232,14 +245,33 @@ Be thorough but concise.`,
 	)
 }
 
-func TestGeminiReviewHasNoEffortOptions(t *testing.T) {
-	require.Empty(t, reviewEffortChoices(reviewProviderGemini, geminiReviewModel31Pro))
-	require.False(t, reviewProviderHasEffort(reviewProviderGemini))
-	require.True(t, reviewProviderHasEffort(reviewProviderClaude))
-	require.True(t, reviewProviderHasEffort(reviewProviderCodex))
+func TestGeminiReviewHasEffortOptions(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		reviewEffortChoices(nil, reviewProviderGemini, geminiReviewModel31Pro),
+	)
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortOff, value: geminiReviewEffortOff},
+			{label: geminiReviewEffort1024, value: geminiReviewEffort1024},
+			{label: geminiReviewEffort8192, value: geminiReviewEffort8192},
+			{label: geminiReviewEffort24576, value: geminiReviewEffort24576},
+			{label: geminiReviewEffortDynamic, value: geminiReviewEffortDynamic},
+		},
+		reviewEffortChoices(nil, reviewProviderGemini, geminiReviewModelFlash),
+	)
+	require.True(t, reviewProviderHasEffort(nil, reviewProviderGemini, geminiReviewModel31Pro))
+	require.True(t, reviewProviderHasEffort(nil, reviewProviderClaude, claudeReviewModelSonnet))
+	require.True(t, reviewProviderHasEffort(nil, reviewProviderCodex, codexReviewModel54))
 }
 
-func TestGeminiPrepareAIReviewConfirmOmitsEffort(t *testing.T) {
+func TestGeminiPrepareAIReviewConfirmIncludesEffort(t *testing.T) {
 	pr := testReviewPullRequest()
 	cfg := &Config{
 		TUI: TUIConfig{
@@ -255,10 +287,11 @@ func TestGeminiPrepareAIReviewConfirmOmitsEffort(t *testing.T) {
 
 	m = m.prepareAIReviewConfirm(pr, 0)
 
-	require.Len(t, m.confirmOptions, 2)
+	require.Len(t, m.confirmOptions, 3)
 	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
 	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
-	require.Len(t, m.confirmOptValues, 2)
+	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
+	require.Len(t, m.confirmOptValues, 3)
 }
 
 func TestReviewPromptUsesConfigTemplate(t *testing.T) {
@@ -292,4 +325,176 @@ URL: https://github.com/owner/repo/pull/42
 Title: Improve AI review prompts`,
 		reviewPrompt(pr, cfg, reviewProviderClaude),
 	)
+}
+
+func TestReviewConfigUsesConfiguredChoices(t *testing.T) {
+	cfg := &Config{
+		TUI: TUIConfig{
+			Review: TUIReviewConfig{
+				Providers: TUIReviewProvidersConfig{
+					Codex: TUIReviewProviderConfig{
+						Models:  []string{"gpt-5.5", "gpt-5.5-mini"},
+						Efforts: []string{"minimal", "deep"},
+					},
+				},
+			},
+		},
+	}
+
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: "gpt-5.5", value: "gpt-5.5"},
+			{label: "gpt-5.5-mini", value: "gpt-5.5-mini"},
+		},
+		reviewModelChoices(cfg, reviewProviderCodex),
+	)
+	require.Equal(t, "gpt-5.5", defaultReviewModel(cfg, reviewProviderCodex))
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: "minimal", value: "minimal"},
+			{label: "deep", value: "deep"},
+		},
+		reviewEffortChoices(cfg, reviewProviderCodex, "gpt-5.5"),
+	)
+	require.Equal(t, "minimal", defaultReviewEffort(cfg, reviewProviderCodex, "gpt-5.5"))
+}
+
+func TestBuildAIReviewCommandUsesConfiguredFallbackChoices(t *testing.T) {
+	pr := testReviewPullRequest()
+	cfg := &Config{
+		TUI: TUIConfig{
+			Review: TUIReviewConfig{
+				Providers: TUIReviewProvidersConfig{
+					Codex: TUIReviewProviderConfig{
+						Models:  []string{"gpt-5.5"},
+						Efforts: []string{"deep"},
+					},
+				},
+			},
+		},
+	}
+
+	cmd := buildAIReviewCommand(pr, "review prompt", cfg, reviewProviderCodex, "", "")
+
+	require.Contains(t, cmd, "codex -m gpt-5.5 -c model_reasoning_effort=deep")
+}
+
+func TestBuildAIReviewCommandUsesGeminiBudgetFor25Flash(t *testing.T) {
+	pr := testReviewPullRequest()
+
+	cmd := buildAIReviewCommand(
+		pr,
+		"review prompt",
+		nil,
+		reviewProviderGemini,
+		geminiReviewModelFlash,
+		geminiReviewEffort1024,
+	)
+
+	require.Contains(t, cmd, `"model":"gemini-2.5-flash"`)
+	require.Contains(t, cmd, `"thinkingBudget":1024`)
+}
+
+func TestMatchesPatternTreatsPlainStringsAsExact(t *testing.T) {
+	require.True(t, matchesPattern("sonnet", "sonnet"))
+	require.False(t, matchesPattern("sonnet", "sonnet-4"))
+}
+
+func TestMatchesPatternTreatsWildcardsAsGlobs(t *testing.T) {
+	require.True(t, matchesPattern("gemini-3*", "gemini-3-pro"))
+	require.True(t, matchesPattern("gemini-*", "gemini-2.5-flash"))
+	require.False(t, matchesPattern("gemini-3*", "gemini-2.5-flash"))
+}
+
+func TestClaudeEffortRulesUseGlobFallback(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
+			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
+			{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+			{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
+			{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
+		},
+		reviewEffortChoices(nil, reviewProviderClaude, "claude-3.7-sonnet"),
+	)
+	require.Equal(
+		t,
+		claudeReviewEffortMedium,
+		defaultReviewEffort(nil, reviewProviderClaude, "claude-3.7-sonnet"),
+	)
+}
+
+func TestCodexEffortRulesUseGlobFallback(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: codexReviewEffortLow, value: codexReviewEffortLow},
+			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+		},
+		reviewEffortChoices(nil, reviewProviderCodex, "gpt-5.5"),
+	)
+	require.Equal(
+		t,
+		codexReviewEffortMedium,
+		defaultReviewEffort(nil, reviewProviderCodex, "gpt-5.5"),
+	)
+}
+
+func TestGeminiEffortRulesPreferSpecificGlobBeforeCatchAll(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortOff, value: geminiReviewEffortOff},
+			{label: geminiReviewEffort1024, value: geminiReviewEffort1024},
+			{label: geminiReviewEffort8192, value: geminiReviewEffort8192},
+			{label: geminiReviewEffort24576, value: geminiReviewEffort24576},
+			{label: geminiReviewEffortDynamic, value: geminiReviewEffortDynamic},
+		},
+		reviewEffortChoices(nil, reviewProviderGemini, "gemini-2.5-flash-preview"),
+	)
+	require.Equal(
+		t,
+		geminiReviewEffortDynamic,
+		defaultReviewEffort(nil, reviewProviderGemini, "gemini-2.5-flash-preview"),
+	)
+}
+
+func TestGeminiEffortRulesUseCatchAllGlob(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		reviewEffortChoices(nil, reviewProviderGemini, "gemini-2.0-pro"),
+	)
+	require.Equal(
+		t,
+		geminiReviewEffortHigh,
+		defaultReviewEffort(nil, reviewProviderGemini, "gemini-2.0-pro"),
+	)
+}
+
+func TestGeminiEffortRulesUseExactMatchForBareGemini(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		reviewEffortChoices(nil, reviewProviderGemini, "gemini"),
+	)
+	require.Equal(
+		t,
+		geminiReviewEffortHigh,
+		defaultReviewEffort(nil, reviewProviderGemini, "gemini"),
+	)
+	require.True(t, reviewProviderHasEffort(nil, reviewProviderGemini, "gemini"))
 }

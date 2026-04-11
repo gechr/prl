@@ -113,6 +113,59 @@ func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testi
 	)
 }
 
+func TestLoadConfigUsesConfiguredReviewModelAndEffortChoices(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`tui:
+  review:
+    default:
+      provider: codex
+    providers:
+      codex:
+        models: [gpt-5.5, gpt-5.5-mini]
+        efforts: [minimal, deep]
+`),
+			0o600,
+		),
+	)
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.5", cfg.TUI.Review.Default.Model)
+	require.Equal(t, "minimal", cfg.TUI.Review.Default.Effort)
+}
+
+func TestLoadConfigUsesConfiguredReviewProviders(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`tui:
+  review:
+    enabled: [codex, claude]
+`),
+			0o600,
+		),
+	)
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, []string{"codex", "claude"}, cfg.TUI.Review.Enabled)
+	require.Equal(t, "claude", cfg.TUI.Review.Default.Provider)
+}
+
 func TestLoadConfigMigratesLegacySlackDefaultOutput(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

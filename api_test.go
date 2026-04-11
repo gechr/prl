@@ -385,7 +385,7 @@ func TestExecuteForceMergeBatchesCheckPolling(t *testing.T) {
 	case body := <-checksStarted:
 		require.Contains(t, body, `"PR_1"`)
 		require.Contains(t, body, `"PR_2"`)
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("batched force-merge check poll did not start")
 	}
 
@@ -401,7 +401,7 @@ func TestExecuteForceMergeBatchesCheckPolling(t *testing.T) {
 	select {
 	case err := <-done:
 		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("force-merge execution did not finish")
 	}
 

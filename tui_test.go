@@ -44,7 +44,7 @@ low  medium  high  max  auto
 		stripped,
 	)
 	require.Equal(t, 0, strings.Count(rendered, cursorLineBG))
-	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewModelOpus))
+	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewModelSonnet))
 	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewEffortMedium))
 }
 
@@ -154,7 +154,7 @@ func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) 
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, string(reviewProviderCodex), bm.selectedConfirmOptionValue(0))
-	require.Equal(t, defaultReviewModel(reviewProviderCodex), bm.selectedConfirmOptionValue(1))
+	require.Equal(t, defaultReviewModel(nil, reviewProviderCodex), bm.selectedConfirmOptionValue(1))
 	require.Equal(
 		t,
 		[]filterChoice{
@@ -176,6 +176,44 @@ func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) 
 	)
 }
 
+func TestUpdateConfirmOverlaySwitchingToGeminiShowsEffortImmediately(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+	}
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+
+	bm := m
+	model, cmd := bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+
+	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyRight})
+	require.Nil(t, cmd)
+	bm, ok = model.(tuiModel)
+	require.True(t, ok)
+
+	require.Equal(t, string(reviewProviderGemini), bm.selectedConfirmOptionValue(0))
+	require.Equal(
+		t,
+		defaultReviewModel(nil, reviewProviderGemini),
+		bm.selectedConfirmOptionValue(1),
+	)
+	require.Len(t, bm.confirmOptions, 3)
+	require.Equal(t, reviewEffortOptionLabel, bm.confirmOptions[2].label)
+	require.NotEmpty(t, bm.confirmOptions[2].choices)
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		bm.confirmOptions[2].choices,
+	)
+}
+
 func TestRenderConfirmOptionsHighlightsActiveRowInGreen(t *testing.T) {
 	m := tuiModel{
 		confirmInput: newConfirmInput(),
@@ -189,8 +227,8 @@ func TestRenderConfirmOptionsHighlightsActiveRowInGreen(t *testing.T) {
 
 	require.NotContains(t, rendered, cursorLineBG)
 	require.Contains(t, rendered, m.styles.helpKey.Render("Model"))
-	require.Contains(t, rendered, styleHighlight.Bold(true).Render(claudeReviewModelOpus))
-	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelSonnet))
+	require.Contains(t, rendered, styleHighlight.Bold(true).Render(claudeReviewModelSonnet))
+	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelOpus))
 }
 
 func TestUpdateConfirmOverlayTabLoopsAcrossOptions(t *testing.T) {

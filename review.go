@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
+	"strconv"
 	"strings"
 
 	"al.essio.dev/pkg/shellescape"
@@ -60,22 +63,35 @@ const (
 	codexReviewEffortHigh    = "high"
 	codexReviewEffortXHigh   = "xhigh"
 
+	geminiReviewEffortMinimal = "minimal"
+	geminiReviewEffortLow     = "low"
+	geminiReviewEffortMedium  = "medium"
+	geminiReviewEffortHigh    = "high"
+	geminiReviewEffortOff     = "0"
+	geminiReviewEffort1024    = "1024"
+	geminiReviewEffort8192    = "8192"
+	geminiReviewEffort24576   = "24576"
+	geminiReviewEffortDynamic = "dynamic"
+
 	geminiReviewModel31Pro = "gemini-3.1-pro"
 	geminiReviewModel3Pro  = "gemini-3-pro"
 	geminiReviewModelFlash = "gemini-2.5-flash"
+
+	geminiModelPatternExact   = "gemini"
+	geminiModelPatternAll     = "gemini-*"
+	geminiModelPattern3       = "gemini-3*"
+	geminiModelPattern25Flash = "gemini-2.5-flash*"
 )
 
-var reviewProviderChoices = []filterChoice{
+var builtInReviewProviderChoices = []filterChoice{
 	{label: string(reviewProviderClaude), value: string(reviewProviderClaude)},
 	{label: string(reviewProviderCodex), value: string(reviewProviderCodex)},
 	{label: string(reviewProviderGemini), value: string(reviewProviderGemini)},
 }
 
 type reviewProviderConfig struct {
-	models        []filterChoice
-	defaultModel  string
-	efforts       []filterChoice
-	defaultEffort string
+	models       []filterChoice
+	defaultModel string
 }
 
 var claudeReviewConfig = reviewProviderConfig{
@@ -83,15 +99,7 @@ var claudeReviewConfig = reviewProviderConfig{
 		{label: claudeReviewModelSonnet, value: claudeReviewModelSonnet},
 		{label: claudeReviewModelOpus, value: claudeReviewModelOpus},
 	},
-	defaultModel: claudeReviewModelOpus,
-	efforts: []filterChoice{
-		{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
-		{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
-		{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
-		{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
-		{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
-	},
-	defaultEffort: claudeReviewEffortMedium,
+	defaultModel: claudeReviewModelSonnet,
 }
 
 var codexReviewConfig = reviewProviderConfig{
@@ -101,13 +109,6 @@ var codexReviewConfig = reviewProviderConfig{
 		{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
 	},
 	defaultModel: codexReviewModel54,
-	efforts: []filterChoice{
-		{label: codexReviewEffortLow, value: codexReviewEffortLow},
-		{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
-		{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
-		{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
-	},
-	defaultEffort: codexReviewEffortMedium,
 }
 
 var geminiReviewConfig = reviewProviderConfig{
@@ -116,12 +117,28 @@ var geminiReviewConfig = reviewProviderConfig{
 		{label: geminiReviewModel3Pro, value: geminiReviewModel3Pro},
 		{label: geminiReviewModelFlash, value: geminiReviewModelFlash},
 	},
-	defaultModel:  geminiReviewModel31Pro,
-	efforts:       nil,
-	defaultEffort: "",
+	defaultModel: geminiReviewModel31Pro,
 }
 
-func reviewConfig(provider reviewProvider) reviewProviderConfig {
+func reviewConfig(cfg *Config, provider reviewProvider) reviewProviderConfig {
+	base := builtInReviewConfig(provider)
+	if cfg == nil {
+		return base
+	}
+
+	override := cfg.TUI.Review.providerConfig(provider)
+	if len(override.Models) > 0 {
+		base.models = reviewChoices(override.Models)
+	}
+
+	if !isChoiceValue(base.models, base.defaultModel) && len(base.models) > 0 {
+		base.defaultModel = base.models[0].value
+	}
+
+	return base
+}
+
+func builtInReviewConfig(provider reviewProvider) reviewProviderConfig {
 	switch provider {
 	case reviewProviderCodex:
 		return codexReviewConfig
@@ -133,24 +150,202 @@ func reviewConfig(provider reviewProvider) reviewProviderConfig {
 	return claudeReviewConfig
 }
 
-func reviewModelChoices(provider reviewProvider) []filterChoice {
-	return reviewConfig(provider).models
+func reviewChoices(values []string) []filterChoice {
+	choices := make([]filterChoice, len(values))
+	for i, value := range values {
+		choices[i] = filterChoice{label: value, value: value}
+	}
+	return choices
 }
 
-func defaultReviewModel(provider reviewProvider) string {
-	return reviewConfig(provider).defaultModel
+func isChoiceValue(choices []filterChoice, value string) bool {
+	for _, choice := range choices {
+		if choice.value == value {
+			return true
+		}
+	}
+	return false
 }
 
-func reviewEffortChoices(provider reviewProvider, _ string) []filterChoice {
-	return reviewConfig(provider).efforts
+func reviewProviderChoices(cfg *Config) []filterChoice {
+	if cfg == nil || len(cfg.TUI.Review.Enabled) == 0 {
+		return builtInReviewProviderChoices
+	}
+	return reviewChoices(cfg.TUI.Review.Enabled)
 }
 
-func defaultReviewEffort(provider reviewProvider, _ string) string {
-	return reviewConfig(provider).defaultEffort
+func reviewModelChoices(cfg *Config, provider reviewProvider) []filterChoice {
+	return reviewConfig(cfg, provider).models
 }
 
-func isValidReviewModel(provider reviewProvider, model string) bool {
-	for _, choice := range reviewModelChoices(provider) {
+func defaultReviewModel(cfg *Config, provider reviewProvider) string {
+	return reviewConfig(cfg, provider).defaultModel
+}
+
+func reviewEffortChoices(cfg *Config, provider reviewProvider, model string) []filterChoice {
+	if model == "" {
+		model = defaultReviewModel(cfg, provider)
+	}
+	return reviewEffortChoicesForModel(cfg, provider, model)
+}
+
+func defaultReviewEffort(cfg *Config, provider reviewProvider, model string) string {
+	if model == "" {
+		model = defaultReviewModel(cfg, provider)
+	}
+	return defaultReviewEffortForModel(cfg, provider, model)
+}
+
+func reviewEffortChoicesForModel(
+	cfg *Config,
+	provider reviewProvider,
+	model string,
+) []filterChoice {
+	if cfg != nil {
+		override := cfg.TUI.Review.providerConfig(provider)
+		if len(override.Efforts) > 0 {
+			return reviewChoices(override.Efforts)
+		}
+	}
+	switch provider {
+	case reviewProviderCodex:
+		return matchingReviewEffortRule(codexEffortRules, model).choices
+	case reviewProviderGemini:
+		return matchingReviewEffortRule(geminiEffortRules, model).choices
+	case reviewProviderClaude, reviewProviderUnknown:
+		return matchingReviewEffortRule(claudeEffortRules, model).choices
+	}
+	return nil
+}
+
+func defaultReviewEffortForModel(cfg *Config, provider reviewProvider, model string) string {
+	if cfg != nil {
+		override := cfg.TUI.Review.providerConfig(provider)
+		if len(override.Efforts) > 0 {
+			return override.Efforts[0]
+		}
+	}
+	switch provider {
+	case reviewProviderCodex:
+		return matchingReviewEffortRule(codexEffortRules, model).def
+	case reviewProviderGemini:
+		return matchingReviewEffortRule(geminiEffortRules, model).def
+	case reviewProviderClaude, reviewProviderUnknown:
+		return matchingReviewEffortRule(claudeEffortRules, model).def
+	}
+	return ""
+}
+
+type geminiThinkingMode string
+
+const (
+	geminiEffortModeNone           geminiThinkingMode = ""
+	geminiEffortModeThinkingLevel  geminiThinkingMode = "thinking_level"
+	geminiEffortModeThinkingBudget geminiThinkingMode = "thinking_budget"
+)
+
+type reviewEffortRule struct {
+	pattern string
+	choices []filterChoice
+	def     string
+	mode    geminiThinkingMode
+}
+
+var claudeEffortRules = []reviewEffortRule{
+	{
+		pattern: "*",
+		choices: []filterChoice{
+			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
+			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
+			{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+			{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
+			{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
+		},
+		def: claudeReviewEffortMedium,
+	},
+}
+
+var codexEffortRules = []reviewEffortRule{
+	{
+		pattern: "*",
+		choices: []filterChoice{
+			{label: codexReviewEffortLow, value: codexReviewEffortLow},
+			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+		},
+		def: codexReviewEffortMedium,
+	},
+}
+
+var geminiEffortRules = []reviewEffortRule{
+	{
+		pattern: geminiModelPattern25Flash,
+		choices: []filterChoice{
+			{label: geminiReviewEffortOff, value: geminiReviewEffortOff},
+			{label: geminiReviewEffort1024, value: geminiReviewEffort1024},
+			{label: geminiReviewEffort8192, value: geminiReviewEffort8192},
+			{label: geminiReviewEffort24576, value: geminiReviewEffort24576},
+			{label: geminiReviewEffortDynamic, value: geminiReviewEffortDynamic},
+		},
+		def:  geminiReviewEffortDynamic,
+		mode: geminiEffortModeThinkingBudget,
+	},
+	{
+		pattern: geminiModelPattern3,
+		choices: []filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		def:  geminiReviewEffortHigh,
+		mode: geminiEffortModeThinkingLevel,
+	},
+	{
+		pattern: geminiModelPatternExact,
+		choices: []filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		def:  geminiReviewEffortHigh,
+		mode: geminiEffortModeThinkingLevel,
+	},
+	{
+		pattern: geminiModelPatternAll,
+		choices: []filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		def:  geminiReviewEffortHigh,
+		mode: geminiEffortModeThinkingLevel,
+	},
+}
+
+func geminiEffortMode(model string) geminiThinkingMode {
+	return matchingReviewEffortRule(geminiEffortRules, model).mode
+}
+
+func matchingReviewEffortRule(rules []reviewEffortRule, model string) reviewEffortRule {
+	for _, rule := range rules {
+		if matchesPattern(rule.pattern, model) {
+			return rule
+		}
+	}
+	return reviewEffortRule{}
+}
+
+func matchesPattern(pattern, value string) bool {
+	if !strings.ContainsAny(pattern, "*?[") {
+		return pattern == value
+	}
+	match, err := path.Match(pattern, value)
+	return err == nil && match
+}
+
+func isValidReviewModel(cfg *Config, provider reviewProvider, model string) bool {
+	for _, choice := range reviewModelChoices(cfg, provider) {
 		if choice.value == model {
 			return true
 		}
@@ -158,8 +353,8 @@ func isValidReviewModel(provider reviewProvider, model string) bool {
 	return false
 }
 
-func isValidReviewEffort(provider reviewProvider, model, effort string) bool {
-	for _, choice := range reviewEffortChoices(provider, model) {
+func isValidReviewEffort(cfg *Config, provider reviewProvider, model, effort string) bool {
+	for _, choice := range reviewEffortChoicesForModel(cfg, provider, model) {
 		if choice.value == effort {
 			return true
 		}
@@ -167,18 +362,18 @@ func isValidReviewEffort(provider reviewProvider, model, effort string) bool {
 	return false
 }
 
-func normalizeReviewModel(provider reviewProvider, model string) string {
-	if isValidReviewModel(provider, model) {
+func normalizeReviewModel(cfg *Config, provider reviewProvider, model string) string {
+	if isValidReviewModel(cfg, provider, model) {
 		return model
 	}
-	return defaultReviewModel(provider)
+	return defaultReviewModel(cfg, provider)
 }
 
-func normalizeReviewEffort(provider reviewProvider, model, effort string) string {
-	if isValidReviewEffort(provider, model, effort) {
+func normalizeReviewEffort(cfg *Config, provider reviewProvider, model, effort string) string {
+	if isValidReviewEffort(cfg, provider, model, effort) {
 		return effort
 	}
-	return defaultReviewEffort(provider, model)
+	return defaultReviewEffort(cfg, provider, model)
 }
 
 func configuredReviewProvider(cfg *Config) reviewProvider {
@@ -187,24 +382,31 @@ func configuredReviewProvider(cfg *Config) reviewProvider {
 	}
 	if provider := normalizeReviewProvider(
 		cfg.TUI.Review.Default.Provider,
-	); provider != reviewProviderUnknown {
+	); provider != reviewProviderUnknown &&
+		isChoiceValue(reviewProviderChoices(cfg), string(provider)) {
 		return provider
+	}
+	if isChoiceValue(reviewProviderChoices(cfg), string(defaultReviewProvider)) {
+		return defaultReviewProvider
+	}
+	if choices := reviewProviderChoices(cfg); len(choices) > 0 {
+		return normalizeReviewProvider(choices[0].value)
 	}
 	return defaultReviewProvider
 }
 
 func configuredReviewModel(cfg *Config, provider reviewProvider) string {
 	if cfg == nil {
-		return defaultReviewModel(provider)
+		return defaultReviewModel(nil, provider)
 	}
-	return normalizeReviewModel(provider, cfg.TUI.Review.Default.Model)
+	return normalizeReviewModel(cfg, provider, cfg.TUI.Review.Default.Model)
 }
 
 func configuredReviewEffort(cfg *Config, provider reviewProvider, model string) string {
 	if cfg == nil {
-		return defaultReviewEffort(provider, model)
+		return defaultReviewEffort(nil, provider, model)
 	}
-	return normalizeReviewEffort(provider, model, cfg.TUI.Review.Default.Effort)
+	return normalizeReviewEffort(cfg, provider, model, cfg.TUI.Review.Default.Effort)
 }
 
 func (m tuiModel) selectedReviewProvider() reviewProvider {
@@ -215,37 +417,44 @@ func (m tuiModel) selectedReviewProvider() reviewProvider {
 	return configuredReviewProvider(m.cfg)
 }
 
-func reviewProviderHasEffort(provider reviewProvider) bool {
-	return len(reviewConfig(provider).efforts) > 0
+func reviewProviderHasEffort(cfg *Config, provider reviewProvider, model string) bool {
+	model = normalizeReviewModel(cfg, provider, model)
+	if model == "" {
+		model = defaultReviewModel(cfg, provider)
+	}
+	return len(reviewEffortChoicesForModel(cfg, provider, model)) > 0
 }
 
-func reviewConfirmOptions(provider reviewProvider, model string) []filterOptionDef {
+func reviewConfirmOptions(cfg *Config, provider reviewProvider, model string) []filterOptionDef {
+	model = normalizeReviewModel(cfg, provider, model)
 	opts := []filterOptionDef{
 		{
 			label:   reviewProviderOptionLabel,
-			choices: reviewProviderChoices,
+			choices: reviewProviderChoices(cfg),
 		},
 		{
 			label:   reviewModelOptionLabel,
-			choices: reviewModelChoices(provider),
+			choices: reviewModelChoices(cfg, provider),
 		},
 	}
-	if reviewProviderHasEffort(provider) {
+	if reviewProviderHasEffort(cfg, provider, model) {
 		opts = append(opts, filterOptionDef{
 			label:   reviewEffortOptionLabel,
-			choices: reviewEffortChoices(provider, model),
+			choices: reviewEffortChoicesForModel(cfg, provider, model),
 		})
 	}
 	return opts
 }
 
-func reviewConfirmOptValues(provider reviewProvider, model, effort string) []int {
+func reviewConfirmOptValues(cfg *Config, provider reviewProvider, model, effort string) []int {
+	model = normalizeReviewModel(cfg, provider, model)
+	effort = normalizeReviewEffort(cfg, provider, model, effort)
 	vals := []int{
-		choiceIndex(reviewProviderChoices, string(provider)),
-		choiceIndex(reviewModelChoices(provider), model),
+		choiceIndex(reviewProviderChoices(cfg), string(provider)),
+		choiceIndex(reviewModelChoices(cfg, provider), model),
 	}
-	if reviewProviderHasEffort(provider) {
-		vals = append(vals, choiceIndex(reviewEffortChoices(provider, model), effort))
+	if reviewProviderHasEffort(cfg, provider, model) {
+		vals = append(vals, choiceIndex(reviewEffortChoicesForModel(cfg, provider, model), effort))
 	}
 	return vals
 }
@@ -258,15 +467,17 @@ func (m tuiModel) syncReviewConfirmOptions(previousProvider reviewProvider) tuiM
 	currentProvider := m.selectedReviewProvider()
 	currentModel := m.selectedConfirmOptionValue(reviewModelOptionRow)
 	currentEffort := ""
-	if reviewProviderHasEffort(previousProvider) && len(m.confirmOptions) > reviewEffortOptionRow {
+	if reviewProviderHasEffort(m.cfg, previousProvider, currentModel) &&
+		len(m.confirmOptions) > reviewEffortOptionRow {
 		currentEffort = m.selectedConfirmOptionValue(reviewEffortOptionRow)
 	}
 
-	m.confirmOptions = reviewConfirmOptions(currentProvider, currentModel)
+	m.confirmOptions = reviewConfirmOptions(m.cfg, currentProvider, currentModel)
 	m.confirmOptValues = reviewConfirmOptValues(
+		m.cfg,
 		currentProvider,
-		normalizeReviewModel(currentProvider, currentModel),
-		normalizeReviewEffort(currentProvider, currentModel, currentEffort),
+		normalizeReviewModel(m.cfg, currentProvider, currentModel),
+		normalizeReviewEffort(m.cfg, currentProvider, currentModel, currentEffort),
 	)
 
 	// Clamp cursor to new option count.
@@ -295,8 +506,8 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmHasInput = true
 	m = m.prepareConfirmInput()
 	m.confirmInputLabel = "Prompt"
-	m.confirmOptions = reviewConfirmOptions(provider, model)
-	m.confirmOptValues = reviewConfirmOptValues(provider, model, effort)
+	m.confirmOptions = reviewConfirmOptions(m.cfg, provider, model)
+	m.confirmOptValues = reviewConfirmOptValues(m.cfg, provider, model, effort)
 	m.confirmOptCursor = 0
 	m.confirmOptFocus = true
 	m.confirmReviewPR = &prCopy
@@ -310,17 +521,18 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 		if provider == reviewProviderUnknown {
 			provider = configuredReviewProvider(m.cfg)
 		}
-		model := normalizeReviewModel(provider, submission.Option(reviewModelOptionLabel))
+		model := normalizeReviewModel(m.cfg, provider, submission.Option(reviewModelOptionLabel))
 		effort := ""
-		if reviewProviderHasEffort(provider) {
+		if reviewProviderHasEffort(m.cfg, provider, model) {
 			effort = normalizeReviewEffort(
+				m.cfg,
 				provider,
 				model,
 				submission.Option(reviewEffortOptionLabel),
 			)
 		}
 		return func() tea.Msg {
-			err := launchAIReview(prCopy, prompt, provider, model, effort)
+			err := launchAIReview(prCopy, prompt, m.cfg, provider, model, effort)
 			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 	}
@@ -333,6 +545,7 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 func launchAIReview(
 	pr PullRequest,
 	prompt string,
+	cfg *Config,
 	provider reviewProvider,
 	model string,
 	effort string,
@@ -344,7 +557,7 @@ func launchAIReview(
 
 	script, err := buildAIReviewAppleScript(
 		launcher,
-		buildAIReviewCommand(pr, prompt, provider, model, effort),
+		buildAIReviewCommand(pr, prompt, cfg, provider, model, effort),
 	)
 	if err != nil {
 		return err
@@ -365,6 +578,7 @@ func launchAIReview(
 func buildAIReviewCommand(
 	pr PullRequest,
 	prompt string,
+	cfg *Config,
 	provider reviewProvider,
 	model string,
 	effort string,
@@ -391,25 +605,23 @@ func buildAIReviewCommand(
 		pr.Number,
 		pr.Number,
 	)
+	cmdModel := normalizeReviewModel(cfg, provider, model)
+	cmdEffort := normalizeReviewEffort(cfg, provider, cmdModel, effort)
 	switch provider {
 	case reviewProviderCodex:
 		return baseCmd + fmt.Sprintf(
 			"codex -m %s -c model_reasoning_effort=%s %s",
-			shellescape.Quote(normalizeReviewModel(provider, model)),
-			shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+			shellescape.Quote(cmdModel),
+			shellescape.Quote(cmdEffort),
 			shellescape.Quote(prompt),
 		)
 	case reviewProviderGemini:
-		return baseCmd + fmt.Sprintf(
-			"gemini --model %s --prompt-interactive %s",
-			shellescape.Quote(normalizeReviewModel(provider, model)),
-			shellescape.Quote(prompt),
-		)
+		return baseCmd + buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt)
 	case reviewProviderUnknown:
 		return baseCmd + fmt.Sprintf(
 			"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
-			shellescape.Quote(normalizeReviewModel(provider, model)),
-			shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+			shellescape.Quote(cmdModel),
+			shellescape.Quote(cmdEffort),
 			shellescape.Quote(
 				"You are an expert code reviewer. Be thorough, precise, and actionable.",
 			),
@@ -418,8 +630,8 @@ func buildAIReviewCommand(
 	case reviewProviderClaude:
 		return baseCmd + fmt.Sprintf(
 			"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
-			shellescape.Quote(normalizeReviewModel(provider, model)),
-			shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+			shellescape.Quote(cmdModel),
+			shellescape.Quote(cmdEffort),
 			shellescape.Quote(
 				"You are an expert code reviewer. Be thorough, precise, and actionable.",
 			),
@@ -428,11 +640,72 @@ func buildAIReviewCommand(
 	}
 	return baseCmd + fmt.Sprintf(
 		"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
-		shellescape.Quote(normalizeReviewModel(provider, model)),
-		shellescape.Quote(normalizeReviewEffort(provider, model, effort)),
+		shellescape.Quote(cmdModel),
+		shellescape.Quote(cmdEffort),
 		shellescape.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
 		shellescape.Quote(prompt),
 	)
+}
+
+func buildGeminiReviewCommand(reviewDir, model, effort, prompt string) string {
+	settingsJSON, err := json.Marshal(geminiReviewSettings(model, effort))
+	if err != nil {
+		return fmt.Sprintf(
+			"gemini --model %s --prompt-interactive %s",
+			shellescape.Quote(model),
+			shellescape.Quote(prompt),
+		)
+	}
+	return fmt.Sprintf(
+		"/bin/mkdir -p %s/.gemini && printf '%%s' %s > %s/.gemini/settings.json && gemini --model %s --prompt-interactive %s",
+		shellescape.Quote(reviewDir),
+		shellescape.Quote(string(settingsJSON)),
+		shellescape.Quote(reviewDir),
+		shellescape.Quote("prl-review"),
+		shellescape.Quote(prompt),
+	)
+}
+
+func geminiReviewSettings(model, effort string) map[string]any {
+	modelConfig := map[string]any{"model": model}
+	if thinkingConfig := geminiThinkingConfig(model, effort); len(thinkingConfig) > 0 {
+		modelConfig["generateContentConfig"] = map[string]any{
+			"thinkingConfig": thinkingConfig,
+		}
+	}
+	return map[string]any{
+		"modelConfigs": map[string]any{
+			"customAliases": map[string]any{
+				"prl-review": map[string]any{
+					"modelConfig": modelConfig,
+				},
+			},
+		},
+	}
+}
+
+func geminiThinkingConfig(model, effort string) map[string]any {
+	if effort == "" {
+		return nil
+	}
+	switch geminiEffortMode(model) {
+	case geminiEffortModeThinkingLevel:
+		return map[string]any{
+			"thinkingLevel": strings.ToUpper(effort),
+		}
+	case geminiEffortModeThinkingBudget:
+		if effort == geminiReviewEffortDynamic {
+			return map[string]any{"thinkingBudget": -1}
+		}
+		budget, err := strconv.Atoi(effort)
+		if err != nil {
+			return nil
+		}
+		return map[string]any{"thinkingBudget": budget}
+	case geminiEffortModeNone:
+		return nil
+	}
+	return nil
 }
 
 func buildAIReviewAppleScript(launcher aiReviewLauncher, shellCmd string) (string, error) {

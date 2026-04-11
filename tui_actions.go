@@ -674,7 +674,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		effort := configuredReviewEffort(m.cfg, provider, model)
 		prompt := reviewPrompt(prCopy, m.cfg, provider)
 		return m, func() tea.Msg {
-			err := launchAIReview(prCopy, prompt, provider, model, effort)
+			err := launchAIReview(prCopy, prompt, m.cfg, provider, model, effort)
 			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}, true
 
