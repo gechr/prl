@@ -91,6 +91,58 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	require.Nil(t, altModel.confirmCmd)
 }
 
+func TestUpdateListViewCtrlRSinglePRBypassesConfirm(t *testing.T) {
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		items:        []PRRowModel{{PR: pr}},
+		rows:         []TableRow{{Item: PRRowModel{PR: pr}}},
+		removed:      make(prKeys),
+		selected:     make(prKeys),
+		confirmInput: newConfirmInput(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	require.NotNil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Empty(t, bm.confirmAction)
+	require.Empty(t, bm.confirmPrompt)
+	require.Nil(t, bm.confirmCmd)
+}
+
+func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
+	prA := testReviewPullRequest()
+	prB := testReviewPullRequest()
+	prB.Number = 43
+	prB.URL = "https://github.com/owner/repo/pull/43"
+	m := tuiModel{
+		items: []PRRowModel{{PR: prA}, {PR: prB}},
+		rows: []TableRow{
+			{Item: PRRowModel{PR: prA}},
+			{Item: PRRowModel{PR: prB}},
+		},
+		removed:  make(prKeys),
+		selected: prKeys{makePRKey(prA): true, makePRKey(prB): true},
+		styles:   newTuiStyles(),
+	}
+
+	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	require.Nil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiActionCopilotReview, bm.confirmAction)
+	require.Equal(
+		t,
+		"Request Copilot review for 2 PRs?",
+		bm.confirmPrompt,
+	)
+	require.Equal(t, "2 PRs", bm.confirmSubject)
+	require.NotNil(t, bm.confirmCmd)
+	require.True(t, bm.confirmState.Yes)
+}
+
 func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	m := tuiModel{styles: newTuiStyles()}

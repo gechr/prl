@@ -735,15 +735,16 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // confirmActionVerb maps confirm action names to in-progress verbs.
 var confirmActionVerb = map[string]string{
-	tuiActionApprove:      "Approving",
-	tuiActionApproveMerge: "Approving & merging",
-	tuiActionClose:        "Closing",
-	tuiActionComment:      "Commenting",
-	tuiActionForceMerge:   "Force-merging",
-	tuiActionMerge:        "Merging",
-	tuiActionSendSlack:    "Slacking",
-	tuiActionUnassign:     "Unassigning",
-	tuiActionUpdateBranch: "Updating branch",
+	tuiActionApprove:       "Approving",
+	tuiActionApproveMerge:  "Approving & merging",
+	tuiActionClose:         "Closing",
+	tuiActionComment:       "Commenting",
+	tuiActionCopilotReview: "Requesting Copilot review for",
+	tuiActionForceMerge:    "Force-merging",
+	tuiActionMerge:         "Merging",
+	tuiActionSendSlack:     "Slacking",
+	tuiActionUnassign:      "Unassigning",
+	tuiActionUpdateBranch:  "Updating branch",
 }
 
 func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {

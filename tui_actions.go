@@ -907,20 +907,23 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				}
 			}, true
 		}
-		batch := make([]targetPR, len(targets))
-		copy(batch, targets)
-		return m, func() tea.Msg {
-			return runBatchAction(actions, batch, tuiActionReviewRequested,
-				func(a *ActionRunner, pr PullRequest) error {
-					owner, repo := prOwnerRepo(pr)
-					return a.requestReview(
-						owner,
-						repo,
-						pr.Number,
-						copilotReviewer,
-					)
-				})
-		}, true
+		setupConfirmBatch(
+			&m,
+			targets,
+			tuiActionCopilotReview,
+			tuiActionReviewRequested,
+			"Request Copilot review for",
+			func(a *ActionRunner, pr PullRequest) error {
+				owner, repo := prOwnerRepo(pr)
+				return a.requestReview(
+					owner,
+					repo,
+					pr.Number,
+					copilotReviewer,
+				)
+			},
+		)
+		return m, nil, true
 	}
 
 	return m, nil, false
