@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,16 +15,24 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/formatters"
-	"github.com/alecthomas/chroma/v2/lexers"
-	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/glamour"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
-	"github.com/gechr/prl/internal/table"
-	"github.com/gechr/prl/internal/term"
+	"github.com/gechr/primer/filter"
+	"github.com/gechr/primer/flash"
+	"github.com/gechr/primer/helpbar"
+	"github.com/gechr/primer/helpsheet"
+	"github.com/gechr/primer/key"
+	"github.com/gechr/primer/layout"
+	"github.com/gechr/primer/overlay"
+	"github.com/gechr/primer/picker"
+	"github.com/gechr/primer/prompt"
+	"github.com/gechr/primer/render"
+	"github.com/gechr/primer/scrollbar"
+	"github.com/gechr/primer/scrollwheel"
+	"github.com/gechr/primer/table"
+	"github.com/gechr/primer/term"
+	"github.com/gechr/primer/view"
 )
 
 type confirmSubmission struct {
@@ -135,9 +140,6 @@ func (m tuiModel) renderTuiIndex(num int, selected bool) string {
 	}
 	return styleDim.Render(text)
 }
-
-// helpPair is a key-description pair for rendering help text.
-type helpPair struct{ key, desc string }
 
 // tuiAction identifies the type of action performed on a PR.
 type tuiAction int
@@ -347,9 +349,6 @@ type batchResult struct {
 	err error
 }
 
-// clearStatusMsg clears the status bar after a timeout.
-type clearStatusMsg struct{ id int }
-
 // aiReviewMsg is sent when the AI review clone+launch completes.
 type aiReviewMsg struct {
 	index int
@@ -388,11 +387,6 @@ type spinnerTickMsg struct{ id int }
 // external screen clears (e.g. Cmd+K in iTerm2).
 type screenCheckMsg struct{}
 
-type batchedWheelMsg struct {
-	target wheelTarget
-	delta  int
-}
-
 // refreshResultMsg carries the result of a background data refresh.
 type refreshResultMsg struct {
 	rows     []TableRow
@@ -426,9 +420,7 @@ type tuiModel struct {
 	detailView        viewport.Model
 	detailRefreshID   int
 	detailLoading     bool
-	statusMsg         string
-	statusErr         bool
-	statusID          int
+	flash             flash.State
 	actions           *ActionRunner
 	width             int
 	height            int
@@ -438,9 +430,7 @@ type tuiModel struct {
 
 	// Filter options overlay.
 	showOptions   bool
-	optionsCursor filterRow
-	optionsValues [6]int // index into choices for each filterOptionDef
-	optionsReset  [6]bool
+	optionsPicker picker.Model
 
 	// Diff queue for sequential multi-PR review.
 	diffQueue      []prKey // remaining PR keys to diff through
@@ -466,14 +456,11 @@ type tuiModel struct {
 	confirmURL        string  // optional URL for hyperlinking the subject in progress
 	confirmCmd        tea.Cmd // command to run on confirmation
 	confirmCmdFn      func(confirmSubmission) tea.Cmd
-	confirmYes        bool              // true = Yes selected, false = No selected
+	confirmState      prompt.State      // generic prompt interaction state (yes/no, option focus/cursor/values)
 	confirmHasInput   bool              // true when modal includes a text input
 	confirmInputLabel string            // label above the textarea (default: "Comment")
 	confirmInput      textarea.Model    // optional text input (e.g. close comment)
 	confirmOptions    []filterOptionDef // optional selectable rows shown in confirm modal
-	confirmOptValues  []int             // selected choice per confirm option row
-	confirmOptCursor  int               // focused confirm option row
-	confirmOptFocus   bool              // true when confirm option rows have focus
 	confirmReviewPR   *PullRequest      // selected PR when the confirm modal is for AI review
 	confirmView       viewport.Model    // scrollable viewport for overflowing confirm modals
 	scrollDrag        scrollbarDragState
@@ -694,8 +681,8 @@ func (m tuiModel) selectedConfirmOptionValue(row int) string {
 		return ""
 	}
 	idx := 0
-	if row < len(m.confirmOptValues) {
-		idx = min(max(m.confirmOptValues[row], 0), len(choices)-1)
+	if row < len(m.confirmState.OptValues) {
+		idx = min(max(m.confirmState.OptValues[row], 0), len(choices)-1)
 	}
 	return choices[idx].value
 }
@@ -845,8 +832,8 @@ func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
 	m.spinnerTick = 0
 	m.queryGen++
 	if showStatus {
-		m.statusMsg = m.styles.statusPending.Render("Applying" + valueEllipsis)
-		m.statusErr = false
+		m.flash.Msg = m.styles.statusPending.Render("Applying" + valueEllipsis)
+		m.flash.Err = false
 	}
 	snapshot := newRefreshSnapshot(*m)
 	queryGen := m.queryGen
@@ -898,8 +885,8 @@ func (m *tuiModel) exitDiffView() tea.Cmd {
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok &&
-		(key.String() == tuiKeyCtrlC || key.String() == tuiKeyCtrlD) &&
+	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
+		(keyMsg.String() == key.CtrlC || keyMsg.String() == key.CtrlD) &&
 		!m.filterInput.Focused() {
 		return m, tea.Quit
 	}
@@ -931,6 +918,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.toggleSort(col)
 			}
 		}
+		if m.view == tuiViewList && msg.Button == tea.MouseLeft {
+			if idx, ok := m.rowIndexAt(msg.Y); ok {
+				m.cursor = idx
+			}
+		}
 		return m, nil
 
 	case tea.MouseMotionMsg:
@@ -942,12 +934,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseReleaseMsg:
 		m.touchInteraction()
-		m.scrollDrag = scrollbarDragState{}
+		m.scrollDrag.Release()
 		return m, nil
 
-	case batchedWheelMsg:
+	case scrollwheel.Msg[wheelTarget]:
 		m.touchInteraction()
-		m.applyWheelScroll(msg.target, msg.delta)
+		m.applyWheelScroll(msg.Target, msg.Delta)
 		return m, nil
 
 	case actionMsg:
@@ -1024,7 +1016,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		status := fmt.Sprintf("%d/%d", msg.count-msg.failed, msg.count)
 		if msg.failed > 0 {
 			m.confirmAction = tuiActionInfo
-			m.confirmYes = true
+			m.confirmState.Yes = true
 			m.confirmPrompt = renderBatchFailurePrompt(msg)
 			m.confirmCmd = nil
 			return m, flashResult(
@@ -1037,10 +1029,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, flashResult(&m, msg.action.String(), status+" PRs", "", false)
 
-	case clearStatusMsg:
-		if msg.id == m.statusID {
-			m.statusMsg = ""
-		}
+	case flash.ClearMsg:
+		m.flash.Clear(msg)
 		return m, nil
 
 	case diffFetchedMsg:
@@ -1070,11 +1060,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diffKey = msg.key
 		pr := m.rows[idx].Item.PR
 		m.diff = highlightDiff(msg.diff, pr.URL, msg.headSHA)
-		m.diffLines = wrapDiffLines(m.diff, m.width-tuiScrollbarWidth)
+		m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
 		m.syncDiffView()
 		m.diffView.GotoTop()
 		m.view = tuiViewDiff
-		m.statusMsg = ""
+		m.flash.Msg = ""
 		return m, nil
 
 	case detailFetchedMsg:
@@ -1093,7 +1083,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncDetailView()
 		m.detailView.GotoTop()
 		m.view = tuiViewDetail
-		m.statusMsg = ""
+		m.flash.Msg = ""
 		return m, m.scheduleDetailRefresh()
 
 	case detailRefreshTickMsg:
@@ -1218,7 +1208,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.showRefreshStatus {
 			m.showRefreshStatus = false
-			m.statusMsg = ""
+			m.flash.Msg = ""
 		}
 		m.lastRefreshAt = time.Now()
 		m.dismissedEmpty = false
@@ -1253,17 +1243,17 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle filter input mode.
 	if m.filterInput.Focused() {
 		switch msg.String() {
-		case tuiKeyEnter:
+		case key.Enter:
 			m.filterInput.Blur()
 			return m, nil
-		case tuiKeyEsc, tuiKeyCtrlC, tuiKeyCtrlD:
+		case key.Esc, key.CtrlC, key.CtrlD:
 			m.filterInput.SetValue("")
 			m.filterInput.Blur()
 			m.resyncCursorAndOffset()
 			return m, nil
-		case tuiKeyUp, tuiKeyDown:
+		case key.Up, key.Down:
 			dir := 1
-			if msg.String() == tuiKeyUp {
+			if msg.String() == key.Up {
 				dir = -1
 			}
 			if next, ok := m.nextVisible(dir); ok {
@@ -1294,7 +1284,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Freeze interactions while a view is loading in the background.
 	if m.detailLoading || m.diffLoading {
 		switch msg.String() {
-		case tuiKeyEsc, "q":
+		case key.Esc, "q":
 			return m, tea.Quit
 		default:
 			return m, nil
@@ -1307,7 +1297,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case tuiKeyEsc:
+	case key.Esc:
 		if m.filterInput.Value() != "" {
 			m.filterInput.SetValue("")
 			m.resyncCursorAndOffset()
@@ -1333,7 +1323,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.filterInput.Focus()
 
-	case tuiKeyEnter:
+	case key.Enter:
 		pr := m.currentPR()
 		if pr == nil {
 			return m, nil
@@ -1342,9 +1332,9 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		idx := m.cursor
 		actions := m.actions
 		prCopy := *pr
-		m.statusMsg = m.styles.statusPending.Render("Fetching") + " " +
+		m.flash.Msg = m.styles.statusPending.Render("Fetching") + " " +
 			styleRef.Render(prCopy.Ref()) + valueEllipsis
-		m.statusErr = false
+		m.flash.Err = false
 		m.detailLoading = true
 		key := makePRKey(prCopy)
 		fetchCmd := func() tea.Msg {
@@ -1354,21 +1344,21 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(requestWindowSizeCmd(), fetchCmd)
 
-	case tuiKeybindVimDown, tuiKeyDown:
+	case tuiKeybindVimDown, key.Down:
 		if next, ok := m.nextVisible(1); ok {
 			m.cursor = next
 			m.offset = m.scrolledOffset()
 		}
 		return m, nil
 
-	case tuiKeybindVimUp, tuiKeyUp:
+	case tuiKeybindVimUp, key.Up:
 		if next, ok := m.nextVisible(-1); ok {
 			m.cursor = next
 			m.offset = m.scrolledOffset()
 		}
 		return m, nil
 
-	case tuiKeyCtrlF:
+	case key.CtrlF:
 		viewport := m.listViewport()
 		for range viewport {
 			if next, ok := m.nextVisible(1); ok {
@@ -1378,7 +1368,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.offset = m.scrolledOffset()
 		return m, nil
 
-	case tuiKeyCtrlB:
+	case key.CtrlB:
 		viewport := m.listViewport()
 		for range viewport {
 			if next, ok := m.nextVisible(-1); ok {
@@ -1404,15 +1394,15 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tuiKeySpace:
+	case key.Space:
 		m.toggleCurrentSelection()
 		return m, nil
 
-	case tuiKeybindExtendSelectionDown:
+	case key.ShiftDown:
 		m.extendSelectionAndMove(1)
 		return m, nil
 
-	case tuiKeybindExtendSelectionUp:
+	case key.ShiftUp:
 		m.extendSelectionAndMove(-1)
 		return m, nil
 
@@ -1447,9 +1437,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tuiKeybindOptions:
 		m.showOptions = true
-		m.optionsCursor = 0
-		m.optionsValues = m.currentFilterValues()
-		m.optionsReset = [6]bool{}
+		m.optionsPicker = m.newFilterPicker()
 		return m, nil
 
 	case tuiKeybindHelp:
@@ -1469,7 +1457,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.invalidateRefresh()
 		return m, nil
 
-	case tuiKeyTab:
+	case key.Tab:
 		if m.sortColumn != "" {
 			return m.toggleSort(m.sortColumn)
 		}
@@ -1520,13 +1508,37 @@ func (m tuiModel) View() tea.View {
 	v := m.viewList()
 	switch {
 	case m.showHelp:
-		v.Content = overlayCenter(v.Content, m.renderHelpOverlay(), m.width, m.height)
+		v.Content = overlay.Place(
+			v.Content,
+			m.renderHelpOverlay(),
+			m.width,
+			m.height,
+			overlay.Center,
+		)
 	case m.showOptions:
-		v.Content = overlayCenter(v.Content, m.renderOptionsOverlay(), m.width, m.height)
+		v.Content = overlay.Place(
+			v.Content,
+			m.renderOptionsOverlay(),
+			m.width,
+			m.height,
+			overlay.Center,
+		)
 	case m.confirmAction != "":
-		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
-	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.statusMsg == "":
-		v.Content = overlayCenter(v.Content, m.renderEmptyOverlay(), m.width, m.height)
+		v.Content = overlay.Place(
+			v.Content,
+			m.renderConfirmModal(),
+			m.width,
+			m.height,
+			overlay.Center,
+		)
+	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.flash.Msg == "":
+		v.Content = overlay.Place(
+			v.Content,
+			m.renderEmptyOverlay(),
+			m.width,
+			m.height,
+			overlay.Center,
+		)
 	}
 	return v
 }
@@ -1569,7 +1581,7 @@ func (m tuiModel) viewList() tea.View {
 			if m.selected[m.rowKeyAt(idx)] {
 				bg = cursorLineSelectedBG
 			}
-			b.WriteString(injectLineBackground(line, m.width, bg))
+			b.WriteString(layout.PreserveBackgroundWidth(line, bg, m.width))
 		} else {
 			b.WriteString(line)
 		}
@@ -1599,21 +1611,18 @@ func (m tuiModel) viewList() tea.View {
 		b.WriteString(nl)
 		help = m.renderHelp(m.listHelpPairs())
 	}
-	if m.statusMsg != "" {
+	if m.flash.Msg != "" {
 		b.WriteString(m.appendStatus(help))
 	} else {
 		status := ""
 		total := len(visible)
 		if total > viewport {
-			pct := scrollPercent(start, total, end-start)
-			status = m.styles.statusOK.Render(
-				fmt.Sprintf("%d-%d/%d (%d%%)", start+1, end, total, pct),
-			)
+			status = m.styles.statusOK.Render(scrollbar.Position(start, end, total))
 		}
 		b.WriteString(m.appendRightStatus(help, status))
 	}
 
-	v := tea.NewView(expandTabs(b.String()))
+	v := tea.NewView(layout.ExpandTabs(b.String()))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	m.applyRepaintMarker(&v)
@@ -1649,25 +1658,6 @@ func (m tuiModel) viewDiff() tea.View {
 	)
 }
 
-const (
-	sepHorizontal = "─"
-	sepJunction   = "┬"
-)
-
-// separatorPad builds a run of ─ characters with an optional ┬ junction at col.
-func separatorPad(width, col int) string {
-	if col >= 0 && col < width {
-		return strings.Repeat(
-			sepHorizontal,
-			col,
-		) + sepJunction + strings.Repeat(
-			sepHorizontal,
-			width-col-1,
-		)
-	}
-	return strings.Repeat(sepHorizontal, width)
-}
-
 // renderListSeparator renders the separator line. If junctionCol >= 0, a ┬ is
 // placed at that visual column to connect with a │ in the line below.
 func (m tuiModel) renderListSeparator(junctionCol ...int) string {
@@ -1682,7 +1672,7 @@ func (m tuiModel) renderListSeparator(junctionCol ...int) string {
 	if len(tags) > 0 {
 		return m.renderTagSeparator(tags, col)
 	}
-	return m.styles.separator.Render(separatorPad(m.width, col))
+	return m.styles.separator.Render(layout.Separator(m.width, col))
 }
 
 func (m tuiModel) renderTagSeparator(tags []string, col int) string {
@@ -1700,7 +1690,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 		}
 	}
 	indicator := strings.Join(renderedTags, " ")
-	suffixText := strings.Repeat(sepHorizontal, 2) //nolint:mnd // fixed suffix width
+	suffixText := strings.Repeat("─", 2) //nolint:mnd // fixed suffix width
 	suffix := m.styles.separator.Render(" " + suffixText)
 	const indicatorPrefix = " "
 	available := m.width - lg.Width(indicatorPrefix) - lg.Width(suffix)
@@ -1711,7 +1701,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 		indicator = xansi.Truncate(indicator, available, valueEllipsis)
 	}
 	pad := max(m.width-lg.Width(indicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
-	return m.styles.separator.Render(separatorPad(pad, col)) +
+	return m.styles.separator.Render(layout.Separator(pad, col)) +
 		indicatorPrefix +
 		indicator +
 		suffix
@@ -1732,73 +1722,59 @@ func (m tuiModel) renderFullScreenView(
 	renderLines []string,
 	help string,
 ) tea.View {
-	var b strings.Builder
-
-	if header != "" {
-		b.WriteString(header)
-		b.WriteString(nl)
-		if m.width > 0 {
-			b.WriteString(m.styles.separator.Render(strings.Repeat(sepHorizontal, m.width)))
-		}
-		b.WriteString(nl)
-	}
-
 	totalLines := vp.TotalLineCount()
 	vpHeight := vp.Height()
-	switch {
-	case vpHeight <= 0:
-		b.WriteString(nl)
-	case totalLines > vpHeight:
-		b.WriteString(m.renderViewportContent(renderLines, vp, true))
-	default:
-		b.WriteString(m.renderViewportContent(renderLines, vp, false))
-	}
-	b.WriteString(nl)
-
-	if m.width > 0 {
-		b.WriteString(m.styles.separator.Render(strings.Repeat(sepHorizontal, m.width)))
-	}
-	b.WriteString(nl)
-
-	if m.statusMsg != "" {
-		b.WriteString(m.appendStatus(help))
-	} else {
-		status := ""
-		if totalLines > vpHeight {
-			offset := vp.YOffset()
-			end := min(offset+vpHeight, totalLines)
-			pct := int(math.Round(vp.ScrollPercent() * 100)) //nolint:mnd // percent
-			status = m.styles.statusOK.Render(
-				fmt.Sprintf("%d-%d/%d (%d%%)", offset+1, end, totalLines, pct),
-			)
-		}
-		b.WriteString(m.appendRightStatus(help, status))
+	status := ""
+	if m.flash.Msg != "" {
+		status = m.renderFlashStatus()
+	} else if totalLines > vpHeight {
+		offset := vp.YOffset()
+		end := min(offset+vpHeight, totalLines)
+		pct := int(math.Round(vp.ScrollPercent() * 100)) //nolint:mnd // percent
+		status = m.styles.statusOK.Render(
+			fmt.Sprintf("%d-%d/%d (%d%%)", offset+1, end, totalLines, pct),
+		)
 	}
 
-	v := tea.NewView(m.fillViewToTerminal(b.String()))
+	v := tea.NewView(view.RenderFrame(view.FrameModel{
+		Header: header,
+		Footer: m.footerComponents(help, status),
+		Lines:  renderLines,
+		View:   vp,
+		Width:  m.width,
+		Height: m.height,
+		Styles: view.FrameStyles{
+			Separator: m.styles.separator,
+			Scrollbar: scrollbar.Styles{
+				Thumb: lg.NewStyle().Foreground(colorAccent),
+				Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
+			},
+		},
+	}))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	if m.confirmAction != "" {
-		v.Content = overlayCenter(v.Content, m.renderConfirmModal(), m.width, m.height)
+		v.Content = overlay.Place(
+			v.Content,
+			m.renderConfirmModal(),
+			m.width,
+			m.height,
+			overlay.Center,
+		)
 	}
 	m.applyRepaintMarker(&v)
 	return v
 }
 
-func (m tuiModel) fillViewToTerminal(output string) string {
-	output = expandTabs(output)
-	if m.width <= 0 || m.height <= 0 {
-		return output
-	}
-
-	// Extend short views to the terminal height so the next fullscreen render
-	// has blank rows available below the content.
-	lines := strings.Split(output, nl)
-	blank := strings.Repeat(" ", m.width)
-	for len(lines) < m.height {
-		lines = append(lines, blank)
-	}
-	return strings.Join(lines, nl)
+func (m tuiModel) renderViewportContent(
+	lines []string,
+	vp viewport.Model,
+	withScrollbar bool,
+) string {
+	return view.RenderContent(lines, vp, withScrollbar, scrollbar.Styles{
+		Thumb: lg.NewStyle().Foreground(colorAccent),
+		Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
+	})
 }
 
 func requestWindowSizeCmd() tea.Cmd {
@@ -1821,7 +1797,7 @@ func (m *tuiModel) applyWindowSize(width, height int) {
 	m.height = height
 	m.header, m.rows, m.colWidths = m.rerender()
 	if m.view == tuiViewDiff {
-		m.diffLines = wrapDiffLines(m.diff, m.width-tuiScrollbarWidth)
+		m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
 		m.syncDiffView()
 	}
 	if m.view == tuiViewDetail && len(m.detailLines) > 0 {
@@ -2021,19 +1997,12 @@ func (m tuiModel) renderMarkdown(body string) []string {
 	if width <= 0 {
 		width = defaultTermWidth
 	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStylePath("dracula"),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return m.plainBodyLines(body)
-	}
-	rendered, err := r.Render(body)
-	if err != nil {
+	rendered := render.Markdown(body, width, "dracula")
+	if rendered == "" {
 		return m.plainBodyLines(body)
 	}
 	var lines []string
-	for line := range strings.SplitSeq(strings.TrimRight(rendered, nl), nl) {
+	for line := range strings.SplitSeq(rendered, nl) {
 		lines = append(lines, line)
 	}
 	return lines
@@ -2089,82 +2058,20 @@ func (m tuiModel) visibleIndices() []int {
 		return indices
 	}
 
-	term := parseFilterTerm(f)
+	term := filter.Parse(f)
 	for i := range m.rows {
 		if m.removed[m.rowKeyAt(i)] {
 			continue
 		}
 		text := rowFilterText(m.rows[i])
-		if term.prefix || term.suffix {
+		if term.Prefix || term.Suffix {
 			text = m.rows[i].Item.PR.Title
 		}
-		if matchesTerm(text, term) {
+		if term.Match(text) {
 			indices = append(indices, i)
 		}
 	}
 	return indices
-}
-
-// filterTerm represents a parsed search term with optional modifiers.
-type filterTerm struct {
-	text          string
-	prefix        bool // ^
-	suffix        bool // $
-	negate        bool // !
-	caseSensitive bool
-}
-
-// parseFilterTerm parses a filter string into a term.
-// Supports: ! (negate), ^ (prefix), $ (suffix).
-// Smart case: case-insensitive unless the term contains uppercase.
-func parseFilterTerm(f string) filterTerm {
-	var t filterTerm
-
-	if rest, ok := strings.CutPrefix(f, "!"); ok {
-		t.negate = true
-		f = rest
-	}
-	if rest, ok := strings.CutPrefix(f, "^"); ok {
-		t.prefix = true
-		f = rest
-	}
-	if rest, ok := strings.CutSuffix(f, "$"); ok {
-		t.suffix = true
-		f = rest
-	}
-
-	t.caseSensitive = f != strings.ToLower(f)
-	t.text = f
-	return t
-}
-
-func matchesTerm(text string, t filterTerm) bool {
-	if t.text == "" {
-		return true
-	}
-
-	needle := t.text
-	if !t.caseSensitive {
-		text = strings.ToLower(text)
-		needle = strings.ToLower(needle)
-	}
-
-	var matched bool
-	switch {
-	case t.prefix && t.suffix:
-		matched = text == needle
-	case t.prefix:
-		matched = strings.HasPrefix(text, needle)
-	case t.suffix:
-		matched = strings.HasSuffix(text, needle)
-	default:
-		matched = strings.Contains(text, needle)
-	}
-
-	if t.negate {
-		return !matched
-	}
-	return matched
 }
 
 func (m tuiModel) nextVisible(dir int) (int, bool) {
@@ -2344,57 +2251,64 @@ func (m *tuiModel) extendSelectionAndMove(dir int) {
 	m.selected[m.rowKeyAt(m.cursor)] = true
 }
 
-func (m tuiModel) listHelpPairs() []helpPair {
-	pairs := []helpPair{
-		{tuiKeyEnter, tuiHelpShow},
-		{tuiKeySpace, tuiHelpSelect},
-		{tuiKeybindFilter, tuiHelpFilter},
+func (m tuiModel) listHelpPairs() []key.Hint {
+	pairs := []key.Hint{
+		{Key: key.Enter, Desc: tuiHelpShow},
+		{Key: key.Space, Desc: tuiHelpSelect},
+		{Key: tuiKeybindFilter, Desc: tuiHelpFilter},
 	}
 	ctx, ok := m.actionContextForCursor()
 	actionable := ok && ctx.actionable
 	if actionable && !ctx.ownPR && !ctx.draft {
-		pairs = append(pairs, helpPair{tuiKeybindApprove, tuiHelpApprove})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindDiff, tuiHelpDiff})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindDiff, Desc: tuiHelpDiff})
 	if actionable && !ctx.draft {
-		pairs = append(pairs, helpPair{tuiKeybindMerge, mergeHelpForPR(&ctx.pr)})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindMerge, Desc: mergeHelpForPR(&ctx.pr)})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindComment, Desc: tuiHelpComment})
 	if ctx.state != valueMerged {
-		pairs = append(pairs, helpPair{tuiKeybindClose, closeReopenHelp(ctx.state)})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindClose, Desc: closeReopenHelp(ctx.state)})
 	}
 	pairs = append(
 		pairs,
-		helpPair{tuiKeybindOpen, tuiHelpOpen},
-		helpPair{tuiKeybindCopyURL, tuiHelpCopy},
+		key.Hint{Key: tuiKeybindOpen, Desc: tuiHelpOpen},
+		key.Hint{Key: tuiKeybindCopyURL, Desc: tuiHelpCopy},
 	)
 	if actionable && !ctx.draft && hasAIReviewLauncher() {
-		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindReview, Desc: tuiHelpReview})
 	}
 	if m.autoRefresh {
-		pairs = append(pairs, helpPair{tuiKeybindToggleRefresh, "refresh " + styledOn})
+		pairs = append(
+			pairs,
+			key.Hint{Key: tuiKeybindToggleRefresh, Desc: "refresh " + styledOn},
+		)
 	} else {
-		pairs = append(pairs, helpPair{tuiKeybindToggleRefresh, "refresh " + styledOff})
+		pairs = append(
+			pairs,
+			key.Hint{Key: tuiKeybindToggleRefresh, Desc: "refresh " + styledOff},
+		)
 	}
 	pairs = append(pairs,
-		helpPair{tuiKeybindOptions, tuiHelpOptions},
-		helpPair{tuiKeybindHelp, tuiHelpHelp},
-		helpPair{tuiKeybindQuit, tuiHelpQuit},
+		key.Hint{Key: tuiKeybindOptions, Desc: tuiHelpOptions},
+		key.Hint{Key: tuiKeybindHelp, Desc: tuiHelpHelp},
+		key.Hint{Key: tuiKeybindQuit, Desc: tuiHelpQuit},
 	)
 	return pairs
 }
 
 func (m tuiModel) renderFilterSyntaxHints() string {
-	syntaxPairs := []struct{ key, desc string }{
-		{"^", "start"},
-		{"$", "end"},
-		{"!", "negate"},
-	}
-	var parts []string
-	for _, p := range syntaxPairs {
-		parts = append(parts, styleHeading.Bold(true).Render(p.key)+" "+styleFilter.Render(p.desc))
-	}
-	return " " + strings.Join(parts, "  ")
+	return key.Renderer{
+		Styles: key.Styles{
+			Key:  styleHeading.Bold(true),
+			Text: styleFilter,
+		},
+		Gap: "  ",
+	}.Render([]key.Hint{
+		{Key: "^", Desc: "start"},
+		{Key: "$", Desc: "end"},
+		{Key: "!", Desc: "negate"},
+	})
 }
 
 const filterHelpGap = "  "
@@ -2405,210 +2319,216 @@ func (m tuiModel) filterHelpPipeCol() int {
 }
 
 func (m tuiModel) renderFilterHelp() string {
-	pairs := []helpPair{
-		{tuiKeysArrows, "prev/next"},
-		{tuiKeyEnter, "apply"},
-		{tuiKeyEsc, "exit"},
+	pairs := []key.Hint{
+		{Key: key.ArrowsUpDown, Desc: "prev/next"},
+		{Key: key.Enter, Desc: "apply"},
+		{Key: key.Esc, Desc: "exit"},
 	}
-	base := strings.TrimLeft(m.renderHelp(pairs), " ")
+	base := key.Renderer{
+		Styles: key.Styles{
+			Key:  m.styles.helpKey,
+			Text: m.styles.helpText,
+		},
+		Gap:    helpGap,
+		Prefix: new(""),
+		Inline: true,
+	}.Render(pairs)
 	sep := m.styles.separator.Render("│")
 	return m.renderFilterSyntaxHints() + filterHelpGap + sep + filterHelpGap + base
 }
 
-func (m tuiModel) diffHelpPairs() []helpPair {
-	pairs := []helpPair{
-		{tuiKeysArrows, tuiHelpScroll},
+func (m tuiModel) diffHelpPairs() []key.Hint {
+	pairs := []key.Hint{
+		{Key: key.ArrowsUpDown, Desc: tuiHelpScroll},
 	}
 	ctx, _ := m.actionContextForKey(m.diffKey)
 	actionable := ctx.actionable
 	if actionable && !ctx.draft {
-		pairs = append(pairs, helpPair{tuiKeybindMerge, mergeHelpForPR(&ctx.pr)})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindMerge, Desc: mergeHelpForPR(&ctx.pr)})
 	}
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindDraftToggle, draftToggleHelp(&ctx.pr)})
+		pairs = append(
+			pairs,
+			key.Hint{Key: tuiKeybindDraftToggle, Desc: draftToggleHelp(&ctx.pr)},
+		)
 	}
 	if actionable && !ctx.ownPR && !ctx.draft {
 		pairs = append(
 			pairs,
-			helpPair{tuiKeybindApprove, tuiHelpApprove},
+			key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove},
 		)
-		pairs = append(pairs, helpPair{tuiKeybindApproveMerge, tuiHelpApproveMerge})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindApproveMerge, Desc: tuiHelpApproveMerge})
 	}
 	if actionable && !ctx.ownPR {
-		pairs = append(pairs, helpPair{tuiKeybindUnassign, tuiHelpUnsubscribe})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindUnassign, Desc: tuiHelpUnsubscribe})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindComment, Desc: tuiHelpComment})
 	if ctx.state != valueMerged {
-		pairs = append(pairs, helpPair{tuiKeybindClose, closeReopenHelp(ctx.state)})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindClose, Desc: closeReopenHelp(ctx.state)})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
-	pairs = append(pairs, helpPair{tuiKeybindCopyURL, tuiHelpCopy})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindOpen, Desc: tuiHelpOpen})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindCopyURL, Desc: tuiHelpCopy})
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindSlack, tuiHelpSlack})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindSlack, Desc: tuiHelpSlack})
 	}
 
 	if actionable && !ctx.draft && hasAIReviewLauncher() {
-		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindReview, Desc: tuiHelpReview})
 	}
 	if actionable && !ctx.draft {
-		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilot})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindCopilotReview, Desc: tuiHelpCopilot})
 	}
 	if m.diffQueueTotal > 0 {
 		if len(m.diffHistory) > 0 {
-			pairs = append(pairs, helpPair{tuiKeybindPrev, tuiHelpPrev})
+			pairs = append(pairs, key.Hint{Key: tuiKeybindPrev, Desc: tuiHelpPrev})
 		}
 		if len(m.diffQueue) > 0 {
-			pairs = append(pairs, helpPair{tuiKeybindNext, tuiHelpNext})
+			pairs = append(pairs, key.Hint{Key: tuiKeybindNext, Desc: tuiHelpNext})
 		}
 	}
-	pairs = append(pairs, helpPair{tuiKeybindDiff, tuiHelpDismiss})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindDiff, Desc: tuiHelpDismiss})
 	return pairs
 }
 
-func (m tuiModel) detailHelpPairs() []helpPair {
-	pairs := []helpPair{
-		{tuiKeysArrows, tuiHelpScroll},
-		{tuiKeybindDiff, tuiHelpDiff},
+func (m tuiModel) detailHelpPairs() []key.Hint {
+	pairs := []key.Hint{
+		{Key: key.ArrowsUpDown, Desc: tuiHelpScroll},
+		{Key: tuiKeybindDiff, Desc: tuiHelpDiff},
 	}
 	ctx, _ := m.actionContextForKey(m.detailKey)
 	actionable := ctx.actionable
 	if actionable && !ctx.draft {
-		pairs = append(pairs, helpPair{tuiKeybindMerge, mergeHelpForPR(&ctx.pr)})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindMerge, Desc: mergeHelpForPR(&ctx.pr)})
 	}
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindDraftToggle, draftToggleHelp(&ctx.pr)})
+		pairs = append(
+			pairs,
+			key.Hint{Key: tuiKeybindDraftToggle, Desc: draftToggleHelp(&ctx.pr)},
+		)
 	}
 	if actionable && !ctx.draft && !ctx.ownPR {
 		pairs = append(
 			pairs,
-			helpPair{tuiKeybindApprove, tuiHelpApprove},
+			key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove},
 		)
 	}
-	pairs = append(pairs, helpPair{tuiKeybindComment, tuiHelpComment})
-	pairs = append(pairs, helpPair{tuiKeybindOpen, tuiHelpOpen})
-	pairs = append(pairs, helpPair{tuiKeybindCopyURL, tuiHelpCopy})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindComment, Desc: tuiHelpComment})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindOpen, Desc: tuiHelpOpen})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindCopyURL, Desc: tuiHelpCopy})
 	if actionable {
-		pairs = append(pairs, helpPair{tuiKeybindSlack, tuiHelpSlack})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindSlack, Desc: tuiHelpSlack})
 	}
 	if actionable && m.detail.MergeableState == valueBehind {
-		pairs = append(pairs, helpPair{tuiKeybindUpdateBranch, tuiHelpUpdateBranch})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindUpdateBranch, Desc: tuiHelpUpdateBranch})
 	}
 	if actionable && !ctx.draft && hasAIReviewLauncher() {
-		pairs = append(pairs, helpPair{tuiKeybindReview, tuiHelpReview})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindReview, Desc: tuiHelpReview})
 	}
 	if actionable && !ctx.draft {
-		pairs = append(pairs, helpPair{tuiKeybindCopilotReview, tuiHelpCopilot})
+		pairs = append(pairs, key.Hint{Key: tuiKeybindCopilotReview, Desc: tuiHelpCopilot})
 	}
-	pairs = append(pairs, helpPair{tuiKeybindQuit, tuiHelpDismiss})
+	pairs = append(pairs, key.Hint{Key: tuiKeybindQuit, Desc: tuiHelpDismiss})
 	return pairs
 }
 
 func (m tuiModel) renderHelpOverlay() string {
-	pairs := []helpPair{
-		{tuiKeysVimUpDown, tuiDescNavigate},
-		{tuiKeysJumpFirstLast, tuiDescJumpFirstLast},
-		{tuiKeyEnter, tuiDescShow},
-		{tuiKeySpace, tuiDescSelect},
-		{tuiKeysArrowsUpDown, tuiDescExtendSelection},
-		{tuiKeybindSelectAll, tuiDescSelectAll},
-		{tuiKeybindInvertSelection, tuiDescInvertSelection},
-		{tuiKeybindFilter, tuiDescFilter},
-		{tuiKeybindApprove, tuiDescApprove},
-		{tuiKeybindApproveMerge, tuiDescApproveMerge},
-		{tuiKeybindApproveNoConfirm, tuiDescApproveNoConfirm},
-		{tuiKeybindDiff, tuiDescDiff},
-		{tuiKeybindDraftToggle, tuiDescDraftToggle},
-		{tuiKeybindMerge, tuiDescMerge},
-		{tuiKeybindForceMerge, tuiDescForceMerge},
-		{tuiKeybindClose, tuiDescClose},
-		{tuiKeybindUpdateBranch, tuiDescUpdateBranch},
-		{tuiKeybindUnassign, tuiDescUnassign},
-		{tuiKeybindUnassignNoConfirm, tuiDescUnassignNoConf},
-		{tuiKeybindOpen, tuiDescOpen},
-		{tuiKeybindCopyURL, tuiDescCopy},
-		{tuiKeybindSlack, tuiDescSendSlack},
-		{tuiKeybindSlackNoConfirm, tuiDescSendSlackNoConf},
-		{tuiKeyTab, tuiDescCycleSortOrder},
-		{tuiKeybindOptions, tuiDescOptions},
-		{tuiKeybindToggleRefresh, tuiDescRefresh},
-		{tuiKeybindHelp, tuiDescHelp},
-		{tuiKeybindQuit, tuiDescQuit},
+	pairs := []key.Hint{
+		{Key: tuiKeysVimUpDown, Desc: tuiDescNavigate},
+		{Key: tuiKeysJumpFirstLast, Desc: tuiDescJumpFirstLast},
+		{Key: key.Enter, Desc: tuiDescShow},
+		{Key: key.Space, Desc: tuiDescSelect},
+		{Key: key.ShiftArrowsUpDown, Desc: tuiDescExtendSelection},
+		{Key: tuiKeybindSelectAll, Desc: tuiDescSelectAll},
+		{Key: tuiKeybindInvertSelection, Desc: tuiDescInvertSelection},
+		{Key: tuiKeybindFilter, Desc: tuiDescFilter},
+		{Key: tuiKeybindApprove, Desc: tuiDescApprove},
+		{Key: tuiKeybindApproveMerge, Desc: tuiDescApproveMerge},
+		{Key: tuiKeybindApproveNoConfirm, Desc: tuiDescApproveNoConfirm},
+		{Key: tuiKeybindDiff, Desc: tuiDescDiff},
+		{Key: tuiKeybindDraftToggle, Desc: tuiDescDraftToggle},
+		{Key: tuiKeybindMerge, Desc: tuiDescMerge},
+		{Key: tuiKeybindForceMerge, Desc: tuiDescForceMerge},
+		{Key: tuiKeybindClose, Desc: tuiDescClose},
+		{Key: tuiKeybindUpdateBranch, Desc: tuiDescUpdateBranch},
+		{Key: tuiKeybindUnassign, Desc: tuiDescUnassign},
+		{Key: tuiKeybindUnassignNoConfirm, Desc: tuiDescUnassignNoConf},
+		{Key: tuiKeybindOpen, Desc: tuiDescOpen},
+		{Key: tuiKeybindCopyURL, Desc: tuiDescCopy},
+		{Key: tuiKeybindSlack, Desc: tuiDescSendSlack},
+		{Key: tuiKeybindSlackNoConfirm, Desc: tuiDescSendSlackNoConf},
+		{Key: key.Tab, Desc: tuiDescCycleSortOrder},
+		{Key: tuiKeybindOptions, Desc: tuiDescOptions},
+		{Key: tuiKeybindToggleRefresh, Desc: tuiDescRefresh},
+		{Key: tuiKeybindHelp, Desc: tuiDescHelp},
+		{Key: tuiKeybindQuit, Desc: tuiDescQuit},
 	}
 	if hasAIReviewLauncher() {
 		// Insert review before the last two entries (?, q).
 		pairs = append(
 			pairs[:len(pairs)-2],
 			append(
-				[]helpPair{
-					{tuiKeybindReview, tuiDescReview},
-					{tuiKeybindReviewNoConfirm, tuiDescReviewNoConfirm},
-					{tuiKeybindCopilotReview, tuiDescCopilotReview},
+				[]key.Hint{
+					{Key: tuiKeybindReview, Desc: tuiDescReview},
+					{Key: tuiKeybindReviewNoConfirm, Desc: tuiDescReviewNoConfirm},
+					{Key: tuiKeybindCopilotReview, Desc: tuiDescCopilotReview},
 				},
 				pairs[len(pairs)-2:]...)...)
 	}
 
-	// Render in two columns.
-	rows := (len(pairs) + 1) / 2 //nolint:mnd // ceil division
-	keyWidth := 0
-	for _, p := range pairs {
-		keyWidth = max(keyWidth, lg.Width(p.key))
+	sheetPairs := make([]helpsheet.Pair, len(pairs))
+	for i, p := range pairs {
+		sheetPairs[i] = helpsheet.Pair{Key: p.Key, Desc: p.Desc}
 	}
-	renderPair := func(p helpPair) string {
-		pad := max(0, keyWidth-lg.Width(p.key))
-		key := strings.Repeat(" ", pad) + p.key
-		return m.styles.helpKey.Render(key) + "  " + m.styles.helpText.Render(p.desc)
-	}
-
-	// Measure column widths for alignment.
-	const gutter = 4
-	leftWidth := 0
-	rightWidth := 0
-	for i := range rows {
-		if w := lg.Width(renderPair(pairs[i])); w > leftWidth {
-			leftWidth = w
-		}
-		if i+rows < len(pairs) {
-			if w := lg.Width(renderPair(pairs[i+rows])); w > rightWidth {
-				rightWidth = w
-			}
-		}
-	}
-	totalWidth := leftWidth + gutter + rightWidth
-
-	var b strings.Builder
-	for i := range rows {
-		left := renderPair(pairs[i])
-		if i+rows < len(pairs) {
-			right := renderPair(pairs[i+rows])
-			pad := leftWidth - lg.Width(left) + gutter
-			b.WriteString(left + strings.Repeat(" ", pad) + right)
-		} else {
-			b.WriteString(left)
-		}
-		b.WriteString(nl)
-	}
-	dismiss := styleDismiss.Bold(true).Render("Press any key to dismiss")
-	pad := (totalWidth - lg.Width(dismiss)) / 2 //nolint:mnd // center
-	if pad > 0 {
-		b.WriteString(nl + strings.Repeat(" ", pad) + dismiss)
-	} else {
-		b.WriteString(nl + dismiss)
-	}
-
-	return m.styles.overlayBox.Render(b.String())
+	return helpsheet.Model{
+		Pairs:   sheetPairs,
+		Dismiss: "Press any key to dismiss",
+		Styles: helpsheet.Styles{
+			Key:     m.styles.helpKey,
+			Text:    m.styles.helpText,
+			Dismiss: styleDismiss.Bold(true),
+			Box:     m.styles.overlayBox,
+		},
+	}.Render()
 }
 
 // appendStatus appends the status message to the right of the last line of help,
 // or returns help unchanged if there's no status or not enough room.
 func (m tuiModel) appendStatus(help string) string {
-	if m.statusMsg == "" {
+	status := m.renderFlashStatus()
+	if status == "" {
 		return help
 	}
+	return m.appendRightStatus(help, status)
+}
+
+func (m tuiModel) renderFlashStatus() string {
+	if m.flash.Msg == "" {
+		return ""
+	}
 	style := m.styles.statusOK
-	if m.statusErr {
+	if m.flash.Err {
 		style = m.styles.statusErr
 	}
-	return m.appendRightStatus(help, style.Render(m.statusMsg))
+	return style.Render(m.flash.Msg)
+}
+
+func (m tuiModel) footerComponents(help, status string) []view.FooterComponent {
+	//nolint:mnd // this helper builds at most help and status
+	components := make(
+		[]view.FooterComponent,
+		0,
+		2,
+	)
+	if help != "" {
+		components = append(components, view.FooterComponent{Content: help})
+	}
+	if status != "" {
+		components = append(components, view.FooterComponent{
+			Align:   view.FooterAlignRight,
+			Content: status,
+		})
+	}
+	return components
 }
 
 func (m tuiModel) appendRightStatus(help, status string) string {
@@ -2616,21 +2536,20 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 		return help
 	}
 	usableWidth := max(1, m.width-1)
-	lastNL := strings.LastIndex(help, nl)
+	lastNL := strings.LastIndex(help, "\n")
 	prefix := ""
 	lastLine := help
 	if lastNL >= 0 {
 		prefix = help[:lastNL+1]
 		lastLine = help[lastNL+1:]
 	}
-	sw := lg.Width(status)
-	// Drop help pairs from the right until status fits.
+	statusWidth := lg.Width(status)
+
 	for {
-		pad := usableWidth - lg.Width(lastLine) - sw
+		pad := usableWidth - lg.Width(lastLine) - statusWidth
 		if pad > 0 {
 			return prefix + lastLine + strings.Repeat(" ", pad) + status
 		}
-		// Remove the rightmost help pair.
 		idx := strings.LastIndex(lastLine, helpGap)
 		if idx < 0 {
 			break
@@ -2638,128 +2557,41 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 		lastLine = lastLine[:idx]
 	}
 
-	// No pairs left. Keep status on a single line so transient footer updates
-	// don't change the overall view height.
-	if sw < usableWidth {
-		return prefix + strings.Repeat(" ", usableWidth-sw) + status
+	if statusWidth < usableWidth {
+		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status
 	}
 	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
 }
 
-// inlineHelpKey tries to embed a single-letter key into its description.
-// It supports plain keys ("a" + "approve" -> "approve" with 'a' key-styled)
-// and modified keys ("alt+c" + "copy" -> "alt+copy" with the prefix and
-// leading 'c' key-styled). Returns false if the key doesn't end in a single
-// ASCII letter or that letter doesn't appear in the description.
-func (m tuiModel) inlineHelpKey(p helpPair, helpText lg.Style) (string, bool) {
-	keyPrefix, keyLetter, ok := splitInlineHelpKey(p.key)
-	if !ok {
-		return "", false
-	}
-	idx := strings.Index(strings.ToLower(p.desc), strings.ToLower(keyLetter))
-	if idx < 0 {
-		return "", false
-	}
-	before := p.desc[:idx]
-	after := p.desc[idx+1:]
-	var part string
-	if keyPrefix != "" {
-		part = m.styles.helpKey.Render(keyPrefix)
-	}
-	if before != "" {
-		part += helpText.Render(before)
-	}
-	part += m.styles.helpKey.Render(keyLetter)
-	if after != "" {
-		part += helpText.Render(after)
-	}
-	return part, true
-}
-
-func splitInlineHelpKey(key string) (string, string, bool) {
-	if len(key) == 1 {
-		ch := key[0] | 0x20 //nolint:mnd // ASCII lowercase
-		if ch < 'a' || ch > 'z' {
-			return "", "", false
-		}
-		return "", key, true
-	}
-
-	idx := strings.LastIndex(key, "+")
-	if idx <= 0 || idx == len(key)-1 {
-		return "", "", false
-	}
-	letter := key[idx+1:]
-	if len(letter) != 1 {
-		return "", "", false
-	}
-	ch := letter[0] | 0x20 //nolint:mnd // ASCII lowercase
-	if ch < 'a' || ch > 'z' {
-		return "", "", false
-	}
-	return key[:idx+1], letter, true
-}
-
-func (m tuiModel) renderHelp(pairs []helpPair) string {
-	var parts []string
-	helpText := m.styles.helpText
-	for _, p := range pairs {
-		// For single-letter keys whose letter appears in the description,
-		// embed the key into the word to save space (e.g. "a approve" → "approve"
-		// with the 'a' key-styled inline).
-		if inlined, ok := m.inlineHelpKey(p, helpText); ok {
-			parts = append(parts, inlined)
-			continue
-		}
-
-		var rendered string
-		if strings.Contains(p.desc, "\x1b[") {
-			// Desc contains pre-styled ANSI - split at the boundary.
-			if idx := strings.Index(p.desc, "\x1b["); idx > 0 {
-				rendered = helpText.Render(p.desc[:idx]) + p.desc[idx:]
-			} else {
-				rendered = p.desc
-			}
-		} else {
-			rendered = helpText.Render(p.desc)
-		}
-		parts = append(parts, m.styles.helpKey.Render(p.key)+" "+rendered)
-	}
-
-	if m.width <= 0 {
-		return " " + strings.Join(parts, helpGap)
-	}
-
-	// Wrap into multiple lines if needed.
-	const indent = " "
-	var lines []string
-	var line string
-	lineWidth := len(indent)
-	gapWidth := lg.Width(helpGap)
-	for i, part := range parts {
-		partWidth := lg.Width(part)
-		switch {
-		case i == 0:
-			line = indent + part
-			lineWidth = len(indent) + partWidth
-		case lineWidth+gapWidth+partWidth > m.width:
-			lines = append(lines, line)
-			line = part
-			lineWidth = partWidth
-		default:
-			line += helpGap + part
-			lineWidth += gapWidth + partWidth
-		}
-	}
-	if line != "" {
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, nl)
+func (m tuiModel) renderHelp(pairs []key.Hint) string {
+	return helpbar.Model{
+		Hints: pairs,
+		Renderer: key.Renderer{
+			Styles: key.Styles{
+				Key:  m.styles.helpKey,
+				Text: m.styles.helpText,
+			},
+			Gap:    helpGap,
+			Width:  m.width,
+			Inline: true,
+		},
+	}.Render()
 }
 
 // helpLines returns the number of lines the help bar occupies at the current width.
-func (m tuiModel) helpLines(pairs []helpPair) int {
-	return strings.Count(m.renderHelp(pairs), nl) + 1
+func (m tuiModel) helpLines(pairs []key.Hint) int {
+	return helpbar.Model{
+		Hints: pairs,
+		Renderer: key.Renderer{
+			Styles: key.Styles{
+				Key:  m.styles.helpKey,
+				Text: m.styles.helpText,
+			},
+			Gap:    helpGap,
+			Width:  m.width,
+			Inline: true,
+		},
+	}.Lines()
 }
 
 func (m tuiModel) renderEmptyOverlay() string {
@@ -2805,9 +2637,7 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmHasInput = false
 	m.confirmInputLabel = ""
 	m.confirmOptions = nil
-	m.confirmOptValues = nil
-	m.confirmOptCursor = 0
-	m.confirmOptFocus = false
+	m.confirmState = prompt.State{}
 	m.confirmReviewPR = nil
 	m.confirmView.GotoTop()
 	m.confirmInput.SetWidth(tuiConfirmInputWidth)
@@ -2824,189 +2654,18 @@ func styledRef(pr *PullRequest) string {
 }
 
 // overlayCenter places a box on top of a background string, centered.
-func overlayCenter(bg, fg string, width, height int) string {
-	bgLines := strings.Split(bg, nl)
-	fgLines := strings.Split(fg, nl)
-
-	// Use WcWidth consistently - it matches terminal rendering for emoji
-	// with variation selectors (e.g. ⬆️) where GraphemeWidth disagrees.
-	strWidth := xansi.WcWidth.StringWidth
-
-	fgWidth := 0
-	for _, line := range fgLines {
-		if w := strWidth(line); w > fgWidth {
-			fgWidth = w
-		}
-	}
-	fgHeight := len(fgLines)
-
-	startRow := (height - fgHeight) / 2 //nolint:mnd // center
-	startCol := (width - fgWidth) / 2   //nolint:mnd // center
-	if startRow < 0 {
-		startRow = 0
-	}
-	if startCol < 0 {
-		startCol = 0
-	}
-
-	// Ensure bg has enough lines.
-	for len(bgLines) < height {
-		bgLines = append(bgLines, "")
-	}
-
-	for i, fgLine := range fgLines {
-		row := startRow + i
-		if row >= len(bgLines) {
-			break
-		}
-		bgLine := bgLines[row]
-		// Pad bg line to startCol with spaces if needed.
-		bgVisible := strWidth(bgLine)
-		if bgVisible < startCol {
-			bgLine += strings.Repeat(" ", startCol-bgVisible)
-		}
-		// Build: bg left portion + fg line + bg right portion.
-		// Use WcWidth-aware truncation to match terminal rendering.
-		left := xansi.TruncateWc(bgLine, startCol, "")
-		if gap := startCol - strWidth(left); gap > 0 {
-			left += strings.Repeat(" ", gap)
-		}
-		rightStart := startCol + fgWidth
-		var right string
-		if bgVisible > rightStart {
-			right = xansi.TruncateLeftWc(bgLine, rightStart, "")
-		}
-		bgLines[row] = left + "\033[0m" + fgLine + right
-	}
-
-	return strings.Join(bgLines, nl)
-}
-
-// injectLineBackground wraps a line with a background color that persists
-// through any embedded ANSI SGR codes. It re-applies the background after
-// every SGR sequence (\x1b[...m) so that resets, foreground changes, and
-// other styling never clear the line highlight.
-func injectLineBackground(line string, width int, bg string) string {
-	var b strings.Builder
-	b.WriteString(bg)
-
-	i := 0
-	for i < len(line) {
-		// Look for ESC [ ... m (SGR sequence).
-		if line[i] == '\x1b' && i+1 < len(line) && line[i+1] == '[' {
-			// Find the end of the SGR sequence.
-			j := i + 2 //nolint:mnd // skip ESC [
-			for j < len(line) && ((line[j] >= '0' && line[j] <= '9') || line[j] == ';') {
-				j++
-			}
-			if j < len(line) && line[j] == 'm' {
-				j++ // include the 'm'
-				b.WriteString(line[i:j])
-				b.WriteString(bg) // re-apply background after any SGR
-				i = j
-				continue
-			}
-		}
-		b.WriteByte(line[i])
-		i++
-	}
-
-	if pad := width - lg.Width(line); pad > 0 {
-		b.WriteString(strings.Repeat(" ", pad))
-	}
-	b.WriteString("\x1b[0m")
-	return b.String()
-}
-
-func expandTabs(text string) string {
-	return strings.ReplaceAll(text, "\t", "    ")
-}
-
-func wrapDiffLines(diff string, width int) []string {
-	logicalLines := strings.Split(expandTabs(diff), nl)
-	if width <= 0 {
-		return logicalLines
-	}
-
-	rows := make([]string, 0, len(logicalLines))
-	for _, line := range logicalLines {
-		rows = append(rows, hardWrapDiffLine(line, width)...)
-	}
-	return rows
-}
-
-func hardWrapDiffLine(line string, width int) []string {
-	if width <= 0 {
-		return []string{line}
-	}
-
-	wrapped := xansi.Hardwrap(line, width, true)
-	if !strings.Contains(wrapped, nl) {
-		return []string{line}
-	}
-
-	var buf bytes.Buffer
-	writer := lg.NewWrapWriter(&buf)
-	_, _ = writer.Write([]byte(wrapped))
-	_ = writer.Close()
-	return strings.Split(buf.String(), nl)
-}
 
 // highlightDiff highlights a unified diff using delta if available,
 // falling back to Chroma syntax highlighting.
 func highlightDiff(raw, prURL, headSHA string) string {
-	if p, err := exec.LookPath("delta"); err == nil {
-		if out, err := highlightWithDelta(p, raw, prURL, headSHA); err == nil {
-			return out
-		}
+	repoURL, _, ok := strings.Cut(prURL, "/pull/")
+	if !ok {
+		return render.DiffStyled(raw, render.DiffOptions{})
 	}
-	return highlightWithChroma(raw)
-}
-
-// highlightWithDelta pipes a diff through delta for rich highlighting.
-// File hyperlinks point to the blob at the PR's head commit on GitHub.
-func highlightWithDelta(deltaBin, raw, prURL, headSHA string) (string, error) {
-	// prURL is e.g. "https://github.com/owner/repo/pull/123"
-	// Strip "/pull/123" to get the repo URL, then build blob links.
-	// Delta resolves {path} to an absolute path based on CWD, so we set
-	// CWD to "/" which gives us "/{relative_path}" - no extra slash needed.
-	repoURL := prURL[:strings.LastIndex(prURL, "/pull/")]
-	linkFmt := repoURL + "/blob/" + headSHA + "{path}?plain=1#L{line}"
-
-	cmd := exec.CommandContext(
-		context.Background(),
-		deltaBin,
-		"--true-color=always",
-		"--hyperlinks",
-		"--hyperlinks-file-link-format", linkFmt,
-	)
-	cmd.Dir = "/"
-	cmd.Stdin = strings.NewReader(raw)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
-// highlightWithChroma applies Chroma syntax highlighting to a unified diff.
-func highlightWithChroma(raw string) string {
-	lexer := lexers.Get("diff")
-	if lexer == nil {
-		return raw
-	}
-	lexer = chroma.Coalesce(lexer)
-	style := styles.Get("monokai")
-	formatter := formatters.TTY256
-	iterator, err := lexer.Tokenise(nil, raw)
-	if err != nil {
-		return raw
-	}
-	var buf bytes.Buffer
-	if err := formatter.Format(&buf, style, iterator); err != nil {
-		return raw
-	}
-	return buf.String()
+	return render.DiffStyled(raw, render.DiffOptions{
+		RepoURL:   repoURL,
+		CommitSHA: headSHA,
+	})
 }
 
 type (
@@ -3115,6 +2774,18 @@ func (m tuiModel) headerColumnAt(x int) string {
 		pos = end + colGap
 	}
 	return ""
+}
+
+// rowIndexAt maps a screen Y coordinate to a row index.
+// Returns the index into m.rows and ok=true if the click landed on a visible row.
+func (m tuiModel) rowIndexAt(y int) (int, bool) {
+	const headerLines = 1 // header is always rendered on Y=0
+	row := y - headerLines + m.offset
+	visible := m.visibleIndices()
+	if row < 0 || row >= len(visible) {
+		return 0, false
+	}
+	return visible[row], true
 }
 
 // toggleSort cycles a column through: default direction → reverse → off.
@@ -3296,17 +2967,24 @@ func runTui(
 	}
 
 	var program *tea.Program
-	wheelFilter := newTUIWheelFilter(tuiWheelBatchDelay, func(msg tea.Msg) {
+	resolve := func(m tea.Model) (wheelTarget, bool) {
+		tui, ok := m.(tuiModel)
+		if !ok {
+			return wheelTargetNone, false
+		}
+		return tui.wheelScrollTarget()
+	}
+	sw := scrollwheel.New(resolve, func(msg tea.Msg) {
 		if program != nil {
 			program.Send(msg)
 		}
 	})
-	defer wheelFilter.Stop()
+	defer sw.Stop()
 
 	program = tea.NewProgram(
 		model,
 		tea.WithFPS(tuiRenderFPS),
-		tea.WithFilter(wheelFilter.filter),
+		tea.WithFilter(sw.Filter),
 	)
 	_, err = program.Run()
 	if err != nil {

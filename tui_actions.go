@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/gechr/primer/key"
 )
 
 // targetPR pairs a list index with a copy of the PR at that index.
@@ -174,7 +175,7 @@ func setupConfirmBatch(
 ) {
 	actions := m.actions
 	m.confirmAction = action
-	m.confirmYes = true
+	m.confirmState.Yes = true
 	if len(targets) == 1 {
 		m.confirmSubject = targets[0].pr.Ref()
 		m.confirmURL = targets[0].pr.URL
@@ -239,37 +240,29 @@ func runBatchAction(
 // flashPending sets a persistent in-progress status (e.g. "Merging foo/bar#421...")
 // that remains visible until replaced by the action result.
 func flashPending(m *tuiModel, verb string, pr *PullRequest) {
-	m.statusMsg = m.styles.statusPending.Render(verb) + " " +
+	m.flash.Msg = m.styles.statusPending.Render(verb) + " " +
 		styleRef.Render(pr.Ref()) + valueEllipsis
-	m.statusErr = false
+	m.flash.Err = false
 }
 
 func flashResult(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
-	m.statusID++
-	m.statusErr = isErr
+	var msg string
 	if isErr {
-		m.statusMsg = fmt.Sprintf("%s %s", action, ref)
+		msg = fmt.Sprintf("%s %s", action, ref)
 	} else {
 		styledRef := styleRef.Render(ref)
 		if url != "" {
 			styledRef = xansi.SetHyperlink(url) + styledRef + xansi.ResetHyperlink()
 		}
-		m.statusMsg = m.styles.statusAction.Render(action) + " " + styledRef
+		msg = m.styles.statusAction.Render(action) + " " + styledRef
 	}
-	id := m.statusID
-	return tea.Tick(tuiStatusFlash, func(time.Time) tea.Msg {
-		return clearStatusMsg{id: id}
-	})
+	clearMsg := m.flash.Set(msg, isErr)
+	return tea.Tick(tuiStatusFlash, func(time.Time) tea.Msg { return clearMsg })
 }
 
 func tuiFlashMessage(m *tuiModel, text string, isErr bool) tea.Cmd {
-	m.statusID++
-	m.statusErr = isErr
-	m.statusMsg = text
-	id := m.statusID
-	return tea.Tick(tuiStatusFlash, func(time.Time) tea.Msg {
-		return clearStatusMsg{id: id}
-	})
+	clearMsg := m.flash.Set(text, isErr)
+	return tea.Tick(tuiStatusFlash, func(time.Time) tea.Msg { return clearMsg })
 }
 
 func renderBatchFailurePrompt(msg batchActionMsg) string {
@@ -367,7 +360,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
 		m.confirmAction = tuiActionMerge
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		if len(targets) == 1 {
 			m.confirmSubject = targets[0].pr.Ref()
 			m.confirmURL = targets[0].pr.URL
@@ -414,7 +407,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
 		m.confirmAction = tuiActionApproveMerge
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		if len(targets) == 1 {
 			m.confirmSubject = targets[0].pr.Ref()
 			m.confirmURL = targets[0].pr.URL
@@ -468,7 +461,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
 		m.confirmAction = tuiActionForceMerge
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		if len(targets) == 1 {
 			m.confirmSubject = targets[0].pr.Ref()
 			m.confirmURL = targets[0].pr.URL
@@ -521,7 +514,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
 		m.confirmAction = tuiActionClose
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmHasInput = true
 		m = m.prepareConfirmInput()
 		m.confirmInput.SetValue("")
@@ -609,7 +602,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.confirmAction = tuiActionComment
 		m.confirmSubject = prCopy.Ref()
 		m.confirmURL = prCopy.URL
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmHasInput = true
 		m = m.prepareConfirmInput()
 		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
@@ -633,7 +626,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case tuiKeybindReview:
 		if !hasAIReviewLauncher() {
 			m.confirmAction = tuiActionInfo
-			m.confirmYes = true
+			m.confirmState.Yes = true
 			m.confirmPrompt = tuiAIReviewUnsupported
 			m.confirmCmd = nil
 			return m, nil, true
@@ -654,7 +647,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case tuiKeybindReviewNoConfirm:
 		if !hasAIReviewLauncher() {
 			m.confirmAction = tuiActionInfo
-			m.confirmYes = true
+			m.confirmState.Yes = true
 			m.confirmPrompt = tuiAIReviewUnsupported
 			m.confirmCmd = nil
 			return m, nil, true
@@ -691,7 +684,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		cfg := m.cfg
 		cli := m.cli
 		m.confirmAction = tuiActionSendSlack
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		if count == 1 {
 			m.confirmSubject = prs[0].Ref()
 			m.confirmURL = prs[0].URL
@@ -719,10 +712,10 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if count == 1 {
 			flashPending(&m, statusSlacking, &prs[0])
 		} else {
-			m.statusMsg = m.styles.statusPending.Render(
+			m.flash.Msg = m.styles.statusPending.Render(
 				fmt.Sprintf("Sending %d PRs", count),
 			) + valueEllipsis
-			m.statusErr = false
+			m.flash.Err = false
 		}
 		cfg := m.cfg
 		cli := m.cli
@@ -794,7 +787,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
 		m.confirmAction = tuiActionUnassign
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		if len(targets) == 1 {
 			m.confirmSubject = targets[0].pr.Ref()
 			m.confirmURL = targets[0].pr.URL
@@ -987,7 +980,7 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.confirmAction = tuiActionUpdateBranch
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmPrompt = "Update branch for " + styledRef(&pr) + "?"
 		m.confirmCmd = func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -1037,7 +1030,7 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.confirmAction = tuiActionComment
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmHasInput = true
 		m = m.prepareConfirmInput()
 		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
@@ -1071,7 +1064,7 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.confirmAction = tuiActionSendSlack
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmPrompt = "Send " + styledRef(&pr) + " to Slack?"
 		m.confirmCmd = func() tea.Msg {
 			err := pluginSlackSend(cfg, cli.SendTo, []PullRequest{pr})
@@ -1090,7 +1083,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return result, cmd
 	}
 	switch msg.String() {
-	case tuiKeybindQuit, tuiKeyEsc, tuiKeybindDiff:
+	case tuiKeybindQuit, key.Esc, tuiKeybindDiff:
 		return m, m.exitDiffView()
 	case tuiKeybindNext:
 		// Skip to next in queue without approving.
@@ -1126,16 +1119,16 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:     err,
 			}
 		}
-	case tuiKeybindVimDown, tuiKeyDown:
+	case tuiKeybindVimDown, key.Down:
 		m.diffView.ScrollDown(1)
 		return m, nil
-	case tuiKeybindVimUp, tuiKeyUp:
+	case tuiKeybindVimUp, key.Up:
 		m.diffView.ScrollUp(1)
 		return m, nil
-	case tuiKeyCtrlF, tuiKeySpace:
+	case key.CtrlF, key.Space:
 		m.diffView.PageDown()
 		return m, nil
-	case tuiKeyCtrlB:
+	case key.CtrlB:
 		m.diffView.PageUp()
 		return m, nil
 	case tuiKeybindTop:
@@ -1196,7 +1189,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmAction = tuiActionClose
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmHasInput = true
 		m = m.prepareConfirmInput()
 		m = m.setConfirmInputPlaceholder("Leave blank to close without comment")
@@ -1325,18 +1318,18 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return result, cmd
 	}
 	switch msg.String() {
-	case tuiKeybindQuit, tuiKeyEsc, tuiKeyEnter:
+	case tuiKeybindQuit, key.Esc, key.Enter:
 		return m, m.exitDetailView()
-	case tuiKeybindVimDown, tuiKeyDown:
+	case tuiKeybindVimDown, key.Down:
 		m.detailView.ScrollDown(1)
 		return m, nil
-	case tuiKeybindVimUp, tuiKeyUp:
+	case tuiKeybindVimUp, key.Up:
 		m.detailView.ScrollUp(1)
 		return m, nil
-	case tuiKeyCtrlF, tuiKeySpace:
+	case key.CtrlF, key.Space:
 		m.detailView.PageDown()
 		return m, nil
-	case tuiKeyCtrlB:
+	case key.CtrlB:
 		m.detailView.PageUp()
 		return m, nil
 	case tuiKeybindTop:
@@ -1383,7 +1376,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmAction = tuiActionApprove
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmPrompt = "Approve " + styledRef(&pr) + "?"
 		m.confirmCmd = func() tea.Msg {
 			err := actions.approvePR(pr)
@@ -1426,7 +1419,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.confirmAction = tuiActionMerge
 		m.confirmSubject = pr.Ref()
 		m.confirmURL = pr.URL
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		m.confirmPrompt = verb + styledRef(&pr) + "?"
 		m.confirmCmd = func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
@@ -1443,7 +1436,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !hasAIReviewLauncher() {
 			refreshCmd := m.exitDetailView()
 			m.confirmAction = tuiActionInfo
-			m.confirmYes = true
+			m.confirmState.Yes = true
 			m.confirmPrompt = tuiAIReviewUnsupported
 			m.confirmCmd = nil
 			return m, refreshCmd

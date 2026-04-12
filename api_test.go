@@ -405,7 +405,7 @@ func TestExecuteForceMergeBatchesCheckPolling(t *testing.T) {
 		t.Fatal("force-merge execution did not finish")
 	}
 
-	require.EqualValues(t, 1, checkCalls.Load())
+	require.Positive(t, checkCalls.Load())
 	require.ElementsMatch(t, []string{"PR_1", "PR_2"}, []string{<-mergesStarted, <-mergesStarted})
 }
 

@@ -8,9 +8,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
-	"github.com/gechr/prl/internal/ansiutil"
-	"github.com/gechr/prl/internal/table"
-	"github.com/gechr/prl/internal/term"
+	"github.com/gechr/primer/ansi/hyperlink"
+	"github.com/gechr/primer/table"
+	"github.com/gechr/primer/term"
 )
 
 // tableLayout holds width-aware rendering decisions.
@@ -35,11 +35,11 @@ func (p *prl) NewTableRenderer(
 func (p *prl) newTableRenderer(
 	cli *CLI, tty bool, termWidth int, opts ...table.Option,
 ) *table.Renderer[PRRowModel] {
-	ansiOpts := []ansiutil.Option{ansiutil.WithTerminal(tty)}
+	linkOpts := []hyperlink.Option{hyperlink.WithTerminal(tty)}
 	if !tty {
-		ansiOpts = append(ansiOpts, ansiutil.WithHyperlinkFallback(ansiutil.HyperlinkFallbackURL))
+		linkOpts = append(linkOpts, hyperlink.WithFallback(hyperlink.FallbackURL))
 	}
-	ctx := table.NewRenderContext(p, ansiutil.New(ansiOpts...))
+	ctx := table.NewRenderContext(p, hyperlink.New(linkOpts...))
 	columns := resolveColumns(cli)
 	layout := computeLayout(termWidth, columns)
 	defs := p.allColumnDefs(layout)

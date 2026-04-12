@@ -1,16 +1,19 @@
 package main
 
 import (
-	"math"
 	"strings"
-	"sync"
-	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/gechr/primer/input"
+	"github.com/gechr/primer/key"
+	"github.com/gechr/primer/layout"
+	"github.com/gechr/primer/prompt"
+	"github.com/gechr/primer/scrollbar"
+	"github.com/gechr/primer/view"
 )
 
 type scrollbarTarget uint8
@@ -33,151 +36,13 @@ const (
 )
 
 type scrollbarDragState struct {
-	active bool
+	scrollbar.Drag
+
 	target scrollbarTarget
-	grab   int
 }
 
-type scrollbarHitbox struct {
-	target     scrollbarTarget
-	x          int
-	y          int
-	height     int
-	totalLines int
-}
-
-type tuiWheelFilter struct {
-	delay time.Duration
-	send  func(tea.Msg)
-
-	mu            sync.Mutex
-	active        bool
-	pendingTarget wheelTarget
-	pendingDelta  int
-	timer         *time.Timer
-}
-
-func newTUIWheelFilter(delay time.Duration, send func(tea.Msg)) *tuiWheelFilter {
-	return &tuiWheelFilter{delay: delay, send: send}
-}
-
-func (f *tuiWheelFilter) filter(model tea.Model, msg tea.Msg) tea.Msg {
-	target, delta, ok := f.wheelEvent(model, msg)
-	if !ok {
-		return msg
-	}
-
-	f.enqueue(target, delta)
-	return nil
-}
-
-func (f *tuiWheelFilter) Stop() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.timer != nil {
-		f.timer.Stop()
-		f.timer = nil
-	}
-	f.active = false
-	f.pendingTarget = wheelTargetNone
-	f.pendingDelta = 0
-}
-
-func (f *tuiWheelFilter) wheelEvent(model tea.Model, msg tea.Msg) (wheelTarget, int, bool) {
-	wheelMsg, ok := msg.(tea.MouseWheelMsg)
-	if !ok {
-		return wheelTargetNone, 0, false
-	}
-
-	var delta int
-	switch wheelMsg.Button {
-	case tea.MouseWheelDown:
-		delta = 1
-	case tea.MouseWheelUp:
-		delta = -1
-	default:
-		return wheelTargetNone, 0, false
-	}
-
-	tui, ok := model.(tuiModel)
-	if !ok {
-		return wheelTargetNone, 0, false
-	}
-	target, ok := tui.wheelScrollTarget()
-	if !ok {
-		return wheelTargetNone, 0, false
-	}
-	return target, delta, true
-}
-
-func (f *tuiWheelFilter) enqueue(target wheelTarget, delta int) {
-	var immediate *batchedWheelMsg
-	startTimer := false
-
-	f.mu.Lock()
-	switch {
-	case !f.active:
-		f.active = true
-		f.pendingTarget = target
-		f.pendingDelta = delta
-		startTimer = true
-	case f.pendingTarget == target:
-		f.pendingDelta += delta
-	default:
-		if f.pendingDelta != 0 && f.pendingTarget != wheelTargetNone {
-			immediate = &batchedWheelMsg{target: f.pendingTarget, delta: f.pendingDelta}
-		}
-		if f.timer != nil {
-			f.timer.Stop()
-			f.timer = nil
-		}
-		f.active = true
-		f.pendingTarget = target
-		f.pendingDelta = delta
-		startTimer = true
-	}
-	f.mu.Unlock()
-
-	if immediate != nil {
-		f.dispatch(*immediate)
-	}
-	if startTimer {
-		f.scheduleFlush()
-	}
-}
-
-func (f *tuiWheelFilter) scheduleFlush() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.timer != nil {
-		f.timer.Stop()
-	}
-	f.timer = time.AfterFunc(f.delay, f.flush)
-}
-
-func (f *tuiWheelFilter) flush() {
-	f.mu.Lock()
-	target := f.pendingTarget
-	delta := f.pendingDelta
-	f.active = false
-	f.pendingTarget = wheelTargetNone
-	f.pendingDelta = 0
-	f.timer = nil
-	f.mu.Unlock()
-
-	if delta == 0 || target == wheelTargetNone {
-		return
-	}
-	f.dispatch(batchedWheelMsg{target: target, delta: delta})
-}
-
-func (f *tuiWheelFilter) dispatch(msg tea.Msg) {
-	if f.send == nil || msg == nil {
-		return
-	}
-	go f.send(msg)
-}
-
+// wheelScrollTarget returns the scroll target for the current view state.
+// Used as the resolver callback for [scrollwheel.Coalescer].
 func (m tuiModel) wheelScrollTarget() (wheelTarget, bool) {
 	if m.confirmAction != "" {
 		return wheelTargetConfirm, true
@@ -289,17 +154,6 @@ func (m tuiModel) diffContentViewport() int {
 	return max(0, viewport)
 }
 
-// scrollPercent returns the scroll position as a percentage in the style of
-// less(1): the percentage of the file above and including the bottom of the
-// viewport. This means it never shows 0% and reaches 100% at the end.
-func scrollPercent(offset, total, viewport int) int {
-	const percentMax = 100
-	if total <= 0 {
-		return percentMax
-	}
-	return min(percentMax*(offset+viewport)/total, percentMax)
-}
-
 func newScrollView() viewport.Model {
 	v := viewport.New()
 	v.KeyMap = viewport.KeyMap{} // disable all key bindings - views handle their own
@@ -322,25 +176,19 @@ func (m *tuiModel) syncConfirmView() {
 	scrollbarWidth := tuiScrollbarWidth
 	m.confirmView.SetWidth(max(1, boxWidth-(tuiConfirmPadX-1)*2-2-scrollbarWidth))
 	m.confirmView.SetHeight(m.confirmViewport())
-	m.confirmView.SetContent(expandTabs(m.confirmModalContent()))
+	m.confirmView.SetContent(layout.ExpandTabs(m.confirmModalContent()))
 }
 
 func (m *tuiModel) syncDiffView() {
-	m.diffRenderLines = m.syncViewport(&m.diffView, m.diffLines, m.diffContentViewport())
+	m.diffRenderLines = view.Sync(
+		&m.diffView, m.diffLines, max(0, m.width-tuiScrollbarWidth), m.diffContentViewport(),
+	)
 }
 
 func (m *tuiModel) syncDetailView() {
-	m.detailRenderLines = m.syncViewport(&m.detailView, m.detailLines, m.detailViewport())
-}
-
-func (m *tuiModel) syncViewport(vp *viewport.Model, lines []string, height int) []string {
-	width := max(0, m.width-tuiScrollbarWidth)
-	renderLines := normalizeViewportRenderLines(lines, width)
-	vp.SetWidth(width)
-	vp.SetHeight(height)
-	vp.SetContentLines(renderLines)
-	vp.FillHeight = true
-	return renderLines
+	m.detailRenderLines = view.Sync(
+		&m.detailView, m.detailLines, max(0, m.width-tuiScrollbarWidth), m.detailViewport(),
+	)
 }
 
 // confirmViewport returns the maximum number of inner content lines that fit
@@ -351,49 +199,7 @@ func (m tuiModel) confirmViewport() int {
 	return max(chrome-1, m.height-chrome)
 }
 
-// scrollbarChars returns a slice of styled scrollbar characters (one per line)
-// with a thumb sized proportionally to the visible/total content ratio.
-func (m tuiModel) scrollbarChars(height, totalLines int, percent float64) []string {
-	if height <= 0 {
-		return nil
-	}
-	thumbPos, thumbSize := scrollbarThumbMetrics(height, totalLines, percent)
-	thumb := lg.NewStyle().Foreground(colorAccent)
-	track := lg.NewStyle().Foreground(colorAccent).Faint(true)
-	chars := make([]string, height)
-	for i := range height {
-		if i >= thumbPos && i < thumbPos+thumbSize {
-			chars[i] = thumb.Render("█")
-		} else {
-			chars[i] = track.Render("┃")
-		}
-	}
-	return chars
-}
-
-// renderScrollbar returns a single-column scrollbar string for use with
-// lg.JoinHorizontal in the confirm modal overlay.
-func (m tuiModel) renderScrollbar(height, totalLines int, percent float64) string {
-	return strings.Join(m.scrollbarChars(height, totalLines, percent), nl)
-}
-
-func scrollbarThumbMetrics(height, totalLines int, percent float64) (int, int) {
-	if height <= 0 {
-		return 0, 0
-	}
-	maxThumb := height / 2 //nolint:mnd // cap at 50%
-	thumbSize := min(maxThumb, max(1, height*height/max(1, totalLines)))
-	trackSpace := max(0, height-thumbSize)
-	thumbPos := 0
-	if trackSpace > 0 {
-		thumbPos = int(math.Round(percent * float64(trackSpace)))
-	}
-	return thumbPos, thumbSize
-}
-
 func (m *tuiModel) handleScrollbarPress(msg tea.Mouse) bool {
-	const thumbCenterDivisor = 2
-
 	if m.confirmAction != "" {
 		m.syncConfirmView()
 	} else {
@@ -409,61 +215,35 @@ func (m *tuiModel) handleScrollbarPress(msg tea.Mouse) bool {
 		}
 	}
 
-	hitbox, ok := m.scrollbarHitboxAt(msg.X, msg.Y)
+	hitbox, target, ok := m.scrollbarHitboxAt(msg.X, msg.Y)
 	if !ok {
 		return false
 	}
-	percent := m.scrollbarPercent(hitbox.target)
-	thumbPos, thumbSize := scrollbarThumbMetrics(hitbox.height, hitbox.totalLines, percent)
-	row := min(max(msg.Y-hitbox.y, 0), hitbox.height-1)
-	grab := thumbSize / thumbCenterDivisor
-	if row >= thumbPos && row < thumbPos+thumbSize {
-		grab = row - thumbPos
+
+	percent := m.scrollbarPercent(target)
+	offset := m.scrollDrag.Press(hitbox, msg.Y, percent)
+	m.scrollDrag.target = target
+
+	if vp := m.scrollbarViewport(target); vp != nil {
+		vp.SetYOffset(offset)
 	}
-	m.scrollDrag = scrollbarDragState{
-		active: true,
-		target: hitbox.target,
-		grab:   grab,
-	}
-	m.scrollbarScrollToRow(hitbox, row, grab)
 	return true
 }
 
 func (m *tuiModel) handleScrollbarMotion(msg tea.Mouse) bool {
-	if !m.scrollDrag.active {
-		return false
-	}
 	hitbox, ok := m.scrollbarHitbox(m.scrollDrag.target)
 	if !ok {
 		m.scrollDrag = scrollbarDragState{}
 		return false
 	}
-	m.scrollbarScrollToRow(hitbox, msg.Y-hitbox.y, m.scrollDrag.grab)
+	offset, active := m.scrollDrag.Motion(hitbox, msg.Y)
+	if !active {
+		return false
+	}
+	if vp := m.scrollbarViewport(m.scrollDrag.target); vp != nil {
+		vp.SetYOffset(offset)
+	}
 	return true
-}
-
-func (m *tuiModel) scrollbarScrollToRow(hitbox scrollbarHitbox, row, grab int) {
-	if hitbox.height <= 0 {
-		return
-	}
-	vp := m.scrollbarViewport(hitbox.target)
-	if vp == nil {
-		return
-	}
-	maxOffset := max(0, hitbox.totalLines-hitbox.height)
-	if maxOffset == 0 {
-		vp.SetYOffset(0)
-		return
-	}
-	_, thumbSize := scrollbarThumbMetrics(hitbox.height, hitbox.totalLines, vp.ScrollPercent())
-	trackSpace := max(0, hitbox.height-thumbSize)
-	topRow := min(max(row-grab, 0), trackSpace)
-	if trackSpace == 0 {
-		vp.SetYOffset(maxOffset)
-		return
-	}
-	offset := int(math.Round(float64(topRow) / float64(trackSpace) * float64(maxOffset)))
-	vp.SetYOffset(offset)
 }
 
 func (m *tuiModel) scrollbarViewport(target scrollbarTarget) *viewport.Model {
@@ -488,7 +268,7 @@ func (m tuiModel) scrollbarPercent(target scrollbarTarget) float64 {
 	return 0
 }
 
-func (m tuiModel) scrollbarHitboxAt(x, y int) (scrollbarHitbox, bool) {
+func (m tuiModel) scrollbarHitboxAt(x, y int) (scrollbar.Hitbox, scrollbarTarget, bool) {
 	for _, target := range []scrollbarTarget{
 		scrollbarTargetConfirm,
 		scrollbarTargetDiff,
@@ -498,67 +278,65 @@ func (m tuiModel) scrollbarHitboxAt(x, y int) (scrollbarHitbox, bool) {
 		if !ok {
 			continue
 		}
-		if x == hitbox.x && y >= hitbox.y && y < hitbox.y+hitbox.height {
-			return hitbox, true
+		if hitbox.Contains(x, y) {
+			return hitbox, target, true
 		}
 	}
-	return scrollbarHitbox{}, false
+	return scrollbar.Hitbox{}, scrollbarTargetNone, false
 }
 
 func (m tuiModel) viewportScrollbarHitbox(
-	target scrollbarTarget,
 	vp *viewport.Model,
 	view tuiView,
 	y int,
-) (scrollbarHitbox, bool) {
+) (scrollbar.Hitbox, bool) {
 	totalLines := vp.TotalLineCount()
 	height := vp.Height()
 	if totalLines <= height || height <= 0 || m.width <= 0 || m.view != view ||
 		m.confirmAction != "" {
-		return scrollbarHitbox{}, false
+		return scrollbar.Hitbox{}, false
 	}
-	return scrollbarHitbox{
-		target:     target,
-		x:          m.width - 1,
-		y:          y,
-		height:     height,
-		totalLines: totalLines,
+	return scrollbar.Hitbox{
+		X:          m.width - 1,
+		Y:          y,
+		Height:     height,
+		TotalLines: totalLines,
 	}, true
 }
 
-func (m tuiModel) scrollbarHitbox(target scrollbarTarget) (scrollbarHitbox, bool) {
+func (m tuiModel) scrollbarHitbox(target scrollbarTarget) (scrollbar.Hitbox, bool) {
 	switch target {
 	case scrollbarTargetNone:
-		return scrollbarHitbox{}, false
+		return scrollbar.Hitbox{}, false
 	case scrollbarTargetDiff:
 		y := 0
 		if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
 			y = 2
 		}
-		return m.viewportScrollbarHitbox(target, &m.diffView, tuiViewDiff, y)
+		return m.viewportScrollbarHitbox(&m.diffView, tuiViewDiff, y)
 	case scrollbarTargetDetail:
-		return m.viewportScrollbarHitbox(target, &m.detailView, tuiViewDetail, 0)
+		return m.viewportScrollbarHitbox(&m.detailView, tuiViewDetail, 0)
 	case scrollbarTargetConfirm:
 		if m.confirmAction == "" {
-			return scrollbarHitbox{}, false
+			return scrollbar.Hitbox{}, false
 		}
 		totalLines := m.confirmView.TotalLineCount()
 		height := m.confirmView.Height()
 		if totalLines <= height || height <= 0 {
-			return scrollbarHitbox{}, false
+			return scrollbar.Hitbox{}, false
 		}
 		return m.confirmScrollbarHitbox()
 	default:
-		return scrollbarHitbox{}, false
+		return scrollbar.Hitbox{}, false
 	}
 }
 
-func (m tuiModel) confirmScrollbarHitbox() (scrollbarHitbox, bool) {
+func (m tuiModel) confirmScrollbarHitbox() (scrollbar.Hitbox, bool) {
 	const centerDivisor = 2
 
 	lines := strings.Split(xansi.Strip(m.renderConfirmModal()), nl)
 	if len(lines) == 0 {
-		return scrollbarHitbox{}, false
+		return scrollbar.Hitbox{}, false
 	}
 
 	fgWidth := 0
@@ -575,83 +353,14 @@ func (m tuiModel) confirmScrollbarHitbox() (scrollbarHitbox, bool) {
 		if col < 0 {
 			continue
 		}
-		return scrollbarHitbox{
-			target:     scrollbarTargetConfirm,
-			x:          startCol + xansi.WcWidth.StringWidth(line[:col]),
-			y:          startRow + row,
-			height:     m.confirmView.Height(),
-			totalLines: m.confirmView.TotalLineCount(),
+		return scrollbar.Hitbox{
+			X:          startCol + xansi.WcWidth.StringWidth(line[:col]),
+			Y:          startRow + row,
+			Height:     m.confirmView.Height(),
+			TotalLines: m.confirmView.TotalLineCount(),
 		}, true
 	}
-	return scrollbarHitbox{}, false
-}
-
-func normalizeViewportRenderLines(lines []string, width int) []string {
-	if len(lines) == 0 {
-		return nil
-	}
-
-	normalized := make([]string, len(lines))
-	for i, line := range lines {
-		normalized[i] = normalizeViewportRenderLine(line, width)
-	}
-	return normalized
-}
-
-func normalizeViewportRenderLine(line string, width int) string {
-	line = expandTabs(line)
-	if width <= 0 {
-		return line
-	}
-
-	lineWidth := xansi.WcWidth.StringWidth(line)
-	if lineWidth > width {
-		line = xansi.WcWidth.Truncate(line, width, "")
-		lineWidth = width
-	}
-	if pad := width - lineWidth; pad > 0 {
-		line += strings.Repeat(" ", pad)
-	}
-	return line
-}
-
-func (m tuiModel) renderViewportContent(
-	lines []string,
-	vp viewport.Model,
-	withScrollbar bool,
-) string {
-	height := vp.Height()
-	width := max(0, vp.Width())
-	if height <= 0 {
-		return ""
-	}
-
-	start := min(vp.YOffset(), len(lines))
-	end := min(start+height, len(lines))
-	scrollbar := []string(nil)
-	if withScrollbar {
-		scrollbar = m.scrollbarChars(height, vp.TotalLineCount(), vp.ScrollPercent())
-	}
-	blank := strings.Repeat(" ", width)
-
-	var b strings.Builder
-	for row := range height {
-		if row > 0 {
-			b.WriteByte('\n')
-		}
-
-		line := blank
-		idx := start + row
-		if idx < end {
-			line = lines[idx]
-		}
-		b.WriteString(line)
-
-		if row < len(scrollbar) {
-			b.WriteString(scrollbar[row])
-		}
-	}
-	return b.String()
+	return scrollbar.Hitbox{}, false
 }
 
 func (m tuiModel) renderConfirmModal() string {
@@ -673,7 +382,7 @@ func (m tuiModel) renderConfirmModal() string {
 			Render("OK")
 	} else {
 		var yes, no string
-		if m.confirmYes {
+		if m.confirmState.Yes {
 			yes = m.styles.confirmYes.Render("Yes")
 			no = m.styles.confirmNoDim.Render("No")
 		} else {
@@ -691,12 +400,7 @@ func (m tuiModel) renderConfirmModal() string {
 
 	content := m.confirmModalContent()
 	promptWidth := lg.Width(m.confirmPrompt)
-	buttonsWidth := lg.Width(buttons)
-	centered := buttons
-	if pad := (promptWidth - buttonsWidth) / 2; pad > 0 { //nolint:mnd // center
-		centered = strings.Repeat(" ", pad) + buttons
-	}
-	return m.renderConfirmScrollable(boxStyle, 0, content+centered)
+	return m.renderConfirmScrollable(boxStyle, 0, content+prompt.CenterRow(buttons, promptWidth))
 }
 
 // renderConfirmScrollable renders inner content inside a styled box, using a
@@ -725,48 +429,67 @@ func (m tuiModel) renderConfirmScrollable(boxStyle lg.Style, boxWidth int, conte
 		m.confirmInput.SetWidth(viewWidth)
 		content = m.confirmModalContent()
 	}
-	view.SetContent(expandTabs(content))
-
-	scrollbar := m.renderScrollbar(vpHeight, view.TotalLineCount(), view.ScrollPercent())
-	inner := lg.JoinHorizontal(lg.Top, view.View(), scrollbar)
-	// Reduce right padding so the scrollbar sits snug against the border.
-	boxStyle = boxStyle.PaddingRight(1)
 	if boxWidth > 0 {
 		boxWidth -= tuiConfirmPadX - 2 //nolint:mnd // keep 1 space between scrollbar and border
-		return boxStyle.Width(boxWidth).Render(inner)
 	}
-	return boxStyle.Render(inner)
+	return prompt.RenderScrollable(prompt.ScrollableModel{
+		BoxStyle:       boxStyle,
+		BoxWidth:       boxWidth,
+		Content:        layout.ExpandTabs(content),
+		View:           view,
+		ViewportHeight: vpHeight,
+		ViewWidth:      viewWidth,
+		Styles: prompt.Styles{
+			Scrollbar: scrollbar.Styles{
+				Thumb: lg.NewStyle().Foreground(colorAccent),
+				Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
+			},
+		},
+	})
 }
 
 // confirmModalContent returns the inner content string for the confirm modal
 // (prompt + options + textarea + hints). Hints are omitted when the modal
 // needs scrolling to maximise usable space.
 func (m tuiModel) confirmModalContent() string {
-	var b strings.Builder
-	b.WriteString(m.confirmPrompt)
-	if m.confirmHasInput {
-		label := m.confirmInputLabel
-		if label == "" {
-			label = "Comment"
-		}
-		b.WriteString(nl + nl)
-		if m.hasConfirmOptions() {
-			b.WriteString(m.renderConfirmOptionsHeader())
-		}
-		b.WriteString(m.styles.helpKey.Render(label))
-		b.WriteString(nl)
-		b.WriteString(m.confirmInput.View())
-
-		// Only include hints when there is enough room.
-		hints := nl + nl + m.renderConfirmInputHints()
-		total := strings.Count(b.String(), nl) + 1 + strings.Count(hints, nl)
-		if total <= m.confirmViewport() {
-			b.WriteString(hints)
-		}
-	} else {
-		b.WriteString(nl + nl)
+	if !m.confirmHasInput {
+		return prompt.ComposeContent(prompt.ContentModel{
+			Prompt:   m.confirmPrompt,
+			HasField: false,
+		})
 	}
-	return b.String()
+
+	label := m.confirmInputLabel
+	if label == "" {
+		label = "Comment"
+	}
+
+	hints := m.confirmInputHints()
+	options := ""
+	if m.hasConfirmOptions() {
+		options = m.confirmOptionsHeader()
+	}
+	content := prompt.ComposeContent(prompt.ContentModel{
+		Prompt:     m.confirmPrompt,
+		Options:    options,
+		FieldLabel: m.styles.helpKey.Render(label),
+		FieldBody:  m.confirmInput.View(),
+		Hints:      hints,
+		HasField:   true,
+	})
+	withHints := prompt.ComposeContent(prompt.ContentModel{
+		Prompt:       m.confirmPrompt,
+		Options:      options,
+		FieldLabel:   m.styles.helpKey.Render(label),
+		FieldBody:    m.confirmInput.View(),
+		Hints:        hints,
+		IncludeHints: true,
+		HasField:     true,
+	})
+	if strings.Count(withHints, nl)+1 <= m.confirmViewport() {
+		return withHints
+	}
+	return content
 }
 
 func (m tuiModel) confirmInputWidth() int {
@@ -798,85 +521,73 @@ func (m tuiModel) confirmTextareaMaxHeight() int {
 // element (option row or textarea) is visible. Call after any focus change.
 func (m *tuiModel) scrollConfirmToFocus() {
 	m.syncConfirmView()
-
-	// Calculate the line offset of the focused element within the content.
-	// Layout: prompt (1) + blank (2) + [options: 3 lines each] + label (1) + textarea + hints.
-	const promptLines = 3 // prompt + 2 blank lines (\n\n)
-	const linesPerOption = 3
-
-	if m.confirmOptFocus && m.hasConfirmOptions() {
-		line := promptLines + m.confirmOptCursor*linesPerOption
-		m.confirmView.EnsureVisible(max(0, line-1), 0, 0)
-		return
-	}
-
-	if m.confirmHasInput {
-		// Textarea starts after prompt + all options + label.
-		line := promptLines + len(m.confirmOptions)*linesPerOption + 1
-		m.confirmView.EnsureVisible(max(0, line-1), 0, 0)
+	line := m.confirmState.FocusLine(len(m.confirmOptions), m.confirmHasInput)
+	if line >= 0 {
+		m.confirmView.EnsureVisible(line, 0, 0)
 	}
 }
 
-func (m tuiModel) renderConfirmOptionsHeader() string {
-	var b strings.Builder
-	for i, def := range m.confirmOptions {
-		b.WriteString(m.styles.helpKey.Render(def.label))
-		b.WriteString(nl)
-
-		var choicesLine strings.Builder
-		for j, choice := range def.choices {
-			if j > 0 {
-				choicesLine.WriteString("  ")
-			}
-			selected := i < len(m.confirmOptValues) && m.confirmOptValues[i] == j
-			active := m.confirmOptFocus && i == m.confirmOptCursor
-			switch {
-			case selected && active:
-				choicesLine.WriteString(styleHighlight.Bold(true).Render(choice.label))
-			case selected:
-				choicesLine.WriteString(styleTitle.Bold(true).Render(choice.label))
-			case active:
-				choicesLine.WriteString(styleHighlight.Faint(true).Render(choice.label))
-			default:
-				choicesLine.WriteString(lg.NewStyle().Faint(true).Render(choice.label))
-			}
+func (m tuiModel) confirmOptionsHeader() string {
+	groups := make([]prompt.ChoiceGroup, 0, len(m.confirmOptions))
+	for _, def := range m.confirmOptions {
+		choices := make([]prompt.Choice, 0, len(def.choices))
+		for _, choice := range def.choices {
+			choices = append(choices, prompt.Choice{Label: choice.label})
 		}
-		b.WriteString(choicesLine.String())
-		b.WriteString(nl + nl)
+		groups = append(groups, prompt.ChoiceGroup{
+			Label:   def.label,
+			Choices: choices,
+		})
 	}
-	return b.String()
+	return prompt.RenderChoiceGroups(
+		groups,
+		m.confirmState.OptValues,
+		m.confirmState.OptCursor,
+		m.confirmState.OptFocus,
+		prompt.ChoiceGroupStyles{
+			Label:          m.styles.helpKey,
+			SelectedActive: styleHighlight.Bold(true),
+			Selected:       styleTitle.Bold(true),
+			Active:         styleHighlight.Faint(true),
+			Inactive:       lg.NewStyle().Faint(true),
+		},
+	)
 }
 
-func (m tuiModel) renderConfirmInputHints() string {
-	helpKey := m.styles.helpKey
-	helpText := m.styles.helpText
-
-	secondLine := []string{
-		helpKey.Render(tuiKeybindConfirmSubmit) + " " + helpText.Render("submit"),
-		helpKey.Render(tuiKeyEsc) + " " + helpText.Render("cancel"),
+func (m tuiModel) confirmInputHints() string {
+	secondLine := []prompt.Hint{
+		{Key: key.AltEnter, Text: "submit"},
+		{Key: key.Esc, Text: "cancel"},
 	}
 	if !m.hasConfirmOptions() {
-		return strings.Join(secondLine, helpGap)
+		return prompt.RenderHintLines(
+			[][]prompt.Hint{secondLine},
+			helpGap,
+			m.styles.helpKey,
+			m.styles.helpText,
+		)
 	}
 
-	firstLine := []string{
-		helpKey.Render(tuiKeyTab) + " " + helpText.Render("next"),
-		helpKey.Render(tuiKeyShiftTab) + " " + helpText.Render("prev"),
-		helpKey.Render("←/→") + " " + helpText.Render("select"),
-		helpKey.Render(tuiKeySpace) + " " + helpText.Render("cycle"),
+	firstLine := []prompt.Hint{
+		{Key: key.Tab, Text: "next"},
+		{Key: key.ShiftTab, Text: "prev"},
+		{Key: key.ArrowsLeftRight, Text: "select"},
+		{Key: key.Space, Text: "cycle"},
 	}
-	return strings.Join(firstLine, helpGap) + helpGap + strings.Join(secondLine, helpGap)
+	return prompt.RenderHintLines(
+		[][]prompt.Hint{firstLine, secondLine},
+		helpGap,
+		m.styles.helpKey,
+		m.styles.helpText,
+	)
 }
 
 func newConfirmInput() textarea.Model {
-	ci := textarea.New()
-	ci.Prompt = ""
-	ci.Placeholder = "Enter text..."
-	ci.ShowLineNumbers = false
-	ci.SetWidth(tuiConfirmInputWidth)
-	ci.DynamicHeight = true
-	ci.MinHeight = tuiConfirmInputMinHeight
-	ci.MaxHeight = tuiConfirmInputMaxHeight
+	ci := input.NewTextArea(
+		input.WithWidth(tuiConfirmInputWidth),
+		input.WithMinHeight(tuiConfirmInputMinHeight),
+		input.WithMaxHeight(tuiConfirmInputMaxHeight),
+	)
 	ciStyles := ci.Styles()
 	ciStyles.Focused.Text = styleHighlight
 	ciStyles.Focused.Placeholder = styleSubtle
@@ -902,7 +613,7 @@ func (m tuiModel) prepareConfirmInput() tuiModel {
 }
 
 func (m tuiModel) focusConfirmInput() (tuiModel, tea.Cmd) {
-	m.confirmOptFocus = false
+	m.confirmState.OptFocus = false
 	if !m.confirmHasInput {
 		return m, nil
 	}
@@ -913,7 +624,7 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Info-only modal (no confirmCmd) - any key dismisses.
 	if m.confirmCmd == nil && m.confirmCmdFn == nil {
 		switch msg.String() {
-		case tuiKeyEnter, "q", tuiKeyEsc, "y", "n", " ":
+		case key.Enter, "q", key.Esc, "y", "n", " ":
 			return m.confirmDismiss()
 		default:
 			return m, nil
@@ -922,22 +633,17 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Modal with text input (e.g. close comment).
 	if m.confirmHasInput && m.confirmInput.Focused() {
 		switch msg.String() {
-		case tuiKeyEsc:
+		case key.Esc:
 			return m.confirmDismiss()
-		case tuiKeyTab, tuiKeyShiftTab:
+		case key.Tab, key.ShiftTab:
 			if m.hasConfirmOptions() {
-				m.confirmOptFocus = true
+				m.confirmState.EnterOptions(len(m.confirmOptions), msg.String() == key.ShiftTab)
 				m.confirmInput.Blur()
-				if msg.String() == tuiKeyShiftTab {
-					m.confirmOptCursor = len(m.confirmOptions) - 1
-				} else {
-					m.confirmOptCursor = 0
-				}
 				m.scrollConfirmToFocus()
 				return m, nil
 			}
-		case tuiKeybindConfirmSubmit:
-			m.confirmYes = true
+		case key.AltEnter:
+			m.confirmState.Yes = true
 			return m.confirmAccept()
 		default:
 			var cmd tea.Cmd
@@ -945,17 +651,17 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
-	if !m.confirmOptFocus || !m.hasConfirmOptions() {
+	if !m.confirmState.OptFocus || !m.hasConfirmOptions() {
 		switch msg.String() {
-		case tuiKeyLeft, tuiKeyRight, tuiKeybindVimLeft, tuiKeybindVimRight, tuiKeySpace, tuiKeyTab:
-			m.confirmYes = !m.confirmYes
+		case key.Left, key.Right, tuiKeybindVimLeft, tuiKeybindVimRight, key.Space, key.Tab:
+			m.confirmState.ToggleYes()
 			return m, nil
-		case tuiKeybindConfirmYes:
+		case key.Y:
 			return m.confirmAccept()
-		case tuiKeybindConfirmNo, tuiKeybindQuit, tuiKeyEsc:
+		case tuiKeybindConfirmNo, tuiKeybindQuit, key.Esc:
 			return m.confirmDismiss()
-		case tuiKeyEnter:
-			if m.confirmYes {
+		case key.Enter:
+			if m.confirmState.Yes {
 				return m.confirmAccept()
 			}
 			return m.confirmDismiss()
@@ -966,73 +672,58 @@ func (m tuiModel) updateConfirmOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	previousProvider := m.selectedReviewProvider()
 	switch msg.String() {
-	case tuiKeybindVimDown, tuiKeyDown:
-		if m.confirmHasInput && m.confirmOptCursor == len(m.confirmOptions)-1 {
+	case tuiKeybindVimDown, key.Down:
+		if m.confirmState.Navigate(
+			prompt.NavDown,
+			len(m.confirmOptions),
+			m.confirmHasInput,
+		).MoveToInput {
 			focused, cmd := m.focusConfirmInput()
 			focused.scrollConfirmToFocus()
 			return focused, cmd
 		}
-		m.confirmOptCursor = min(m.confirmOptCursor+1, len(m.confirmOptions)-1)
 		m.scrollConfirmToFocus()
-	case tuiKeybindVimUp, tuiKeyUp:
-		if m.confirmHasInput && m.confirmOptCursor == 0 {
+	case tuiKeybindVimUp, key.Up:
+		if m.confirmState.Navigate(
+			prompt.NavUp,
+			len(m.confirmOptions),
+			m.confirmHasInput,
+		).MoveToInput {
 			focused, cmd := m.focusConfirmInput()
 			focused.scrollConfirmToFocus()
 			return focused, cmd
 		}
-		m.confirmOptCursor = max(m.confirmOptCursor-1, 0)
 		m.scrollConfirmToFocus()
-	case tuiKeybindVimRight, tuiKeyRight:
-		n := len(m.confirmOptions[m.confirmOptCursor].choices)
-		if n > 0 {
-			m.confirmOptValues[m.confirmOptCursor] = min(
-				m.confirmOptValues[m.confirmOptCursor]+1,
-				n-1,
-			)
+	case tuiKeybindVimRight, key.Right:
+		m.confirmState.Step(len(m.confirmOptions[m.confirmState.OptCursor].choices), 1, false)
+	case key.Space:
+		m.confirmState.Step(len(m.confirmOptions[m.confirmState.OptCursor].choices), 1, true)
+	case tuiKeybindVimLeft, key.Left:
+		m.confirmState.Step(len(m.confirmOptions[m.confirmState.OptCursor].choices), -1, false)
+	case key.Tab, key.ShiftTab:
+		dir := prompt.NavTab
+		if msg.String() == key.ShiftTab {
+			dir = prompt.NavShiftTab
 		}
-	case tuiKeySpace:
-		n := len(m.confirmOptions[m.confirmOptCursor].choices)
-		if n > 0 {
-			m.confirmOptValues[m.confirmOptCursor] = (m.confirmOptValues[m.confirmOptCursor] + 1) % n
-		}
-	case tuiKeybindVimLeft, tuiKeyLeft:
-		m.confirmOptValues[m.confirmOptCursor] = max(
-			m.confirmOptValues[m.confirmOptCursor]-1,
-			0,
-		)
-	case tuiKeyTab, tuiKeyShiftTab:
-		if msg.String() == tuiKeyShiftTab {
-			if m.confirmHasInput && m.confirmOptCursor == 0 {
-				focused, cmd := m.focusConfirmInput()
-				focused.scrollConfirmToFocus()
-				return focused, cmd
-			}
-			m.confirmOptCursor = (m.confirmOptCursor - 1 + len(m.confirmOptions)) % len(
-				m.confirmOptions,
-			)
-			m.scrollConfirmToFocus()
-			return m, nil
-		}
-		if m.confirmHasInput && m.confirmOptCursor == len(m.confirmOptions)-1 {
+		if m.confirmState.Navigate(dir, len(m.confirmOptions), m.confirmHasInput).MoveToInput {
 			focused, cmd := m.focusConfirmInput()
 			focused.scrollConfirmToFocus()
 			return focused, cmd
 		}
-		m.confirmOptCursor = (m.confirmOptCursor + 1) % len(m.confirmOptions)
 		m.scrollConfirmToFocus()
 		return m, nil
-	case tuiKeybindConfirmSubmit, tuiKeybindConfirmYes:
-		m.confirmYes = true
+	case key.AltEnter, key.Y:
+		m.confirmState.Yes = true
 		return m.confirmAccept()
-	case tuiKeybindConfirmNo, tuiKeybindQuit, tuiKeyEsc:
+	case tuiKeybindConfirmNo, tuiKeybindQuit, key.Esc:
 		return m.confirmDismiss()
-	case tuiKeyEnter:
+	case key.Enter:
 		if m.confirmHasInput {
 			focused, cmd := m.focusConfirmInput()
 			focused.scrollConfirmToFocus()
 			return focused, cmd
 		}
-		m.confirmYes = true
+		m.confirmState.Yes = true
 		return m.confirmAccept()
 	default:
 		return m, nil
@@ -1072,13 +763,13 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 			if url != "" {
 				styledSubject = xansi.SetHyperlink(url) + styledSubject + xansi.ResetHyperlink()
 			}
-			m.statusMsg = m.styles.statusPending.Render(
+			m.flash.Msg = m.styles.statusPending.Render(
 				verb,
 			) + " " + styledSubject + valueEllipsis
 		} else {
-			m.statusMsg = m.styles.statusPending.Render(verb) + valueEllipsis
+			m.flash.Msg = m.styles.statusPending.Render(verb) + valueEllipsis
 		}
-		m.statusErr = false
+		m.flash.Err = false
 	}
 	return m, cmd
 }

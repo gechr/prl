@@ -473,7 +473,7 @@ func (m tuiModel) syncReviewConfirmOptions(previousProvider reviewProvider) tuiM
 	}
 
 	m.confirmOptions = reviewConfirmOptions(m.cfg, currentProvider, currentModel)
-	m.confirmOptValues = reviewConfirmOptValues(
+	m.confirmState.OptValues = reviewConfirmOptValues(
 		m.cfg,
 		currentProvider,
 		normalizeReviewModel(m.cfg, currentProvider, currentModel),
@@ -481,8 +481,8 @@ func (m tuiModel) syncReviewConfirmOptions(previousProvider reviewProvider) tuiM
 	)
 
 	// Clamp cursor to new option count.
-	if m.confirmOptCursor >= len(m.confirmOptions) {
-		m.confirmOptCursor = len(m.confirmOptions) - 1
+	if m.confirmState.OptCursor >= len(m.confirmOptions) {
+		m.confirmState.OptCursor = len(m.confirmOptions) - 1
 	}
 
 	if m.confirmReviewPR != nil && previousProvider != reviewProviderUnknown &&
@@ -502,14 +502,14 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	model := configuredReviewModel(m.cfg, provider)
 	effort := configuredReviewEffort(m.cfg, provider, model)
 	m.confirmAction = tuiActionReview
-	m.confirmYes = true
+	m.confirmState.Yes = true
 	m.confirmHasInput = true
 	m = m.prepareConfirmInput()
 	m.confirmInputLabel = "Prompt"
 	m.confirmOptions = reviewConfirmOptions(m.cfg, provider, model)
-	m.confirmOptValues = reviewConfirmOptValues(m.cfg, provider, model, effort)
-	m.confirmOptCursor = 0
-	m.confirmOptFocus = true
+	m.confirmState.OptValues = reviewConfirmOptValues(m.cfg, provider, model, effort)
+	m.confirmState.OptCursor = 0
+	m.confirmState.OptFocus = true
 	m.confirmReviewPR = &prCopy
 	m = m.setConfirmInputPlaceholder("Leave blank to use the default prompt")
 	m.confirmInput.Blur()

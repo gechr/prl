@@ -1,12 +1,65 @@
 package main
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
+	"github.com/gechr/primer/key"
+	"github.com/gechr/primer/picker"
 )
+
+// newFilterPicker builds a picker.Model from the current filter state.
+func (m tuiModel) newFilterPicker() picker.Model {
+	rows := make([]picker.Row, len(filterOptionDefs))
+	for i, def := range filterOptionDefs {
+		choices := make([]string, len(def.choices))
+		for j, c := range def.choices {
+			choices[j] = c.label
+		}
+		rows[i] = picker.Row{Label: def.label, Choices: choices}
+	}
+
+	locked := make([]bool, len(filterOptionDefs))
+	for i := range filterOptionDefs {
+		locked[i] = m.isFilterRowLocked(filterRow(i))
+	}
+
+	defaults := make([]int, len(filterOptionDefs))
+	for i := range filterOptionDefs {
+		defaults[i] = m.defaultFilterChoice(filterRow(i))
+	}
+
+	p := picker.New(
+		rows,
+		m.currentFilterValues(),
+		defaults,
+		locked,
+		make([]bool, len(filterOptionDefs)),
+		picker.Styles{
+			Box:            m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX),
+			Cursor:         m.styles.cursor.Render("❯ "),
+			CursorLineBG:   cursorLineBG,
+			CursorPad:      "  ",
+			Default:        m.styles.defaultChoice,
+			HelpKey:        m.styles.helpKey,
+			HelpText:       m.styles.helpText,
+			Inactive:       lg.NewStyle().Faint(true),
+			Label:          m.styles.helpKey,
+			LockedInactive: styleDim.Faint(true),
+			LockedLabel:    lg.NewStyle().Faint(true),
+			LockedSuffix:   "  (CLI)",
+			Selected:       styleTitle.Bold(true),
+		},
+	)
+	p.Hints = []picker.HelpHint{
+		{Key: key.ArrowsLeftRight, Desc: "select"},
+		{Key: "space", Desc: "cycle"},
+		{Key: "⌫", Desc: "reset"},
+		{Key: "enter", Desc: "apply"},
+		{Key: "esc", Desc: "cancel"},
+	}
+	return p
+}
 
 // filterChoiceTrue/False are canonical string values for bool filter choices.
 const (
@@ -69,8 +122,8 @@ var filterOptionDefs = [...]filterOptionDef{
 
 // currentFilterValues maps the current CLI filter state to choice indices
 // for the filter overlay.
-func (m tuiModel) currentFilterValues() [6]int {
-	var vals [6]int
+func (m tuiModel) currentFilterValues() []int {
+	vals := make([]int, len(filterOptionDefs))
 
 	// State - use canonical string from the parsed enum.
 	vals[0] = filterChoiceIndex(filterRowState, m.cli.PRState().String())
@@ -115,7 +168,7 @@ func (m tuiModel) currentFilterValues() [6]int {
 
 // selectedFilterValue returns the canonical value string for the given filter row.
 func (m tuiModel) selectedFilterValue(row filterRow) string {
-	return filterOptionDefs[row].choices[m.optionsValues[row]].value
+	return filterOptionDefs[row].choices[m.optionsPicker.Values[row]].value
 }
 
 func filterChoiceIndex(row filterRow, value string) int {
@@ -159,15 +212,10 @@ func (m tuiModel) defaultFilterChoice(row filterRow) int {
 	return 0
 }
 
-func (m *tuiModel) resetFilterRow(row filterRow) {
-	m.optionsReset[row] = true
-	m.optionsValues[row] = m.defaultFilterChoice(row)
-}
-
 func (m *tuiModel) applyFilterRow(row filterRow) {
 	switch row {
 	case filterRowState:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			m.cli.State = m.defaultStateValue()
 			return
 		}
@@ -180,25 +228,25 @@ func (m *tuiModel) applyFilterRow(row filterRow) {
 			m.cli.Draft = new(false)
 		}
 	case filterRowBots:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			m.cli.NoBot = m.defaultNoBotValue()
 			return
 		}
 		m.cli.NoBot = m.selectedFilterValue(row) == filterChoiceTrue
 	case filterRowArchived:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			m.cli.Archived = false
 			return
 		}
 		m.cli.Archived = m.selectedFilterValue(row) == filterChoiceTrue
 	case filterRowCI:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			m.cli.CI = ""
 			return
 		}
 		m.cli.CI = m.selectedFilterValue(row)
 	case filterRowReview:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			m.cli.Review = ""
 			return
 		}
@@ -209,29 +257,29 @@ func (m *tuiModel) applyFilterRow(row filterRow) {
 func (m tuiModel) persistedFilterValue(row filterRow) any {
 	switch row {
 	case filterRowState:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			return ""
 		}
 		return m.cli.State
 	case filterRowDraft:
 		return m.cli.Draft
 	case filterRowBots:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			return (*bool)(nil)
 		}
 		return new(m.cli.NoBot)
 	case filterRowArchived:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			return (*bool)(nil)
 		}
 		return new(m.cli.Archived)
 	case filterRowCI:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			return ""
 		}
 		return m.cli.CI
 	case filterRowReview:
-		if m.optionsReset[row] {
+		if m.optionsPicker.IsReset[row] {
 			return ""
 		}
 		return m.cli.Review
@@ -261,38 +309,23 @@ func (m tuiModel) isFilterRowLocked(row filterRow) bool {
 
 func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case tuiKeyEsc, tuiKeybindQuit:
+	case key.Esc, tuiKeybindQuit:
 		m.showOptions = false
 		return m, nil
-	case tuiKeyEnter, tuiKeybindOptions:
+	case key.Enter, tuiKeybindOptions:
 		return m.applyFilterOptions()
-	case tuiKeybindVimDown, tuiKeyDown:
-		m.optionsCursor = min(m.optionsCursor+1, filterRow(len(filterOptionDefs)-1))
-	case tuiKeybindVimUp, tuiKeyUp:
-		m.optionsCursor = max(m.optionsCursor-1, 0)
-	case tuiKeybindVimRight, tuiKeyRight:
-		if !m.isFilterRowLocked(m.optionsCursor) {
-			m.optionsReset[m.optionsCursor] = false
-			n := len(filterOptionDefs[m.optionsCursor].choices)
-			m.optionsValues[m.optionsCursor] = min(m.optionsValues[m.optionsCursor]+1, n-1)
-		}
-	case tuiKeySpace:
-		if !m.isFilterRowLocked(m.optionsCursor) {
-			m.optionsReset[m.optionsCursor] = false
-			n := len(filterOptionDefs[m.optionsCursor].choices)
-			if n > 0 {
-				m.optionsValues[m.optionsCursor] = (m.optionsValues[m.optionsCursor] + 1) % n
-			}
-		}
-	case tuiKeybindVimLeft, tuiKeyLeft:
-		if !m.isFilterRowLocked(m.optionsCursor) {
-			m.optionsReset[m.optionsCursor] = false
-			m.optionsValues[m.optionsCursor] = max(m.optionsValues[m.optionsCursor]-1, 0)
-		}
+	case tuiKeybindVimDown, key.Down:
+		m.optionsPicker.Down()
+	case tuiKeybindVimUp, key.Up:
+		m.optionsPicker.Up()
+	case tuiKeybindVimRight, key.Right:
+		m.optionsPicker.Right()
+	case key.Space:
+		m.optionsPicker.Cycle()
+	case tuiKeybindVimLeft, key.Left:
+		m.optionsPicker.Left()
 	case "backspace", "delete":
-		if !m.isFilterRowLocked(m.optionsCursor) {
-			m.resetFilterRow(m.optionsCursor)
-		}
+		m.optionsPicker.Reset()
 	}
 	return m, nil
 }
@@ -356,91 +389,7 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) renderOptionsOverlay() string {
-	var b strings.Builder
-
-	labelWidth := 0
-	for _, def := range filterOptionDefs {
-		if w := len(def.label); w > labelWidth {
-			labelWidth = w
-		}
-	}
-
-	lines := make([]string, 0, len(filterOptionDefs))
-	for i, def := range filterOptionDefs {
-		var line strings.Builder
-		row := filterRow(i)
-		locked := m.isFilterRowLocked(row)
-
-		// Cursor prefix.
-		if row == m.optionsCursor {
-			line.WriteString(m.styles.cursor.Render("❯ "))
-		} else {
-			line.WriteString("  ")
-		}
-
-		// Label.
-		pad := strings.Repeat(" ", labelWidth-len(def.label))
-		label := pad + def.label + "  "
-		if locked {
-			line.WriteString(lg.NewStyle().Faint(true).Render(label))
-		} else {
-			line.WriteString(m.styles.helpKey.Render(label))
-		}
-
-		// Choices.
-		for i, c := range def.choices {
-			if i > 0 {
-				line.WriteString("  ")
-			}
-			selected := m.optionsValues[row] == i
-			isDefault := i == m.defaultFilterChoice(row)
-			switch {
-			case selected:
-				line.WriteString(styleTitle.Bold(true).Render(c.label))
-			case isDefault:
-				line.WriteString(m.styles.defaultChoice.Render(c.label))
-			case locked:
-				if selected {
-					line.WriteString(styleTitle.Bold(true).Render(c.label))
-				} else {
-					line.WriteString(styleDim.Faint(true).Render(c.label))
-				}
-			default:
-				line.WriteString(lg.NewStyle().Faint(true).Render(c.label))
-			}
-		}
-
-		if locked {
-			line.WriteString(lg.NewStyle().Faint(true).Render("  (CLI)"))
-		}
-		lines = append(lines, line.String())
-	}
-
-	// Footer.
-	footer := m.styles.helpKey.Render("←/→") + m.styles.helpText.Render(" select") +
-		"  " + m.styles.helpKey.Render("space") + m.styles.helpText.Render(" cycle") +
-		"  " + m.styles.helpKey.Render("⌫") + m.styles.helpText.Render(" reset") +
-		"  " + m.styles.helpKey.Render("enter") + m.styles.helpText.Render(" apply") +
-		"  " + m.styles.helpKey.Render("esc") + m.styles.helpText.Render(" cancel")
-
-	contentWidth := lg.Width(footer)
-	for _, line := range lines {
-		contentWidth = max(contentWidth, lg.Width(line))
-	}
-
-	for i, line := range lines {
-		if filterRow(i) == m.optionsCursor {
-			b.WriteString(injectLineBackground(line, contentWidth, cursorLineBG))
-		} else {
-			b.WriteString(line)
-		}
-		b.WriteString(nl)
-	}
-
-	b.WriteString(nl)
-	b.WriteString(footer)
-
-	return m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX).Render(b.String())
+	return m.optionsPicker.View()
 }
 
 func applyTUIFilterDefaults(cli *CLI, cfg *Config) bool {

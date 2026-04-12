@@ -66,7 +66,7 @@ func TestPrepareAIReviewConfirmUsesYesNo(t *testing.T) {
 
 	require.Equal(t, "review", m.confirmAction)
 	require.NotNil(t, m.confirmCmdFn)
-	require.True(t, m.confirmYes)
+	require.True(t, m.confirmState.Yes)
 	require.True(t, m.confirmHasInput)
 	require.Equal(t, "Prompt", m.confirmInputLabel)
 	require.Len(t, m.confirmOptions, 3)
@@ -89,9 +89,9 @@ func TestPrepareAIReviewConfirmUsesYesNo(t *testing.T) {
 		m.selectedConfirmOptionValue(2),
 	)
 	require.Equal(t, tuiAIReviewConfirmInputWid, m.confirmInput.Width())
-	require.True(t, m.confirmOptFocus)
+	require.True(t, m.confirmState.OptFocus)
 	require.False(t, m.confirmInput.Focused())
-	require.Equal(t, 0, m.confirmOptCursor)
+	require.Equal(t, 0, m.confirmState.OptCursor)
 	require.Equal(t, reviewPrompt(pr, nil, defaultReviewProvider), m.confirmInput.Value())
 }
 
@@ -102,7 +102,7 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 	}
 	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
 
-	require.True(t, m.confirmOptFocus)
+	require.True(t, m.confirmState.OptFocus)
 	require.False(t, m.confirmInput.Focused())
 
 	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -110,9 +110,9 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.True(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmState.OptFocus)
 	require.False(t, bm.confirmInput.Focused())
-	require.Equal(t, 1, bm.confirmOptCursor)
+	require.Equal(t, 1, bm.confirmState.OptCursor)
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyLeft})
 	require.Nil(t, cmd)
@@ -127,9 +127,9 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.True(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmState.OptFocus)
 	require.False(t, bm.confirmInput.Focused())
-	require.Equal(t, 0, bm.confirmOptCursor)
+	require.Equal(t, 0, bm.confirmState.OptCursor)
 }
 
 func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
@@ -291,7 +291,7 @@ func TestGeminiPrepareAIReviewConfirmIncludesEffort(t *testing.T) {
 	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
 	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
 	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
-	require.Len(t, m.confirmOptValues, 3)
+	require.Len(t, m.confirmState.OptValues, 3)
 }
 
 func TestReviewPromptUsesConfigTemplate(t *testing.T) {

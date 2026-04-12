@@ -9,8 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/gechr/prl/internal/ansiutil"
-	"github.com/gechr/prl/internal/table"
+	"github.com/gechr/primer/ansi/hyperlink"
+	"github.com/gechr/primer/table"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,11 +82,11 @@ func newTestRenderer(columns []Column, opts ...table.Option) *table.Renderer[PRR
 func newTestRendererWithTTY(
 	columns []Column, tty bool, opts ...table.Option,
 ) *table.Renderer[PRRowModel] {
-	ansiOpts := []ansiutil.Option{ansiutil.WithTerminal(tty)}
+	linkOpts := []hyperlink.Option{hyperlink.WithTerminal(tty)}
 	if !tty {
-		ansiOpts = append(ansiOpts, ansiutil.WithHyperlinkFallback(ansiutil.HyperlinkFallbackURL))
+		linkOpts = append(linkOpts, hyperlink.WithFallback(hyperlink.FallbackURL))
 	}
-	ctx := table.NewRenderContext(testPRL, ansiutil.New(ansiOpts...))
+	ctx := table.NewRenderContext(testPRL, hyperlink.New(linkOpts...))
 	// prl default: newest at top → clib WithReverse(true).
 	allOpts := []table.Option{table.WithReverse(true), table.WithTTY(tty)}
 	allOpts = append(allOpts, opts...)
@@ -252,7 +252,7 @@ func TestTitleColumnPreservesEmojiVariationSelectorInTTY(t *testing.T) {
 	pr := testPRs()[0]
 	pr.Title = "⬆️ Bump tar from 7.5.7 to 7.5.11"
 	row := testModelsFrom([]PullRequest{pr}, "owner")[0]
-	ctx := table.NewRenderContext(testPRL, ansiutil.New(ansiutil.WithTerminal(true)))
+	ctx := table.NewRenderContext(testPRL, hyperlink.New(hyperlink.WithTerminal(true)))
 
 	cell := testPRL.allColumnDefs(tableLayout{})[colTitle].Render(row, ctx)
 

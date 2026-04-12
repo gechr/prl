@@ -6,7 +6,8 @@ import (
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
-	"github.com/gechr/prl/internal/prompt"
+	"github.com/gechr/primer/input"
+	"github.com/gechr/primer/pick"
 )
 
 // prlHuhTheme implements huh.Theme with prl's custom styling.
@@ -40,39 +41,40 @@ func (prlHuhTheme) Theme(isDark bool) *huh.Styles {
 }
 
 // interactiveSelect presents a multi-select UI for PR selection.
-// Returns selected TableRows, or prompt.ErrCancelled if user cancels.
+// Returns selected TableRows, or pick.ErrCanceled if user cancels.
 func interactiveSelect(rows []TableRow, header string) ([]TableRow, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
 
-	items := make([]prompt.SelectItem[TableRow], len(rows))
+	items := make([]pick.Item[TableRow], len(rows))
 	for i, row := range rows {
-		items[i] = prompt.SelectItem[TableRow]{
+		items[i] = pick.Item[TableRow]{
 			Display:  row.Display,
 			Value:    row,
 			Selected: true,
 		}
 	}
 
-	return prompt.MultiSelect(header, items, prlHuhTheme{}, maxSelectHeight, true)
+	return pick.MultiSelect(header, items, prlHuhTheme{}, maxSelectHeight, true)
 }
 
 // interactiveEdit presents an edit TUI for the selected PRs with ctrl+n/ctrl+p navigation.
 // Bodies are fetched lazily. Changes are only submitted on ctrl+s.
 func interactiveEdit(actions *ActionRunner, prs []PullRequest) error {
-	editPRs := make([]editPR, len(prs))
+	entries := make([]input.EditorEntry, len(prs))
 	for i, pr := range prs {
-		editPRs[i] = editPR{Ref: pr.Ref(), Title: pr.Title}
+		entries[i] = input.EditorEntry{Label: pr.Ref(), Title: pr.Title}
 	}
 
-	fetchBody := func(index int) (string, error) {
-		pr := prs[index]
-		owner, repo := prOwnerRepo(pr)
-		return actions.fetchPRBody(owner, repo, pr.Number)
-	}
-
-	results, submitted, err := runEditTUI(editPRs, fetchBody)
+	results, submitted, err := input.Run(entries,
+		input.WithEditorStyles(prlEditorStyles()),
+		input.WithBodyFetch(func(index int) (string, error) {
+			pr := prs[index]
+			owner, repo := prOwnerRepo(pr)
+			return actions.fetchPRBody(owner, repo, pr.Number)
+		}),
+	)
 	if err != nil {
 		return err
 	}

@@ -46,7 +46,6 @@ var (
 	colorFilterTag     = lg.Color("116") // filter tag (cyan)
 	colorDefault       = lg.Color("75")  // default choice (faint blue)
 	colorCheckDuration = lg.Color("245") // check duration (lighter gray)
-	colorCursorLine    = lg.Color("252") // textarea cursor line (very light gray)
 	colorHelpKeyDim    = lg.Color("248") // edit help key (near-white)
 )
 
@@ -87,8 +86,7 @@ var (
 	styleFilterTag  = lg.NewStyle().Foreground(colorFilterTag)
 	styleDefault    = lg.NewStyle().Foreground(colorDefault)
 	styleCheckDur   = lg.NewStyle().Foreground(colorCheckDuration)
-	styleCursorLine = lg.NewStyle().Foreground(colorCursorLine)
-	styleHelpKeyDm  = lg.NewStyle().Foreground(colorHelpKeyDim)
+	styleHelpKeyDim = lg.NewStyle().Foreground(colorHelpKeyDim)
 )
 
 // Pre-rendered styled strings.

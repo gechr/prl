@@ -18,8 +18,8 @@ import (
 	"github.com/gechr/clib/complete"
 	"github.com/gechr/clog"
 	cspinner "github.com/gechr/clog/fx/spinner"
-	"github.com/gechr/prl/internal/prompt"
-	"github.com/gechr/prl/internal/term"
+	"github.com/gechr/primer/pick"
+	"github.com/gechr/primer/term"
 )
 
 var version = "dev"
@@ -828,7 +828,7 @@ func runOnce(
 // runInteractive shows the multi-select prompt and dispatches to send or action runner.
 func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow) error {
 	selected, err := interactiveSelect(rows, buildActionHeader(cli))
-	if errors.Is(err, prompt.ErrCancelled) {
+	if errors.Is(err, pick.ErrCanceled) {
 		return nil
 	}
 	if err != nil {

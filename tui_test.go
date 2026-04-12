@@ -15,7 +15,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/gechr/prl/internal/table"
+	"github.com/gechr/primer/filter"
+	"github.com/gechr/primer/key"
+	"github.com/gechr/primer/layout"
+	"github.com/gechr/primer/picker"
+	"github.com/gechr/primer/scrollbar"
+	"github.com/gechr/primer/scrollwheel"
+	"github.com/gechr/primer/table"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +32,7 @@ func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
 	}
 	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
 
-	rendered := m.renderConfirmOptionsHeader()
+	rendered := m.confirmOptionsHeader()
 	stripped := ansi.Strip(rendered)
 
 	require.Equal(
@@ -72,7 +78,7 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, "review", bm.confirmAction)
-	require.True(t, bm.confirmOptFocus)
+	require.True(t, bm.confirmState.OptFocus)
 	require.False(t, bm.confirmInput.Focused())
 
 	model, cmd = m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModAlt})
@@ -104,8 +110,10 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 func TestInlineHelpKeyEmbedsModifiedSingleLetterShortcut(t *testing.T) {
 	m := tuiModel{styles: newTuiStyles()}
 
-	rendered, ok := m.inlineHelpKey(
-		helpPair{key: "alt+c", desc: "copy"},
+	rendered, ok := key.Inline(
+		"alt+c",
+		"copy",
+		m.styles.helpKey,
 		m.styles.helpText,
 	)
 
@@ -123,8 +131,10 @@ func TestInlineHelpKeyEmbedsModifiedSingleLetterShortcut(t *testing.T) {
 func TestInlineHelpKeyEmbedsModifiedCtrlShiftChord(t *testing.T) {
 	m := tuiModel{styles: newTuiStyles()}
 
-	rendered, ok := m.inlineHelpKey(
-		helpPair{key: "ctrl+shift+t", desc: "toggle"},
+	rendered, ok := key.Inline(
+		"ctrl+shift+t",
+		"toggle",
+		m.styles.helpKey,
 		m.styles.helpText,
 	)
 
@@ -220,10 +230,10 @@ func TestRenderConfirmOptionsHighlightsActiveRowInGreen(t *testing.T) {
 		styles:       newTuiStyles(),
 	}
 	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-	m.confirmOptFocus = true
-	m.confirmOptCursor = 1
+	m.confirmState.OptFocus = true
+	m.confirmState.OptCursor = 1
 
-	rendered := m.renderConfirmOptionsHeader()
+	rendered := m.confirmOptionsHeader()
 
 	require.NotContains(t, rendered, cursorLineBG)
 	require.Contains(t, rendered, m.styles.helpKey.Render("Model"))
@@ -243,21 +253,21 @@ func TestUpdateConfirmOverlayTabLoopsAcrossOptions(t *testing.T) {
 
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 1, bm.confirmOptCursor)
+	require.Equal(t, 1, bm.confirmState.OptCursor)
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
 	require.Nil(t, cmd)
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 2, bm.confirmOptCursor)
+	require.Equal(t, 2, bm.confirmState.OptCursor)
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
 	require.NotNil(t, cmd)
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmState.OptFocus)
 	require.True(t, bm.confirmInput.Focused())
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -265,8 +275,8 @@ func TestUpdateConfirmOverlayTabLoopsAcrossOptions(t *testing.T) {
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.True(t, bm.confirmOptFocus)
-	require.Equal(t, 0, bm.confirmOptCursor)
+	require.True(t, bm.confirmState.OptFocus)
+	require.Equal(t, 0, bm.confirmState.OptCursor)
 }
 
 func TestUpdateConfirmOverlayUpDownCanFocusPrompt(t *testing.T) {
@@ -281,7 +291,7 @@ func TestUpdateConfirmOverlayUpDownCanFocusPrompt(t *testing.T) {
 
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmState.OptFocus)
 	require.True(t, bm.confirmInput.Focused())
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -289,19 +299,19 @@ func TestUpdateConfirmOverlayUpDownCanFocusPrompt(t *testing.T) {
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmState.OptFocus)
 	require.True(t, bm.confirmInput.Focused())
 
 	bm = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-	bm.confirmOptFocus = true
+	bm.confirmState.OptFocus = true
 	bm.confirmInput.Blur()
-	bm.confirmOptCursor = len(bm.confirmOptions) - 1
+	bm.confirmState.OptCursor = len(bm.confirmOptions) - 1
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
 	require.NotNil(t, cmd)
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmState.OptFocus)
 	require.True(t, bm.confirmInput.Focused())
 }
 
@@ -319,7 +329,7 @@ func TestUpdateConfirmOverlayPromptDoesNotExitOnArrowKeys(t *testing.T) {
 
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmState.OptFocus)
 	require.True(t, bm.confirmInput.Focused())
 
 	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -327,7 +337,7 @@ func TestUpdateConfirmOverlayPromptDoesNotExitOnArrowKeys(t *testing.T) {
 
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.confirmOptFocus)
+	require.False(t, bm.confirmState.OptFocus)
 	require.True(t, bm.confirmInput.Focused())
 }
 
@@ -950,7 +960,7 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
 	line := styleDanger.Render("+abcdef")
 
-	rows := wrapDiffLines(line, 4)
+	rows := layout.WrapLines(line, 4)
 
 	require.Len(t, rows, 2)
 	require.Equal(t, []string{"+abc", "def"}, []string{
@@ -969,7 +979,7 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diff:      diff,
 		diffKey:   makePRKey(pr),
-		diffLines: wrapDiffLines(diff, 4),
+		diffLines: layout.WrapLines(diff, 4),
 		diffView:  newScrollView(),
 		view:      tuiViewDiff,
 		height:    8,
@@ -995,7 +1005,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	pr := testReviewPullRequest()
 	diff := styleDanger.Render("+" + strings.Repeat("a", 85))
 	width := 80
-	diffLines := wrapDiffLines(diff, width-tuiScrollbarWidth)
+	diffLines := layout.WrapLines(diff, width-tuiScrollbarWidth)
 	m := tuiModel{
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diff:      diff,
@@ -1131,7 +1141,7 @@ func TestViewListDiffingStatusDoesNotAddFooterLines(t *testing.T) {
 			}
 
 			withStatus := base
-			withStatus.statusMsg = withStatus.styles.statusPending.Render(statusDiffing) +
+			withStatus.flash.Msg = withStatus.styles.statusPending.Render(statusDiffing) +
 				" " + styleRef.Render("foo/bar#123") + valueEllipsis
 
 			baseLines := strings.Split(ansi.Strip(base.viewList().Content), nl)
@@ -1169,10 +1179,10 @@ func TestSyncDiffViewCachesNormalizedRenderLines(t *testing.T) {
 func TestRenderViewportContentUsesCachedLinesWithScrollbar(t *testing.T) {
 	m := tuiModel{styles: newTuiStyles()}
 	lines := []string{
-		normalizeViewportRenderLine("line 1", 10),
-		normalizeViewportRenderLine("line 2", 10),
-		normalizeViewportRenderLine("line 3", 10),
-		normalizeViewportRenderLine("line 4", 10),
+		layout.NormalizeLine("line 1", 10),
+		layout.NormalizeLine("line 2", 10),
+		layout.NormalizeLine("line 3", 10),
+		layout.NormalizeLine("line 4", 10),
 	}
 	vp := newScrollView()
 	vp.SetWidth(10)
@@ -1194,35 +1204,48 @@ func TestRenderViewportContentUsesCachedLinesWithScrollbar(t *testing.T) {
 
 func TestTUIWheelFilterCoalescesMouseWheelInput(t *testing.T) {
 	ch := make(chan tea.Msg, 1)
-	filter := newTUIWheelFilter(time.Millisecond, func(msg tea.Msg) {
-		ch <- msg
-	})
-	defer filter.Stop()
+	resolve := func(m tea.Model) (wheelTarget, bool) {
+		tui, ok := m.(tuiModel)
+		if !ok {
+			return wheelTargetNone, false
+		}
+		return tui.wheelScrollTarget()
+	}
+	sw := scrollwheel.New(resolve, func(msg tea.Msg) { ch <- msg },
+		scrollwheel.WithDelay(time.Millisecond))
+	defer sw.Stop()
 
 	model := tuiModel{view: tuiViewDiff}
 
-	require.Nil(t, filter.filter(model, tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown})))
-	require.Nil(t, filter.filter(model, tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown})))
+	require.Nil(t, sw.Filter(model, tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown})))
+	require.Nil(t, sw.Filter(model, tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown})))
 
 	select {
 	case msg := <-ch:
-		wheel, ok := msg.(batchedWheelMsg)
+		wm, ok := msg.(scrollwheel.Msg[wheelTarget])
 		require.True(t, ok)
-		require.Equal(t, wheelTargetDiff, wheel.target)
-		require.Equal(t, 2, wheel.delta)
+		require.Equal(t, wheelTargetDiff, wm.Target)
+		require.Equal(t, 2, wm.Delta)
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("timed out waiting for coalesced wheel message")
 	}
 }
 
 func TestTUIWheelFilterPassesNonWheelMessages(t *testing.T) {
-	filter := newTUIWheelFilter(time.Millisecond, nil)
-	defer filter.Stop()
+	resolve := func(m tea.Model) (wheelTarget, bool) {
+		tui, ok := m.(tuiModel)
+		if !ok {
+			return wheelTargetNone, false
+		}
+		return tui.wheelScrollTarget()
+	}
+	sw := scrollwheel.New(resolve, nil, scrollwheel.WithDelay(time.Millisecond))
+	defer sw.Stop()
 
 	model := tuiModel{view: tuiViewDiff}
 	key := tea.KeyPressMsg{}
 
-	got := filter.filter(model, key)
+	got := sw.Filter(model, key)
 
 	require.Equal(t, key, got)
 }
@@ -1249,12 +1272,12 @@ func TestScrollbarTrackClickJumpsDiffViewport(t *testing.T) {
 	require.True(t, ok)
 
 	require.True(t, m.handleScrollbarPress(tea.Mouse{
-		X:      hitbox.x,
-		Y:      hitbox.y + hitbox.height - 1,
+		X:      hitbox.X,
+		Y:      hitbox.Y + hitbox.Height - 1,
 		Button: tea.MouseLeft,
 	}))
 
-	require.True(t, m.scrollDrag.active)
+	require.True(t, m.scrollDrag.Active)
 	require.Equal(t, scrollbarTargetDiff, m.scrollDrag.target)
 	require.Positive(t, m.diffView.YOffset())
 	require.GreaterOrEqual(t, m.diffView.ScrollPercent(), 0.9)
@@ -1281,23 +1304,23 @@ func TestScrollbarThumbDragMovesDiffViewport(t *testing.T) {
 
 	hitbox, ok := m.scrollbarHitbox(scrollbarTargetDiff)
 	require.True(t, ok)
-	thumbPos, _ := scrollbarThumbMetrics(
-		hitbox.height,
-		hitbox.totalLines,
+	thumbPos, _ := scrollbar.ThumbMetrics(
+		hitbox.Height,
+		hitbox.TotalLines,
 		m.diffView.ScrollPercent(),
 	)
-	pressY := hitbox.y + thumbPos
+	pressY := hitbox.Y + thumbPos
 
 	require.True(t, m.handleScrollbarPress(tea.Mouse{
-		X:      hitbox.x,
+		X:      hitbox.X,
 		Y:      pressY,
 		Button: tea.MouseLeft,
 	}))
 
 	initialOffset := m.diffView.YOffset()
 	require.True(t, m.handleScrollbarMotion(tea.Mouse{
-		X:      hitbox.x,
-		Y:      hitbox.y + hitbox.height - 1,
+		X:      hitbox.X,
+		Y:      hitbox.Y + hitbox.Height - 1,
 		Button: tea.MouseLeft,
 	}))
 
@@ -1305,15 +1328,15 @@ func TestScrollbarThumbDragMovesDiffViewport(t *testing.T) {
 	require.GreaterOrEqual(t, m.diffView.ScrollPercent(), 0.9)
 
 	model, cmd := m.Update(tea.MouseReleaseMsg(tea.Mouse{
-		X:      hitbox.x,
-		Y:      hitbox.y + hitbox.height - 1,
+		X:      hitbox.X,
+		Y:      hitbox.Y + hitbox.Height - 1,
 		Button: tea.MouseLeft,
 	}))
 	require.Nil(t, cmd)
 
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.False(t, bm.scrollDrag.active)
+	require.False(t, bm.scrollDrag.Active)
 }
 
 func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
@@ -1332,8 +1355,8 @@ func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
 	require.True(t, ok)
 
 	require.True(t, m.handleScrollbarPress(tea.Mouse{
-		X:      hitbox.x,
-		Y:      hitbox.y + hitbox.height - 1,
+		X:      hitbox.X,
+		Y:      hitbox.Y + hitbox.Height - 1,
 		Button: tea.MouseLeft,
 	}))
 
@@ -1342,7 +1365,7 @@ func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
 }
 
 func TestWrapDiffLinesExpandsTabs(t *testing.T) {
-	rows := wrapDiffLines("a\tb", 80)
+	rows := layout.WrapLines("a\tb", 80)
 
 	require.Len(t, rows, 1)
 	require.NotContains(t, rows[0], "\t")
@@ -1368,7 +1391,7 @@ func TestSyncDetailViewExpandsTabs(t *testing.T) {
 func TestFillViewToTerminalExpandsTabs(t *testing.T) {
 	m := tuiModel{width: 12, height: 2}
 
-	got := m.fillViewToTerminal("left\tright")
+	got := layout.Fill("left\tright", m.width, m.height)
 
 	require.NotContains(t, got, "\t")
 	lines := strings.Split(got, nl)
@@ -1526,27 +1549,27 @@ func testDigitJumpModel(total int) tuiModel {
 func TestParseFilterTerm(t *testing.T) {
 	tests := []struct {
 		input string
-		want  filterTerm
+		want  filter.Term
 	}{
-		{"foo", filterTerm{text: "foo"}},
-		{"^foo", filterTerm{text: "foo", prefix: true}},
-		{"foo$", filterTerm{text: "foo", suffix: true}},
-		{"^foo$", filterTerm{text: "foo", prefix: true, suffix: true}},
-		{"!foo", filterTerm{text: "foo", negate: true}},
-		{"!^foo", filterTerm{text: "foo", negate: true, prefix: true}},
-		{"!foo$", filterTerm{text: "foo", negate: true, suffix: true}},
-		{"!^foo$", filterTerm{text: "foo", negate: true, prefix: true, suffix: true}},
-		{"Foo", filterTerm{text: "Foo", caseSensitive: true}},
+		{"foo", filter.Term{Text: "foo"}},
+		{"^foo", filter.Term{Text: "foo", Prefix: true}},
+		{"foo$", filter.Term{Text: "foo", Suffix: true}},
+		{"^foo$", filter.Term{Text: "foo", Prefix: true, Suffix: true}},
+		{"!foo", filter.Term{Text: "foo", Negate: true}},
+		{"!^foo", filter.Term{Text: "foo", Negate: true, Prefix: true}},
+		{"!foo$", filter.Term{Text: "foo", Negate: true, Suffix: true}},
+		{"!^foo$", filter.Term{Text: "foo", Negate: true, Prefix: true, Suffix: true}},
+		{"Foo", filter.Term{Text: "Foo", Case: filter.CaseSensitive}},
 		// Bare modifiers: flags set but empty text matches everything.
-		{"^", filterTerm{text: "", prefix: true}},
-		{"$", filterTerm{text: "", suffix: true}},
-		{"!", filterTerm{text: "", negate: true}},
-		{"!^", filterTerm{text: "", negate: true, prefix: true}},
-		{"!$", filterTerm{text: "", negate: true, suffix: true}},
+		{"^", filter.Term{Text: "", Prefix: true}},
+		{"$", filter.Term{Text: "", Suffix: true}},
+		{"!", filter.Term{Text: "", Negate: true}},
+		{"!^", filter.Term{Text: "", Negate: true, Prefix: true}},
+		{"!$", filter.Term{Text: "", Negate: true, Suffix: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			require.Equal(t, tt.want, parseFilterTerm(tt.input))
+			require.Equal(t, tt.want, filter.Parse(tt.input))
 		})
 	}
 }
@@ -1555,43 +1578,53 @@ func TestMatchesTerm(t *testing.T) {
 	tests := []struct {
 		name string
 		text string
-		term filterTerm
+		term filter.Term
 		want bool
 	}{
-		{"contains", "hello world", filterTerm{text: "world"}, true},
-		{"contains miss", "hello world", filterTerm{text: "xyz"}, false},
-		{"case insensitive", "Hello World", filterTerm{text: "hello"}, true},
-		{"case sensitive", "Hello World", filterTerm{text: "Hello", caseSensitive: true}, true},
+		{"contains", "hello world", filter.Term{Text: "world"}, true},
+		{"contains miss", "hello world", filter.Term{Text: "xyz"}, false},
+		{"case insensitive", "Hello World", filter.Term{Text: "hello"}, true},
+		{
+			"case sensitive",
+			"Hello World",
+			filter.Term{Text: "Hello", Case: filter.CaseSensitive},
+			true,
+		},
 		{
 			"case sensitive miss",
 			"hello world",
-			filterTerm{text: "Hello", caseSensitive: true},
+			filter.Term{Text: "Hello", Case: filter.CaseSensitive},
 			false,
 		},
-		{"prefix", "hello world", filterTerm{text: "hello", prefix: true}, true},
-		{"prefix miss", "hello world", filterTerm{text: "world", prefix: true}, false},
-		{"suffix", "hello world", filterTerm{text: "world", suffix: true}, true},
-		{"suffix miss", "hello world", filterTerm{text: "hello", suffix: true}, false},
-		{"exact", "hello", filterTerm{text: "hello", prefix: true, suffix: true}, true},
-		{"exact miss", "hello world", filterTerm{text: "hello", prefix: true, suffix: true}, false},
-		{"negate", "hello world", filterTerm{text: "xyz", negate: true}, true},
-		{"negate miss", "hello world", filterTerm{text: "hello", negate: true}, false},
+		{"prefix", "hello world", filter.Term{Text: "hello", Prefix: true}, true},
+		{"prefix miss", "hello world", filter.Term{Text: "world", Prefix: true}, false},
+		{"suffix", "hello world", filter.Term{Text: "world", Suffix: true}, true},
+		{"suffix miss", "hello world", filter.Term{Text: "hello", Suffix: true}, false},
+		{"exact", "hello", filter.Term{Text: "hello", Prefix: true, Suffix: true}, true},
+		{
+			"exact miss",
+			"hello world",
+			filter.Term{Text: "hello", Prefix: true, Suffix: true},
+			false,
+		},
+		{"negate", "hello world", filter.Term{Text: "xyz", Negate: true}, true},
+		{"negate miss", "hello world", filter.Term{Text: "hello", Negate: true}, false},
 		{
 			"negate prefix",
 			"hello world",
-			filterTerm{text: "world", prefix: true, negate: true},
+			filter.Term{Text: "world", Prefix: true, Negate: true},
 			true,
 		},
 		{
 			"negate suffix",
 			"hello world",
-			filterTerm{text: "hello", suffix: true, negate: true},
+			filter.Term{Text: "hello", Suffix: true, Negate: true},
 			true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, matchesTerm(tt.text, tt.term))
+			require.Equal(t, tt.want, tt.term.Match(tt.text))
 		})
 	}
 }
@@ -1607,7 +1640,7 @@ func TestCurrentFilterValuesDefaultCLI(t *testing.T) {
 	// testCLI() Normalize sets NoBot=true (from Default.Bots=false),
 	// so Bots is "hide" (index 1). Draft defaults to "show" (index 0), CI/Review default to "all",
 	// and Archived defaults to "hide" (index 1).
-	require.Equal(t, [6]int{0, 0, 1, 1, 3, 4}, vals)
+	require.Equal(t, []int{0, 0, 1, 1, 3, 4}, vals)
 }
 
 func TestCurrentFilterValuesMapsStateCorrectly(t *testing.T) {
@@ -1674,77 +1707,85 @@ func TestUpdateOptionsOverlayNavigation(t *testing.T) {
 	m := tuiModel{
 		showOptions: true,
 		cli:         testCLI(),
+		styles:      newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
 
 	// Down from 0 → 1
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, filterRowDraft, bm.optionsCursor)
+	require.Equal(t, int(filterRowDraft), bm.optionsPicker.Cursor)
 
 	// Up from 1 → 0
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, filterRowState, bm.optionsCursor)
+	require.Equal(t, int(filterRowState), bm.optionsPicker.Cursor)
 
 	// Up from 0 → 0 (clamped)
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, filterRowState, bm.optionsCursor)
+	require.Equal(t, int(filterRowState), bm.optionsPicker.Cursor)
 }
 
 func TestUpdateOptionsOverlayChangeValue(t *testing.T) {
 	m := tuiModel{
 		showOptions: true,
 		cli:         testCLI(),
+		styles:      newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
 
 	// Right on state: 0→1 (open→closed)
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'l', Text: "l"})
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 1, bm.optionsValues[0])
+	require.Equal(t, 1, bm.optionsPicker.Values[0])
 
 	// Left back: 1→0 (closed→open)
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'h', Text: "h"})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsValues[0])
+	require.Equal(t, 0, bm.optionsPicker.Values[0])
 }
 
 func TestUpdateOptionsOverlaySpaceCyclesAndWraps(t *testing.T) {
 	m := tuiModel{
 		showOptions: true,
 		cli:         testCLI(),
+		styles:      newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
 
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 1, bm.optionsValues[0])
+	require.Equal(t, 1, bm.optionsPicker.Values[0])
 
-	bm.optionsValues[0] = len(filterOptionDefs[filterRowState].choices) - 1
+	bm.optionsPicker.Values[0] = len(filterOptionDefs[filterRowState].choices) - 1
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsValues[0])
+	require.Equal(t, 0, bm.optionsPicker.Values[0])
 }
 
 func TestUpdateOptionsOverlayEscCancels(t *testing.T) {
 	m := tuiModel{
-		showOptions:   true,
-		optionsValues: [6]int{2, 0, 0, 0, 0, 0},
-		cli:           testCLI(),
+		showOptions: true,
+		cli:         testCLI(),
+		styles:      newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Values[0] = 2
 
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyEscape})
 	require.Nil(t, cmd)
@@ -1778,7 +1819,9 @@ func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
 		showOptions: true,
 		cli:         cli,
 		cfg:         cfg,
+		styles:      newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
 
 	model, cmd := m.updateOptionsOverlay(
 		tea.KeyPressMsg{Code: 'O', Text: "O"},
@@ -1796,21 +1839,23 @@ func TestUpdateOptionsOverlayLockedRowsAreNoOps(t *testing.T) {
 	m := tuiModel{
 		showOptions: true,
 		cli:         cli,
+		styles:      newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
 
 	// Right on locked row 0 → no change
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'l', Text: "l"})
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsValues[0])
+	require.Equal(t, 0, bm.optionsPicker.Values[0])
 
 	// Backspace on locked row → no change
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsValues[0])
+	require.Equal(t, 0, bm.optionsPicker.Values[0])
 }
 
 func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
@@ -1818,11 +1863,17 @@ func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
 	cli.State = valueMerged
 	cli.stateExplicit = true
 	m := tuiModel{
-		cli:           cli,
-		styles:        newTuiStyles(),
-		optionsCursor: filterRowDraft,
-		optionsValues: [6]int{filterChoiceIndex(filterRowState, valueMerged)},
+		cli:    cli,
+		styles: newTuiStyles(),
+		optionsPicker: picker.Model{
+			Cursor:  int(filterRowDraft),
+			Values:  []int{filterChoiceIndex(filterRowState, valueMerged), 0, 0, 0, 0, 0},
+			IsReset: make([]bool, 6),
+		},
 	}
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Cursor = int(filterRowDraft)
+	m.optionsPicker.Values[0] = filterChoiceIndex(filterRowState, valueMerged)
 
 	overlay := m.renderOptionsOverlay()
 
@@ -1837,11 +1888,11 @@ func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
 func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
 	cli := testCLI()
 	m := tuiModel{
-		cli:           cli,
-		styles:        newTuiStyles(),
-		optionsCursor: filterRowDraft,
-		optionsValues: tuiModel{cli: cli}.currentFilterValues(),
+		cli:    cli,
+		styles: newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Cursor = int(filterRowDraft)
 
 	overlay := m.renderOptionsOverlay()
 
@@ -1863,8 +1914,8 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 		cfg:    cfg,
 		styles: newTuiStyles(),
 	}
-	m.optionsCursor = filterRowDraft
-	m.optionsValues = m.currentFilterValues()
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Cursor = int(filterRowDraft)
 
 	overlay := m.renderOptionsOverlay()
 
@@ -1874,7 +1925,7 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 		styleTitle.Bold(true).Render(valueOpen),
 	)
 
-	m.optionsReset[filterRowState] = true
+	m.optionsPicker.IsReset[filterRowState] = true
 	overlay = m.renderOptionsOverlay()
 
 	require.Contains(
@@ -1883,8 +1934,8 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 		styleTitle.Bold(true).Render(valueOpen),
 	)
 
-	m.optionsValues[filterRowState] = filterChoiceIndex(filterRowState, valueClosed)
-	m.optionsReset[filterRowState] = false
+	m.optionsPicker.Values[filterRowState] = filterChoiceIndex(filterRowState, valueClosed)
+	m.optionsPicker.IsReset[filterRowState] = false
 	overlay = m.renderOptionsOverlay()
 
 	require.Contains(t, overlay, m.styles.defaultChoice.Render(valueOpen))
@@ -1892,23 +1943,26 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 
 func TestUpdateOptionsOverlayResetSetsFirstChoice(t *testing.T) {
 	m := tuiModel{
-		showOptions:   true,
-		optionsValues: [6]int{3, 0, 0, 0, 0, 0}, // state = "ready"
-		cli:           testCLI(),
+		showOptions: true,
+		cli:         testCLI(),
+		styles:      newTuiStyles(),
 	}
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Values[0] = 3
 
 	// Backspace resets to 0
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsValues[0])
+	require.Equal(t, 0, bm.optionsPicker.Values[0])
 }
 
 func TestUpdateOptionsOverlayResetUsesConfigDefaults(t *testing.T) {
 	m := tuiModel{
 		showOptions: true,
 		cli:         testCLI(),
+		styles:      newTuiStyles(),
 		cfg: &Config{
 			Default: Defaults{
 				State: valueMerged,
@@ -1916,41 +1970,42 @@ func TestUpdateOptionsOverlayResetUsesConfigDefaults(t *testing.T) {
 			},
 		},
 	}
+	m.optionsPicker = m.newFilterPicker()
 
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.True(t, bm.optionsReset[filterRowState])
+	require.True(t, bm.optionsPicker.IsReset[filterRowState])
 	require.Equal(
 		t,
 		filterChoiceIndex(filterRowState, valueMerged),
-		bm.optionsValues[filterRowState],
+		bm.optionsPicker.Values[filterRowState],
 	)
 
-	bm.optionsCursor = filterRowBots
+	bm.optionsPicker.Cursor = int(filterRowBots)
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.True(t, bm.optionsReset[filterRowBots])
-	require.Equal(t, 1, bm.optionsValues[filterRowBots])
+	require.True(t, bm.optionsPicker.IsReset[filterRowBots])
+	require.Equal(t, 1, bm.optionsPicker.Values[filterRowBots])
 
-	bm.optionsCursor = filterRowDraft
+	bm.optionsPicker.Cursor = int(filterRowDraft)
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.True(t, bm.optionsReset[filterRowDraft])
-	require.Equal(t, 0, bm.optionsValues[filterRowDraft])
+	require.True(t, bm.optionsPicker.IsReset[filterRowDraft])
+	require.Equal(t, 0, bm.optionsPicker.Values[filterRowDraft])
 
-	bm.optionsCursor = filterRowArchived
+	bm.optionsPicker.Cursor = int(filterRowArchived)
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
 	require.True(t, ok)
-	require.True(t, bm.optionsReset[filterRowArchived])
-	require.Equal(t, 1, bm.optionsValues[filterRowArchived])
+	require.True(t, bm.optionsPicker.IsReset[filterRowArchived])
+	require.Equal(t, 1, bm.optionsPicker.Values[filterRowArchived])
 }
 
 func TestActiveFilterTagsNoBotsFromTestCLI(t *testing.T) {
@@ -2106,8 +2161,7 @@ func TestRefreshResultCompletesSilently(t *testing.T) {
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.False(t, bm.refreshing)
-	require.Empty(t, bm.statusMsg)
-	require.Zero(t, bm.statusID)
+	require.False(t, bm.flash.Active())
 }
 
 func TestApplyTUIFilterDefaultsSetsNonExplicitFields(t *testing.T) {
@@ -2226,9 +2280,10 @@ func TestApplyFilterOptionsResetClearsOverridesAndRestoresDefaults(t *testing.T)
 		selected: make(prKeys),
 		p:        testPRL,
 	}
-	m.optionsReset[filterRowState] = true
-	m.optionsReset[filterRowBots] = true
-	m.optionsReset[filterRowArchived] = true
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.IsReset[filterRowState] = true
+	m.optionsPicker.IsReset[filterRowBots] = true
+	m.optionsPicker.IsReset[filterRowArchived] = true
 
 	model, cmd := m.applyFilterOptions()
 	require.NotNil(t, cmd)
