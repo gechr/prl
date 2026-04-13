@@ -103,6 +103,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		authorValues = cli.Author.Values
 	}
 	authorFilters := deduplicate(filterAllValue(authorValues), true)
+	bots := discoverBotAuthors(cfg)
 
 	// Commenter filter
 	commenterVals := filterAllValue(cli.Commenter.Values)
@@ -160,6 +161,10 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		}
 		authorFilters = deduplicate(append(authorFilters, allMembers...), true)
 	}
+	for i, author := range authorFilters {
+		authorFilters[i] = normalizeBotAuthorValue(author, bots)
+	}
+	authorFilters = deduplicate(authorFilters, true)
 	if q := buildORQualifier("author", authorFilters); q != "" {
 		qualifiers = append(qualifiers, q)
 	}

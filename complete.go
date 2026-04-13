@@ -8,6 +8,8 @@ import (
 	"github.com/gechr/clog"
 )
 
+const tab = "\t"
+
 // handleComplete handles --complete=<kind> --shell=<shell> and prints completions to stdout.
 func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 	if shell != "fish" {
@@ -44,10 +46,11 @@ func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 func completeAuthors(cfg *Config) []string {
 	var results []string
 	seen := make(map[string]bool)
+	bots := discoverBotAuthors(cfg)
 
-	results = append(results, valueAtMe+"\tCurrent user")
+	results = append(results, valueAtMe+tab+"Current user")
 	seen[valueAtMe] = true
-	results = append(results, "all\tAll authors")
+	results = append(results, "all"+tab+"All authors")
 	seen["all"] = true
 
 	if cfg == nil {
@@ -57,10 +60,11 @@ func completeAuthors(cfg *Config) []string {
 	// Try plugin
 	if pluginResults := tryPluginComplete(cfg, "authors"); pluginResults != nil {
 		for _, r := range pluginResults {
-			val, _, _ := strings.Cut(r, "\t")
-			if !seen[val] {
-				seen[val] = true
-				results = append(results, r)
+			val, desc, _ := strings.Cut(r, tab)
+			normalized := normalizeBotAuthorValue(val, bots)
+			if !seen[normalized] {
+				seen[normalized] = true
+				results = append(results, normalized+tab+desc)
 			}
 		}
 	}
@@ -82,7 +86,7 @@ func completeAuthors(cfg *Config) []string {
 				continue
 			}
 			seen[username] = true
-			results = append(results, username+"\t"+name)
+			results = append(results, username+tab+name)
 		}
 	}
 
@@ -101,7 +105,7 @@ func completeTeams(cfg *Config) []string {
 		var results []string
 
 		for _, r := range pluginResults {
-			val, _, _ := strings.Cut(r, "\t")
+			val, _, _ := strings.Cut(r, tab)
 			seen[val] = true
 			results = append(results, r)
 		}
@@ -109,7 +113,7 @@ func completeTeams(cfg *Config) []string {
 		for alias, target := range cfg.TeamAliases {
 			if !seen[alias] {
 				seen[alias] = true
-				results = append(results, alias+"\t"+target)
+				results = append(results, alias+tab+target)
 			}
 		}
 
@@ -131,7 +135,7 @@ func completeTeams(cfg *Config) []string {
 	for alias, target := range cfg.TeamAliases {
 		if !seen[alias] {
 			seen[alias] = true
-			results = append(results, alias+"\t"+target)
+			results = append(results, alias+tab+target)
 		}
 	}
 

@@ -90,3 +90,33 @@ printf '@me\tCurrent user\nall\tAll authors\n'
 		"alice\tAlice Example",
 	}, results)
 }
+
+func TestCompleteAuthorsAppendsBotSuffixForPluginProvidedBots(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(
+		t,
+		dir,
+		"prl-plugin-example",
+		`#!/bin/sh
+if [ "$1" = "complete" ] && [ "$2" = "authors" ]; then
+	printf 'dependabot\tDependabot\nalice\tAlice Example\n'
+	exit 0
+fi
+if [ "$1" = "resolve" ] && [ "$2" = "bots" ]; then
+	printf 'dependabot\n'
+	exit 0
+fi
+exit 1
+`,
+	)
+
+	resetPluginCacheForTest(t)
+
+	results := completeAuthors(&Config{Plugin: pluginPath})
+	require.Equal(t, []string{
+		"@me\tCurrent user",
+		"all\tAll authors",
+		"dependabot[bot]\tDependabot",
+		"alice\tAlice Example",
+	}, results)
+}

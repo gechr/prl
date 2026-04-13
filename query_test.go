@@ -343,13 +343,18 @@ func TestBuildExcludedOwnerQualifiers(t *testing.T) {
 }
 
 func TestBuildSearchQuery_MergesAuthorAndTeamWithoutDuplicates(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\nexit 1\n")
+	resetPluginCacheForTest(t)
+
 	author := CSVFlag{Values: []string{"user-1", "user-2"}}
 	params, err := buildSearchQuery(&CLI{
 		Author: &author,
-		Team:   CSVFlag{Values: []string{"sg2"}},
+		Team:   CSVFlag{Values: []string{"ops"}},
 	}, &Config{
+		Plugin: pluginPath,
 		Teams: map[string][]string{
-			"sg2": {"user-1", "USER-2"},
+			"ops": {"user-1", "USER-2"},
 		},
 	})
 	require.NoError(t, err)
@@ -365,6 +370,32 @@ func TestBuildSearchQuery_UsesOwnerQualifier(t *testing.T) {
 	}, &Config{})
 	require.NoError(t, err)
 	require.Equal(t, "type:pr archived:false state:open user:acme", params.Query)
+}
+
+func TestBuildSearchQuery_AppendsBotSuffixForPluginProvidedBots(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(
+		t,
+		dir,
+		"prl-plugin-example",
+		`#!/bin/sh
+if [ "$1" = "resolve" ] && [ "$2" = "bots" ]; then
+	printf 'dependabot\n'
+	exit 0
+fi
+exit 1
+`,
+	)
+
+	resetPluginCacheForTest(t)
+
+	author := CSVFlag{Values: []string{"dependabot", "dependabot[bot]", "alice"}}
+	params, err := buildSearchQuery(&CLI{
+		Author: &author,
+	}, &Config{Plugin: pluginPath})
+	require.NoError(t, err)
+	require.Contains(t, params.Query, "(author:dependabot[bot] OR author:alice)")
+	require.Equal(t, 1, strings.Count(params.Query, "author:dependabot[bot]"))
 }
 
 func TestBuildSearchQuery_TopicRequiresPlugin(t *testing.T) {

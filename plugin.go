@@ -261,6 +261,12 @@ func (p *Plugin) ResolveTopic(topic string) ([]string, error) {
 	return parsePluginLines(out), nil
 }
 
+// ResolveBots resolves bot usernames via the plugin.
+// Returns nil, nil if no plugin is available or the command is not implemented.
+func (p *Plugin) ResolveBots() ([]string, error) {
+	return p.Resolve("bots", "")
+}
+
 // run executes the plugin binary with the given arguments.
 // Returns stdout on success. For exit code 1 (not implemented), it returns
 // errPluginNotImplemented. For other failures, it returns an error with
