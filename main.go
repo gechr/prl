@@ -326,7 +326,7 @@ func watchInterval(n int) time.Duration {
 	if d > watchMaxInterval {
 		return watchMaxInterval
 	}
-	return d
+	return refreshCooldownDelay(d)
 }
 
 // runWatch loops buildOutput every watchInterval, clearing the screen between refreshes.

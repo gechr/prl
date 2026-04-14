@@ -66,6 +66,17 @@ const (
 	daysPerWeek    = 7
 )
 
+// GitHub API pacing and rate-limit backoff.
+const (
+	headerRetryAfter         = "Retry-After"
+	headerRateLimitRemaining = "X-Ratelimit-Remaining"
+	headerRateLimitReset     = "X-Ratelimit-Reset"
+
+	githubMutatingRequestSpacing = 1 * time.Second
+	githubSecondaryRetryFallback = 30 * time.Second
+	githubRateLimitResetSkew     = 1 * time.Second
+)
+
 // Layout: terminal width thresholds and column width estimates.
 const (
 	compactTimeThreshold = 120 // use compact time format below this terminal width
@@ -125,12 +136,12 @@ const (
 
 // Watch mode.
 const (
-	watchMinInterval    = 3 * time.Second                // floor: few results
-	watchMaxInterval    = 30 * time.Second               // ceiling: many results
-	watchScalePer       = 500 * time.Millisecond         // additional delay per result
-	watchIdleDecay      = 1 * time.Hour                  // no interaction for this long → interval reaches watchIdleMax
-	watchIdleMax        = 60 * time.Second               // ceiling when fully idle
-	detailCheckInterval = 10 * time.Second               // poll interval for detail-view check refresh
+	watchMinInterval    = 7 * time.Second                // floor: few results
+	watchMaxInterval    = 1 * time.Minute                // ceiling: many results
+	watchScalePer       = 1 * time.Second                // additional delay per result
+	watchIdleDecay      = 45 * time.Minute               // no interaction for this long → interval reaches watchIdleMax
+	watchIdleMax        = 3 * time.Minute                // ceiling when fully idle
+	detailCheckInterval = 15 * time.Second               // poll interval for detail-view check refresh
 	ansiClearScreen     = "\033[2J\033[H"                // clear screen + move cursor to top-left
 	ansiHideCursor      = "\033[?25l"                    // hide cursor
 	ansiShowCursor      = "\033[?25h"                    // show cursor

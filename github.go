@@ -41,6 +41,7 @@ func newRESTClient(options ...clientOption) (*api.RESTClient, error) {
 	for _, o := range options {
 		o(&opts)
 	}
+	opts.Transport = sharedGitHubRateLimiter.wrap(opts.Transport)
 	return api.NewRESTClient(opts)
 }
 
@@ -49,6 +50,7 @@ func newGraphQLClient(options ...clientOption) (*api.GraphQLClient, error) {
 	for _, o := range options {
 		o(&opts)
 	}
+	opts.Transport = sharedGitHubRateLimiter.wrap(opts.Transport)
 	return api.NewGraphQLClient(opts)
 }
 

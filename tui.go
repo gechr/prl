@@ -589,6 +589,13 @@ func newRefreshSnapshot(m tuiModel) refreshSnapshot {
 	}
 }
 
+func tuiNeedsMergeStatus(cli *CLI) bool {
+	if cli == nil {
+		return false
+	}
+	return cli.PRState() == StateReady || cli.CIStatus() != CINone
+}
+
 // fetchAndBuild runs the search, filter, enrich, and build pipeline.
 // It returns the built row models, or an error.
 func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
@@ -602,7 +609,7 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	}
 
 	// Determine if post-enrichment filters require GraphQL data.
-	needsEnrich := r.cli.PRState() == StateReady || r.cli.CIStatus() != CINone
+	needsEnrich := tuiNeedsMergeStatus(r.cli)
 	closedAllowed, err := resolveTimelineLogins(r.rest, r.cli.ClosedBy.Values)
 	if err != nil {
 		clog.Debug().Err(err).Msg("timeline filters failed")
@@ -614,7 +621,7 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 		mergedAllowed = map[string]bool{}
 	}
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
-	needMergeStatus := len(prs) > 0 && (!r.cli.Quick || needsEnrich)
+	needMergeStatus := len(prs) > 0 && needsEnrich
 
 	if len(prs) > 0 && (needTimeline || needMergeStatus) {
 		if r.gql != nil {
@@ -727,7 +734,7 @@ func refreshDelay(n int, idle time.Duration) time.Duration {
 	} else if idle >= watchIdleDecay {
 		d = watchIdleMax
 	}
-	return d
+	return refreshCooldownDelay(d)
 }
 
 // scheduleRefresh returns a tea.Cmd that fires a refreshTickMsg after a delay
@@ -783,7 +790,7 @@ func (m tuiModel) scheduleDetailRefresh() tea.Cmd {
 	}
 	id := m.detailRefreshID
 	key := m.detailKey
-	return tea.Tick(detailCheckInterval, func(time.Time) tea.Msg {
+	return tea.Tick(refreshCooldownDelay(detailCheckInterval), func(time.Time) tea.Msg {
 		return detailRefreshTickMsg{id: id, key: key}
 	})
 }
