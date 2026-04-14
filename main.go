@@ -943,17 +943,17 @@ func buildActionHeader(cli *CLI) string {
 
 // applyColorMode configures global color settings based on --color and returns
 // whether stdout should be treated as a terminal for ANSI sequences.
-func applyColorMode(color string) bool {
-	switch color {
-	case "always":
-		clog.SetColorMode(clog.ColorAlways)
+func applyColorMode(mode clog.ColorMode) bool {
+	clog.SetColorMode(mode)
+	switch mode {
+	case clog.ColorAlways:
 		lipgloss.Writer.Profile = colorprofile.TrueColor
 		return true
-	case "never":
-		clog.SetColorMode(clog.ColorNever)
+	case clog.ColorNever:
 		lipgloss.Writer.Profile = colorprofile.NoTTY
 		return false
-	default: // "auto"
+	case clog.ColorAuto:
 		return term.Is(os.Stdout)
 	}
+	return term.Is(os.Stdout)
 }
