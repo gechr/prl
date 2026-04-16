@@ -8,9 +8,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
-	"github.com/gechr/primer/ansi/hyperlink"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/primer/term"
+	"github.com/gechr/x/ansi"
 )
 
 // tableLayout holds width-aware rendering decisions.
@@ -35,11 +35,11 @@ func (p *prl) NewTableRenderer(
 func (p *prl) newTableRenderer(
 	cli *CLI, tty bool, termWidth int, opts ...table.Option,
 ) *table.Renderer[PRRowModel] {
-	linkOpts := []hyperlink.Option{hyperlink.WithTerminal(tty)}
+	ansiOpts := []ansi.Option{ansi.WithTerminal(tty)}
 	if !tty {
-		linkOpts = append(linkOpts, hyperlink.WithFallback(hyperlink.FallbackURL))
+		ansiOpts = append(ansiOpts, ansi.WithHyperlinkFallback(ansi.HyperlinkFallbackURL))
 	}
-	ctx := table.NewRenderContext(p, hyperlink.New(linkOpts...))
+	ctx := table.NewRenderContext(p, ansi.New(ansiOpts...))
 	columns := resolveColumns(cli)
 	layout := computeLayout(termWidth, columns)
 	defs := p.allColumnDefs(layout)
@@ -104,7 +104,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 			Header: "PR",
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				style := p.prMergeStyle(row.PR)
-				display := ctx.Hyperlink(row.URL, style.Render(row.Ref))
+				display := ctx.Ansi.Hyperlink(row.URL, style.Render(row.Ref))
 				return table.StyledCell(display, row.Ref)
 			},
 		},
@@ -127,7 +127,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 			Header: "REPO",
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				url := fmt.Sprintf("https://github.com/%s", row.RepoNWO)
-				display := ctx.Hyperlink(url, row.Repo)
+				display := ctx.Ansi.Hyperlink(url, row.Repo)
 				return table.StyledCell(display, row.Repo)
 			},
 		},
@@ -137,7 +137,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				num := fmt.Sprintf("#%d", row.Number)
 				style := p.prMergeStyle(row.PR)
-				display := ctx.Hyperlink(row.URL, style.Render(num))
+				display := ctx.Ansi.Hyperlink(row.URL, style.Render(num))
 				return table.SortableCell(display, num, row.Number)
 			},
 		},
@@ -179,7 +179,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				} else if am.IsDeparted {
 					style = style.Strikethrough(true)
 				}
-				display := ctx.Hyperlink(am.URL, style.Render(am.Display))
+				display := ctx.Ansi.Hyperlink(am.URL, style.Render(am.Display))
 				return table.StyledCell(display, am.Display)
 			},
 		},

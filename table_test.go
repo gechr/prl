@@ -8,9 +8,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/gechr/primer/ansi/hyperlink"
 	"github.com/gechr/primer/table"
+	"github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,11 +81,11 @@ func newTestRenderer(columns []Column, opts ...table.Option) *table.Renderer[PRR
 func newTestRendererWithTTY(
 	columns []Column, tty bool, opts ...table.Option,
 ) *table.Renderer[PRRowModel] {
-	linkOpts := []hyperlink.Option{hyperlink.WithTerminal(tty)}
+	ansiOpts := []ansi.Option{ansi.WithTerminal(tty)}
 	if !tty {
-		linkOpts = append(linkOpts, hyperlink.WithFallback(hyperlink.FallbackURL))
+		ansiOpts = append(ansiOpts, ansi.WithHyperlinkFallback(ansi.HyperlinkFallbackURL))
 	}
-	ctx := table.NewRenderContext(testPRL, hyperlink.New(linkOpts...))
+	ctx := table.NewRenderContext(testPRL, ansi.New(ansiOpts...))
 	// prl default: newest at top → clib WithReverse(true).
 	allOpts := []table.Option{table.WithReverse(true), table.WithTTY(tty)}
 	allOpts = append(allOpts, opts...)
@@ -252,7 +251,7 @@ func TestTitleColumnPreservesEmojiVariationSelectorInTTY(t *testing.T) {
 	pr := testPRs()[0]
 	pr.Title = "⬆️ Bump tar from 7.5.7 to 7.5.11"
 	row := testModelsFrom([]PullRequest{pr}, "owner")[0]
-	ctx := table.NewRenderContext(testPRL, hyperlink.New(hyperlink.WithTerminal(true)))
+	ctx := table.NewRenderContext(testPRL, ansi.New(ansi.WithTerminal(true)))
 
 	cell := testPRL.allColumnDefs(tableLayout{})[colTitle].Render(row, ctx)
 
@@ -309,8 +308,8 @@ func TestRender_RefContainsStateColor(t *testing.T) {
 	r := newTestRenderer([]Column{defs["ref"]})
 	rt := r.Render(models)
 
-	expected := ansi.SetHyperlink("https://github.com/owner/alpha/pull/1") +
-		testPRL.theme.Dim.Render("alpha#1") + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/alpha/pull/1",
+		testPRL.theme.Dim.Render("alpha#1"))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -320,8 +319,8 @@ func TestRender_RefMergedColor(t *testing.T) {
 	r := newTestRenderer([]Column{defs["ref"]})
 	rt := r.Render(models)
 
-	expected := ansi.SetHyperlink("https://github.com/owner/bravo/pull/2") +
-		testPRL.theme.Magenta.Render("bravo#2") + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/bravo/pull/2",
+		testPRL.theme.Magenta.Render("bravo#2"))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -331,8 +330,8 @@ func TestRender_RefClosedColor(t *testing.T) {
 	r := newTestRenderer([]Column{defs["ref"]})
 	rt := r.Render(models)
 
-	expected := ansi.SetHyperlink("https://github.com/owner/charlie/pull/3") +
-		testPRL.theme.Red.Render("charlie#3") + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/charlie/pull/3",
+		testPRL.theme.Red.Render("charlie#3"))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -343,8 +342,8 @@ func TestRender_RefContainsHyperlink(t *testing.T) {
 	r := newTestRenderer([]Column{defs["ref"]})
 	rt := r.Render(models)
 
-	expected := ansi.SetHyperlink("https://github.com/owner/alpha/pull/1") +
-		testPRL.theme.Dim.Render("alpha#1") + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/alpha/pull/1",
+		testPRL.theme.Dim.Render("alpha#1"))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -354,9 +353,8 @@ func TestRender_RepoContainsHyperlink(t *testing.T) {
 	r := newTestRenderer([]Column{defs["repo"]})
 	rt := r.Render(models)
 
-	expected := ansi.SetHyperlink(
-		"https://github.com/owner/alpha",
-	) + "alpha" + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink(
+		"https://github.com/owner/alpha", "alpha")
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -378,8 +376,8 @@ func TestRender_RefIncludesOwner_WhenNoOwnerFilter(t *testing.T) {
 	rt := r.Render(models)
 
 	// Without owner filter, ref includes owner/repo#N
-	expected := ansi.SetHyperlink("https://github.com/owner/alpha/pull/1") +
-		testPRL.theme.Dim.Render("owner/alpha#1") + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/alpha/pull/1",
+		testPRL.theme.Dim.Render("owner/alpha#1"))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -390,8 +388,8 @@ func TestRender_RefIncludesOwner_WhenOwnerFilterAll(t *testing.T) {
 	rt := r.Render(models)
 
 	// With "all" owner filter, ref includes owner/repo#N (same as no filter)
-	expected := ansi.SetHyperlink("https://github.com/owner/alpha/pull/1") +
-		testPRL.theme.Dim.Render("owner/alpha#1") + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/alpha/pull/1",
+		testPRL.theme.Dim.Render("owner/alpha#1"))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -402,8 +400,8 @@ func TestRender_RefExcludesOwner_WhenOwnerFilter(t *testing.T) {
 	rt := r.Render(models)
 
 	// With owner filter, ref uses just repo#N (no owner prefix)
-	expected := ansi.SetHyperlink("https://github.com/owner/alpha/pull/1") +
-		testPRL.theme.Dim.Render("alpha#1") + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/alpha/pull/1",
+		testPRL.theme.Dim.Render("alpha#1"))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 
@@ -566,8 +564,8 @@ func TestRender_NumberColumnStateColor(t *testing.T) {
 	r := newTestRenderer([]Column{defs["number"]})
 	rt := r.Render(models)
 
-	expected := ansi.SetHyperlink("https://github.com/owner/alpha/pull/1") +
-		testPRL.theme.Dim.Render(fmt.Sprintf("#%d", testPRs()[0].Number)) + ansi.ResetHyperlink()
+	expected := ansi.Force().Hyperlink("https://github.com/owner/alpha/pull/1",
+		testPRL.theme.Dim.Render(fmt.Sprintf("#%d", testPRs()[0].Number)))
 	require.Equal(t, expected, rt.Rows[0].Cells[0].Text)
 }
 

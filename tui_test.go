@@ -14,7 +14,6 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
@@ -22,6 +21,7 @@ import (
 	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/scrollwheel"
 	"github.com/gechr/primer/table"
+	"github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 

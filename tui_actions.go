@@ -8,8 +8,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
+	"github.com/gechr/x/ansi"
 )
 
 // targetPR pairs a list index with a copy of the PR at that index.
@@ -252,7 +252,7 @@ func flashResult(m *tuiModel, action, ref, url string, isErr bool) tea.Cmd {
 	} else {
 		styledRef := styleRef.Render(ref)
 		if url != "" {
-			styledRef = xansi.SetHyperlink(url) + styledRef + xansi.ResetHyperlink()
+			styledRef = ansi.Force().Hyperlink(url, styledRef)
 		}
 		msg = m.styles.statusAction.Render(action) + " " + styledRef
 	}
@@ -279,7 +279,7 @@ func renderBatchFailurePrompt(msg batchActionMsg) string {
 		if failure.ref != "" {
 			ref := styleRef.Bold(true).Render(failure.ref)
 			if failure.url != "" {
-				ref = xansi.SetHyperlink(failure.url) + ref + xansi.ResetHyperlink()
+				ref = ansi.Force().Hyperlink(failure.url, ref)
 			}
 			fmt.Fprintf(&b, "%s: %v\n", ref, failure.err)
 			continue

@@ -15,7 +15,6 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
 	"github.com/gechr/primer/filter"
@@ -33,6 +32,7 @@ import (
 	"github.com/gechr/primer/table"
 	"github.com/gechr/primer/term"
 	"github.com/gechr/primer/view"
+	"github.com/gechr/x/ansi"
 )
 
 type confirmSubmission struct {
@@ -1648,12 +1648,11 @@ func (m tuiModel) viewDiff() tea.View {
 				" "
 		}
 		ref := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
-		headerLine += xansi.SetHyperlink(pr.URL) +
-			headerStyle.Render(ref) + styleText.Render(" » ") +
-			styleTitle.Render(normalizeTUIDisplayText(pr.Title)) +
-			xansi.ResetHyperlink()
+		headerLine += ansi.Force().Hyperlink(pr.URL,
+			headerStyle.Render(ref)+styleText.Render(" » ")+
+				styleTitle.Render(normalizeTUIDisplayText(pr.Title)))
 		if m.width > 0 && lg.Width(headerLine) > m.width {
-			headerLine = xansi.Truncate(headerLine, m.width-1, valueEllipsis)
+			headerLine = ansi.Truncate(headerLine, m.width-1, valueEllipsis)
 		}
 		header = headerLine
 	}
@@ -1702,10 +1701,10 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	const indicatorPrefix = " "
 	available := m.width - lg.Width(indicatorPrefix) - lg.Width(suffix)
 	if available <= 0 {
-		return xansi.Truncate(suffix, m.width, "")
+		return ansi.Truncate(suffix, m.width, "")
 	}
 	if lg.Width(indicator) > available {
-		indicator = xansi.Truncate(indicator, available, valueEllipsis)
+		indicator = ansi.Truncate(indicator, available, valueEllipsis)
 	}
 	pad := max(m.width-lg.Width(indicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
 	return m.styles.separator.Render(layout.Separator(pad, col)) +
@@ -1840,18 +1839,17 @@ func (m tuiModel) renderDetailContent() []string {
 	if author != pr.Author.Login {
 		authorDisplay += " (" + author + ")"
 	}
-	styledAuthor := xansi.SetHyperlink(authorLink) +
-		styleText.Render(authorDisplay) + xansi.ResetHyperlink()
+	styledAuthor := ansi.Force().Hyperlink(authorLink, styleText.Render(authorDisplay))
 	lines = append(
 		lines,
 		detailIndent+labelStyle.Render(
 			"  Title: ",
-		)+xansi.SetHyperlink(pr.URL)+styleText.Render(
+		)+ansi.Force().Hyperlink(pr.URL, styleText.Render(
 			normalizeTUIDisplayText(pr.Title),
-		)+xansi.ResetHyperlink(),
+		)),
 	)
 	lines = append(lines, detailIndent+labelStyle.Render(" Author: ")+styledAuthor)
-	styledURL := xansi.SetHyperlink(pr.URL) + styleText.Render(pr.URL) + xansi.ResetHyperlink()
+	styledURL := ansi.Force().Hyperlink(pr.URL, styleText.Render(pr.URL))
 	lines = append(lines, detailIndent+labelStyle.Render("    URL: ")+styledURL)
 	if len(m.detail.Reviews) > 0 {
 		var parts []string
@@ -1875,8 +1873,7 @@ func (m tuiModel) renderDetailContent() []string {
 			} else {
 				link = "https://github.com/" + r.User
 			}
-			styled := xansi.SetHyperlink(link) +
-				styleText.Render(name) + xansi.ResetHyperlink()
+			styled := ansi.Force().Hyperlink(link, styleText.Render(name))
 			parts = append(parts, icon+" "+styled)
 		}
 		lines = append(lines, detailIndent+labelStyle.Render("Reviews: ")+
@@ -2567,7 +2564,7 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	if statusWidth < usableWidth {
 		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status
 	}
-	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
+	return prefix + ansi.Truncate(status, usableWidth, valueEllipsis)
 }
 
 func (m tuiModel) renderHelp(pairs []key.Hint) string {
@@ -2657,7 +2654,7 @@ func (m tuiModel) clearConfirm() tuiModel {
 // styledRef returns a bold, hyperlinked PR ref for use in confirm prompts.
 func styledRef(pr *PullRequest) string {
 	ref := styleRef.Bold(true).Render(pr.Ref())
-	return xansi.SetHyperlink(pr.URL) + ref + xansi.ResetHyperlink()
+	return ansi.Force().Hyperlink(pr.URL, ref)
 }
 
 // overlayCenter places a box on top of a background string, centered.

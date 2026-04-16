@@ -7,13 +7,13 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/input"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
 	"github.com/gechr/primer/prompt"
 	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/view"
+	"github.com/gechr/x/ansi"
 )
 
 type scrollbarTarget uint8
@@ -334,14 +334,14 @@ func (m tuiModel) scrollbarHitbox(target scrollbarTarget) (scrollbar.Hitbox, boo
 func (m tuiModel) confirmScrollbarHitbox() (scrollbar.Hitbox, bool) {
 	const centerDivisor = 2
 
-	lines := strings.Split(xansi.Strip(m.renderConfirmModal()), nl)
+	lines := strings.Split(ansi.Strip(m.renderConfirmModal()), nl)
 	if len(lines) == 0 {
 		return scrollbar.Hitbox{}, false
 	}
 
 	fgWidth := 0
 	for _, line := range lines {
-		if w := xansi.WcWidth.StringWidth(line); w > fgWidth {
+		if w := ansi.WcWidth.StringWidth(line); w > fgWidth {
 			fgWidth = w
 		}
 	}
@@ -354,7 +354,7 @@ func (m tuiModel) confirmScrollbarHitbox() (scrollbar.Hitbox, bool) {
 			continue
 		}
 		return scrollbar.Hitbox{
-			X:          startCol + xansi.WcWidth.StringWidth(line[:col]),
+			X:          startCol + ansi.WcWidth.StringWidth(line[:col]),
 			Y:          startRow + row,
 			Height:     m.confirmView.Height(),
 			TotalLines: m.confirmView.TotalLineCount(),
@@ -762,7 +762,7 @@ func (m tuiModel) confirmAccept() (tea.Model, tea.Cmd) {
 		if subject != "" {
 			styledSubject := styleRef.Render(subject)
 			if url != "" {
-				styledSubject = xansi.SetHyperlink(url) + styledSubject + xansi.ResetHyperlink()
+				styledSubject = ansi.Force().Hyperlink(url, styledSubject)
 			}
 			m.flash.Msg = m.styles.statusPending.Render(
 				verb,
