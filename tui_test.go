@@ -44,7 +44,7 @@ Model
 sonnet  opus
 
 Effort
-low  medium  high  max  auto
+low  medium  high  xhigh  max  auto
 
 `,
 		stripped,

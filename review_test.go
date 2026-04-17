@@ -415,6 +415,7 @@ func TestClaudeEffortRulesUseGlobFallback(t *testing.T) {
 			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
 			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
 			{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+			{label: claudeReviewEffortXHigh, value: claudeReviewEffortXHigh},
 			{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
 			{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
 		},

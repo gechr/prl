@@ -675,7 +675,7 @@ tui:
         # Optional overrides for the available model/effort choices.
         # If omitted, prl uses the built-in Claude review options.
         # models: [sonnet, opus]
-        # efforts: [low, medium, high, max, auto]
+        # efforts: [low, medium, high, xhigh, max, auto]
         # Default prompt for Claude AI review.
         # Available placeholders:
         #   %[10]s

@@ -56,6 +56,7 @@ const (
 	claudeReviewEffortLow    = "low"
 	claudeReviewEffortMedium = "medium"
 	claudeReviewEffortHigh   = "high"
+	claudeReviewEffortXHigh  = "xhigh"
 	claudeReviewEffortMax    = "max"
 	claudeReviewEffortAuto   = "auto"
 	codexReviewEffortLow     = "low"
@@ -258,6 +259,7 @@ var claudeEffortRules = []reviewEffortRule{
 			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
 			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
 			{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+			{label: claudeReviewEffortXHigh, value: claudeReviewEffortXHigh},
 			{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
 			{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
 		},
@@ -619,9 +621,9 @@ func buildAIReviewCommand(
 		return baseCmd + buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt)
 	case reviewProviderUnknown:
 		return baseCmd + fmt.Sprintf(
-			"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+			"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s",
 			shellescape.Quote(cmdModel),
-			shellescape.Quote(cmdEffort),
+			claudeEffortArg(cmdEffort),
 			shellescape.Quote(
 				"You are an expert code reviewer. Be thorough, precise, and actionable.",
 			),
@@ -629,9 +631,9 @@ func buildAIReviewCommand(
 		)
 	case reviewProviderClaude:
 		return baseCmd + fmt.Sprintf(
-			"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+			"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s",
 			shellescape.Quote(cmdModel),
-			shellescape.Quote(cmdEffort),
+			claudeEffortArg(cmdEffort),
 			shellescape.Quote(
 				"You are an expert code reviewer. Be thorough, precise, and actionable.",
 			),
@@ -639,12 +641,19 @@ func buildAIReviewCommand(
 		)
 	}
 	return baseCmd + fmt.Sprintf(
-		"claude --model=%s --effort=%s --allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+		"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s",
 		shellescape.Quote(cmdModel),
-		shellescape.Quote(cmdEffort),
+		claudeEffortArg(cmdEffort),
 		shellescape.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
 		shellescape.Quote(prompt),
 	)
+}
+
+func claudeEffortArg(effort string) string {
+	if effort == claudeReviewEffortAuto {
+		return ""
+	}
+	return fmt.Sprintf("--effort=%s ", shellescape.Quote(effort))
 }
 
 func buildGeminiReviewCommand(reviewDir, model, effort, prompt string) string {
