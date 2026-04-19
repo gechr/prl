@@ -242,12 +242,12 @@ github.com/fsnotify/fsnotify v1.9.0 h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S
 github.com/fsnotify/fsnotify v1.9.0/go.mod h1:8jBTzvmWwFyi3Pb8djgCCO5IBqzKJ/Jwo8TRcHyHii0=
 github.com/fzipp/gocyclo v0.6.0 h1:lsblElZG7d3ALtGMx9fmxeTKZaLLpU8mET09yN4BBLo=
 github.com/fzipp/gocyclo v0.6.0/go.mod h1:rXPyn8fnlpa0R2csP/31uerbiVBugk5whMdlyaLkLoA=
-github.com/gechr/clib v0.4.2 h1:I+TKsKpKTq+e2chEN3yinaXEoezXR5qkTSLdGPnVWyU=
-github.com/gechr/clib v0.4.2/go.mod h1:BVfDw4z4iivnk4Qu8+bIS9cXM1iQjQCgHhMpOfME46A=
+github.com/gechr/clib v0.4.3 h1:XF450eTl5LZMehQRVEJucobrb1OeSU10a/SNiHC3cvY=
+github.com/gechr/clib v0.4.3/go.mod h1:BVfDw4z4iivnk4Qu8+bIS9cXM1iQjQCgHhMpOfME46A=
 github.com/gechr/clog v0.9.0 h1:1JO5DtPzG5LeTdSCcZn41NIaHB9RwBp8DJXq7ybOCqk=
 github.com/gechr/clog v0.9.0/go.mod h1:8wNJs1/BURW2q1wKVUDdMCDpYOW7Us11+I/ZICpDkb4=
-github.com/gechr/primer v0.0.11 h1:LsoHljXLRkZdW9e5jW5tkJAzctzMYvuduemHybCxAbw=
-github.com/gechr/primer v0.0.11/go.mod h1:kauY5mNcqZDYp+dWfA/otoyWDdcy4JNDE980p/8wapg=
+github.com/gechr/primer v0.0.12 h1:wswQ4+y5jlgX0SvfucAgQtRUVB8edqRAgluU9NWRk8Q=
+github.com/gechr/primer v0.0.12/go.mod h1:JAUkAmrYU+bGaWHOHPDsut8AMtyqwKDEmHsjoGJ/Q2s=
 github.com/gechr/x v0.0.3 h1:RgPEM5lYuXzqf18ia2HpkDJXNZZoV9zCaZPzaUjimg0=
 github.com/gechr/x v0.0.3/go.mod h1:NRd+e3IW8J8TiRu/dw8CcszyPnBz9aD+3r9mAn07QFw=
 github.com/ghostiam/protogetter v0.3.20 h1:oW7OPFit2FxZOpmMRPP9FffU4uUpfeE/rEdE1f+MzD0=
