@@ -72,7 +72,6 @@ const (
 	headerRateLimitRemaining = "X-Ratelimit-Remaining"
 	headerRateLimitReset     = "X-Ratelimit-Reset"
 
-	githubMutatingRequestSpacing = 1 * time.Second
 	githubSecondaryRetryFallback = 30 * time.Second
 	githubRateLimitResetSkew     = 1 * time.Second
 )
@@ -102,7 +101,7 @@ const (
 // Action result strings.
 const (
 	resultApproved        = "Approved"
-	resultAutomerged      = "Automerge"
+	resultAutomerged      = "Automerge enabled"
 	resultBranchUpdated   = "Branch updated"
 	resultClosed          = "Closed"
 	resultCommented       = "Commented"

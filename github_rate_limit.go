@@ -13,15 +13,13 @@ import (
 	"time"
 )
 
-var sharedGitHubRateLimiter = newGitHubRateLimiter(githubMutatingRequestSpacing)
+// Reintroduce mutating-request spacing here if GitHub secondary rate limiting becomes an issue.
+var sharedGitHubRateLimiter = newGitHubRateLimiter()
 
 type githubRateLimiter struct {
-	mutatingMinSpacing time.Duration
-
-	mu             sync.Mutex
-	lastMutatingAt time.Time
-	retryUntil     time.Time
-	conditional    map[string]conditionalResponse
+	mu          sync.Mutex
+	retryUntil  time.Time
+	conditional map[string]conditionalResponse
 }
 
 type conditionalResponse struct {
@@ -36,10 +34,9 @@ type githubRateLimitTransport struct {
 	limiter *githubRateLimiter
 }
 
-func newGitHubRateLimiter(minSpacing time.Duration) *githubRateLimiter {
+func newGitHubRateLimiter() *githubRateLimiter {
 	return &githubRateLimiter{
-		mutatingMinSpacing: minSpacing,
-		conditional:        map[string]conditionalResponse{},
+		conditional: map[string]conditionalResponse{},
 	}
 }
 
@@ -50,20 +47,12 @@ func (l *githubRateLimiter) wrap(base http.RoundTripper) http.RoundTripper {
 	return githubRateLimitTransport{base: base, limiter: l}
 }
 
-func (l *githubRateLimiter) wait(ctx context.Context, req *http.Request) error {
+func (l *githubRateLimiter) wait(ctx context.Context, _ *http.Request) error {
 	for {
 		l.mu.Lock()
 		now := time.Now()
 		next := l.retryUntil
-		if isMutatingMethod(req.Method) {
-			if spaced := l.lastMutatingAt.Add(l.mutatingMinSpacing); spaced.After(next) {
-				next = spaced
-			}
-		}
 		if !next.After(now) {
-			if isMutatingMethod(req.Method) {
-				l.lastMutatingAt = now
-			}
 			l.mu.Unlock()
 			return nil
 		}

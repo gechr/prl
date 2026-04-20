@@ -4,8 +4,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,7 +60,7 @@ func TestSecondaryRateLimitRetryUsesRateLimitReset(t *testing.T) {
 }
 
 func TestConditionalGetReusesCachedBodyOnNotModified(t *testing.T) {
-	limiter := newGitHubRateLimiter(0)
+	limiter := newGitHubRateLimiter()
 	var calls int
 	transport := limiter.wrap(roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
@@ -98,7 +100,7 @@ func TestConditionalGetReusesCachedBodyOnNotModified(t *testing.T) {
 
 func TestRateLimiterRespectsCooldownOverBaseInterval(t *testing.T) {
 	previous := sharedGitHubRateLimiter
-	sharedGitHubRateLimiter = newGitHubRateLimiter(0)
+	sharedGitHubRateLimiter = newGitHubRateLimiter()
 	t.Cleanup(func() { sharedGitHubRateLimiter = previous })
 
 	sharedGitHubRateLimiter.noteRetryAfter(12 * time.Second)
@@ -106,4 +108,76 @@ func TestRateLimiterRespectsCooldownOverBaseInterval(t *testing.T) {
 	require.GreaterOrEqual(t, refreshCooldownDelay(5*time.Second), 11*time.Second)
 	require.GreaterOrEqual(t, watchInterval(0), 11*time.Second)
 	require.GreaterOrEqual(t, refreshDelay(0, 0), 11*time.Second)
+}
+
+func TestRateLimiterDoesNotSerializeMutatingRequestsWhenSpacingDisabled(t *testing.T) {
+	limiter := newGitHubRateLimiter()
+
+	var (
+		mu          sync.Mutex
+		inFlight    int
+		maxInFlight int
+	)
+
+	transport := limiter.wrap(roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		mu.Lock()
+		inFlight++
+		if inFlight > maxInFlight {
+			maxInFlight = inFlight
+		}
+		mu.Unlock()
+
+		time.Sleep(50 * time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+
+		recorder := httptest.NewRecorder()
+		recorder.WriteHeader(http.StatusOK)
+		_, _ = recorder.WriteString(`{}`)
+		return recorder.Result(), nil
+	}))
+
+	req1, err := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", nil)
+	require.NoError(t, err)
+	req2, err := http.NewRequest(
+		http.MethodPut,
+		"https://api.github.com/repos/o/r/pulls/1/merge",
+		nil,
+	)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	statuses := make(chan int, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		resp, err := transport.RoundTrip(req1)
+		errs <- err
+		if resp != nil {
+			statuses <- resp.StatusCode
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		resp, err := transport.RoundTrip(req2)
+		errs <- err
+		if resp != nil {
+			statuses <- resp.StatusCode
+		}
+	}()
+	wg.Wait()
+	close(errs)
+	close(statuses)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	for status := range statuses {
+		require.Equal(t, http.StatusOK, status)
+	}
+
+	require.GreaterOrEqual(t, maxInFlight, 2)
 }
