@@ -58,7 +58,7 @@ func completeAuthors(cfg *Config) []string {
 	}
 
 	// Try plugin
-	if pluginResults := tryPluginComplete(cfg, "authors"); pluginResults != nil {
+	if pluginResults := tryPluginComplete(cfg, "users"); pluginResults != nil {
 		for _, r := range pluginResults {
 			val, desc, _ := strings.Cut(r, tab)
 			normalized := normalizeBotAuthorValue(val, bots)

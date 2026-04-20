@@ -98,7 +98,7 @@ func TestCompleteAuthorsAppendsBotSuffixForPluginProvidedBots(t *testing.T) {
 		dir,
 		"prl-plugin-example",
 		`#!/bin/sh
-if [ "$1" = "complete" ] && [ "$2" = "authors" ]; then
+if [ "$1" = "complete" ] && [ "$2" = "users" ]; then
 	printf 'dependabot\tDependabot\nalice\tAlice Example\n'
 	exit 0
 fi
