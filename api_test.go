@@ -607,6 +607,33 @@ func TestFetchDiffReusesDedicatedClient(t *testing.T) {
 	require.EqualValues(t, 2, shaCalls.Load())
 }
 
+func TestIsBranchUpToDateErrMatchesNoNewCommitsResponse(t *testing.T) {
+	t.Helper()
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(
+			req,
+			http.StatusUnprocessableEntity,
+			`{"message":"There are no new commits on the base branch."}`,
+		), nil
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, nil)
+	err = actions.updateBranch("owner", "repo", 42)
+	require.Error(t, err)
+	require.True(t, isBranchUpToDateErr(err), "expected up-to-date error, got %v", err)
+
+	require.False(t, isBranchUpToDateErr(nil))
+	require.False(t, isBranchUpToDateErr(errors.New("some other error")))
+}
+
 func jsonResponse(req *http.Request, status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,

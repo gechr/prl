@@ -199,13 +199,19 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 	owner, repo := prOwnerRepo(pr)
 
 	if cli.Update {
-		if err := a.updateBranch(owner, repo, pr.Number); err != nil {
-			errs = append(errs, fmt.Sprintf("update-branch %s: %v", pr.URL, err))
-		} else {
+		switch err := a.updateBranch(owner, repo, pr.Number); {
+		case err == nil:
 			clog.Info().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Updated branch")
+		case isBranchUpToDateErr(err):
+			clog.Warn().
+				Link("pr", pr.URL, pr.Ref()).
+				Str("title", truncateTitle(pr.Title)).
+				Msg("Branch already up-to-date")
+		default:
+			errs = append(errs, fmt.Sprintf("update-branch %s: %v", pr.URL, err))
 		}
 	}
 
@@ -1052,6 +1058,16 @@ func (a *ActionRunner) fetchPRDetailCheckPage(
 func (a *ActionRunner) updateBranch(owner, repo string, number int) error {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d/update-branch", owner, repo, number)
 	return a.rest.Put(path, nil, nil)
+}
+
+// isBranchUpToDateErr reports whether err is GitHub's 422 response indicating
+// the PR branch has no new commits on the base branch (i.e. already up-to-date).
+func isBranchUpToDateErr(err error) bool {
+	var httpErr *api.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	return strings.Contains(httpErr.Message, "no new commits")
 }
 
 // GraphQL actions
