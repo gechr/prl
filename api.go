@@ -445,41 +445,47 @@ func (a *ActionRunner) closePR(
 	return nil
 }
 
-// mergeOrAutomerge picks the right merge strategy based on the PR's known status:
-//   - Ready/Unknown: try direct merge, then enqueue (merge queue), then automerge.
-//   - Not ready: try automerge, then enqueue.
+// mergeOrAutomerge executes merge fallbacks using GitHub's API responses rather
+// than the UI-oriented MergeStatus heuristic:
+//   - try direct merge first
+//   - then try merge queue
+//   - then try enabling auto-merge
 //
 // Returns the log message on success.
 func (a *ActionRunner) mergeOrAutomerge(owner, repo string, pr PullRequest) (string, error) {
-	if pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusUnknown {
-		// Try direct merge first (instant).
-		if err := a.mergePR(owner, repo, pr.Number); err == nil {
-			return resultMerged, nil
-		}
-		// Direct merge failed - try merge queue.
-		if err := a.enqueuePR(pr.NodeID); err == nil {
-			return resultEnqueued, nil
-		}
-		// Fall back to automerge.
-		if err := a.enableAutomerge(pr.NodeID); err != nil {
-			return "", err
-		}
-		return resultAutomerged, nil
+	mergeErr := a.mergePR(owner, repo, pr.Number)
+	if mergeErr == nil {
+		return resultMerged, nil
 	}
-	// Not ready - enable automerge first.
-	autoErr := a.enableAutomerge(pr.NodeID)
-	if autoErr == nil {
-		return resultAutomerged, nil
-	}
-	// Try merge queue.
+
 	queueErr := a.enqueuePR(pr.NodeID)
 	if queueErr == nil {
 		return resultEnqueued, nil
 	}
-	return "", errors.Join(
+	if isNoMergeQueueError(queueErr) {
+		queueErr = nil
+	}
+
+	autoErr := a.enableAutomerge(pr.NodeID)
+	if autoErr == nil {
+		return resultAutomerged, nil
+	}
+
+	errs := []error{
+		fmt.Errorf("merge PR: %w", mergeErr),
 		fmt.Errorf("enable automerge: %w", autoErr),
-		fmt.Errorf("enqueue PR: %w", queueErr),
-	)
+	}
+	if queueErr != nil {
+		errs = append(errs, fmt.Errorf("enqueue PR: %w", queueErr))
+	}
+	return "", errors.Join(errs...)
+}
+
+func isNoMergeQueueError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no merge queue found")
 }
 
 func (a *ActionRunner) mergePR(owner, repo string, number int) error {

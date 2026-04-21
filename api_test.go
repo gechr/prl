@@ -22,18 +22,31 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func TestMergeOrAutomergeBlockedDoesNotFallBackToDirectMerge(t *testing.T) {
+func TestMergeOrAutomergeBlockedStillTriesDirectMergeFirst(t *testing.T) {
 	t.Helper()
 
 	var restCalls atomic.Int32
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/graphql":
-			return jsonResponse(
-				req,
-				http.StatusOK,
-				`{"errors":[{"message":"automerge unavailable"}]}`,
-			), nil
+			body := readBody(t, req.Body)
+			switch {
+			case strings.Contains(body, "enqueuePullRequest"):
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"errors":[{"message":"No merge queue found for branch 'main'"}]}`,
+				), nil
+			case strings.Contains(body, "enablePullRequestAutoMerge"):
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"errors":[{"message":"automerge unavailable"}]}`,
+				), nil
+			default:
+				t.Fatalf("unexpected GraphQL call: %s", body)
+				return nil, errUnexpectedGraphQLCall
+			}
 		case "/repos/owner/repo/pulls/42/merge":
 			restCalls.Add(1)
 			return jsonResponse(
@@ -69,9 +82,13 @@ func TestMergeOrAutomergeBlockedDoesNotFallBackToDirectMerge(t *testing.T) {
 
 	_, err = actions.mergeOrAutomerge("owner", "repo", pr)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "enable automerge")
-	require.Contains(t, err.Error(), "enqueue PR")
-	require.Zero(t, restCalls.Load(), "blocked PRs should not try the direct merge endpoint")
+	require.Equal(
+		t,
+		`merge PR: HTTP 405: merge not allowed (https://api.github.com/repos/owner/repo/pulls/42/merge)
+enable automerge: GraphQL: automerge unavailable`,
+		err.Error(),
+	)
+	require.EqualValues(t, 1, restCalls.Load(), "merge should not depend on display status")
 }
 
 func TestMergeOrAutomergeReadyStillPrefersDirectMerge(t *testing.T) {
@@ -177,6 +194,141 @@ func TestMergeOrAutomergeBlockedFallsBackToAutoMergeWhenQueueUnavailable(t *test
 	result, err := actions.mergeOrAutomerge("owner", "repo", pr)
 	require.NoError(t, err)
 	require.Equal(t, resultAutomerged, result)
+}
+
+func TestMergeOrAutomergeQueueTakesPriorityOverAutomerge(t *testing.T) {
+	t.Helper()
+
+	var (
+		mergeCalls atomic.Int32
+		autoCalls  atomic.Int32
+	)
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/graphql":
+			body := readBody(t, req.Body)
+			switch {
+			case strings.Contains(body, "enqueuePullRequest"):
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"data":{"enqueuePullRequest":{"clientMutationId":"ok"}}}`,
+				), nil
+			case strings.Contains(body, "enablePullRequestAutoMerge"):
+				autoCalls.Add(1)
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"data":{"enablePullRequestAutoMerge":{"clientMutationId":"ok"}}}`,
+				), nil
+			default:
+				t.Fatalf("unexpected GraphQL call: %s", body)
+				return nil, errUnexpectedGraphQLCall
+			}
+		case "/repos/owner/repo/pulls/42/merge":
+			mergeCalls.Add(1)
+			return jsonResponse(
+				req,
+				http.StatusMethodNotAllowed,
+				`{"message":"merge queue required"}`,
+			), nil
+		default:
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+	pr := PullRequest{
+		MergeStatus: MergeStatusBlocked,
+		NodeID:      "PR_node",
+		Number:      42,
+	}
+
+	result, err := actions.mergeOrAutomerge("owner", "repo", pr)
+	require.NoError(t, err)
+	require.Equal(t, resultEnqueued, result)
+	require.EqualValues(t, 1, mergeCalls.Load())
+	require.Zero(t, autoCalls.Load(), "automerge should not run after enqueue succeeds")
+}
+
+func TestMergeOrAutomergeIgnoresMissingMergeQueueInFinalError(t *testing.T) {
+	t.Helper()
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/graphql":
+			body := readBody(t, req.Body)
+			switch {
+			case strings.Contains(body, "enablePullRequestAutoMerge"):
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"errors":[{"message":"User is not authorized for this protected branch"}]}`,
+				), nil
+			case strings.Contains(body, "enqueuePullRequest"):
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"errors":[{"message":"No merge queue found for branch 'main'"}]}`,
+				), nil
+			default:
+				t.Fatalf("unexpected GraphQL call: %s", body)
+				return nil, errUnexpectedGraphQLCall
+			}
+		case "/repos/owner/repo/pulls/42/merge":
+			return jsonResponse(
+				req,
+				http.StatusMethodNotAllowed,
+				`{"message":"merge not allowed"}`,
+			), nil
+		default:
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+	})
+
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	actions := NewActionRunner(rest, gql)
+	pr := PullRequest{
+		MergeStatus: MergeStatusBlocked,
+		NodeID:      "PR_node",
+		Number:      42,
+	}
+
+	_, err = actions.mergeOrAutomerge("owner", "repo", pr)
+	require.Error(t, err)
+	require.Equal(
+		t,
+		`merge PR: HTTP 405: merge not allowed (https://api.github.com/repos/owner/repo/pulls/42/merge)
+enable automerge: GraphQL: User is not authorized for this protected branch`,
+		err.Error(),
+	)
 }
 
 func TestAutomergeMutationsUseCurrentGitHubFieldNames(t *testing.T) {
