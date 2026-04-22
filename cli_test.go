@@ -44,11 +44,11 @@ func TestValidate_AllowsAuthorAndTeamTogether(t *testing.T) {
 	require.NoError(t, cli.Validate())
 }
 
-func TestValidate_IntervalRequiresInteractive(t *testing.T) {
+func TestValidate_IntervalRequiresInteractiveOrWatch(t *testing.T) {
 	interval := 30 * time.Second
 	cli := &CLI{Interval: &interval}
 
-	require.EqualError(t, cli.Validate(), "--interval requires --interactive")
+	require.EqualError(t, cli.Validate(), "--interval requires --interactive or --watch")
 }
 
 func TestValidate_IntervalMustBePositive(t *testing.T) {
@@ -61,6 +61,13 @@ func TestValidate_IntervalMustBePositive(t *testing.T) {
 func TestValidate_AllowsInteractiveInterval(t *testing.T) {
 	interval := 30 * time.Second
 	cli := &CLI{Interactive: true, Interval: &interval}
+
+	require.NoError(t, cli.Validate())
+}
+
+func TestValidate_AllowsWatchInterval(t *testing.T) {
+	interval := 30 * time.Second
+	cli := &CLI{Watch: true, Interval: &interval}
 
 	require.NoError(t, cli.Validate())
 }

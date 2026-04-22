@@ -59,7 +59,44 @@ exit 2
 
 	results, err := (&Plugin{path: path}).Resolve("team", "ops")
 	require.Nil(t, results)
-	require.ErrorContains(t, err, "boom")
+	require.EqualError(t, err, "plugin resolve team ops: exit status 2: boom")
+}
+
+func TestPluginSlackParsesRawJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+cat >/dev/null
+printf '{"channel":"#pull-requests"}\n'
+`)
+
+	result, err := (&Plugin{path: path}).Slack([]byte(`[]`), "")
+	require.NoError(t, err)
+	require.Len(t, result.Messages, 1)
+	require.Equal(t, "#pull-requests", result.Messages[0].Channel)
+}
+
+func TestPluginSlackSurfacesStderrFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+cat >/dev/null
+echo 'ERR failed to authenticate with slack: token missing' >&2
+exit 1
+`)
+
+	_, err := (&Plugin{path: path}).Slack([]byte(`[]`), "")
+	require.EqualError(t, err, "plugin slack: ERR failed to authenticate with slack: token missing")
+}
+
+func TestPluginSlackFallsBackToStdoutFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+cat >/dev/null
+echo 'plain failure output'
+exit 1
+`)
+
+	_, err := (&Plugin{path: path}).Slack([]byte(`[]`), "")
+	require.EqualError(t, err, "plugin slack: plain failure output")
 }
 
 func resetPluginCacheForTest(t *testing.T) {

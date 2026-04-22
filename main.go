@@ -19,7 +19,7 @@ import (
 	"github.com/gechr/clog"
 	cspinner "github.com/gechr/clog/fx/spinner"
 	"github.com/gechr/primer/pick"
-	"github.com/gechr/primer/term"
+	"github.com/gechr/x/terminal"
 )
 
 var version = "dev"
@@ -329,6 +329,14 @@ func watchInterval(n int) time.Duration {
 	return refreshCooldownDelay(d)
 }
 
+func watchRefreshBaseDelay(n int, override *time.Duration) time.Duration {
+	d := watchInterval(n)
+	if override != nil && *override > d {
+		return refreshCooldownDelay(*override)
+	}
+	return d
+}
+
 // runWatch loops buildOutput every watchInterval, clearing the screen between refreshes.
 func runWatch(
 	p *prl,
@@ -398,7 +406,7 @@ func runWatch(
 	} else {
 		lastOutput = noResults
 	}
-	interval = watchInterval(len(lastPRs))
+	interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
 	nextFetchAt = time.Now().Add(interval)
 
 	ticker := time.NewTicker(s.interval)
@@ -421,7 +429,7 @@ func runWatch(
 				lastOutput = noResults
 				lastPRs = nil
 			}
-			interval = watchInterval(len(lastPRs))
+			interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
 			nextFetchAt = time.Now().Add(interval)
 		default:
 		}
@@ -953,7 +961,7 @@ func applyColorMode(mode clog.ColorMode) bool {
 		lipgloss.Writer.Profile = colorprofile.NoTTY
 		return false
 	case clog.ColorAuto:
-		return term.Is(os.Stdout)
+		return terminal.Is(os.Stdout)
 	}
-	return term.Is(os.Stdout)
+	return terminal.Is(os.Stdout)
 }

@@ -58,6 +58,9 @@ prl --interactive --interval 30s
 # Refresh results continuously
 prl --watch
 
+# Watch with a custom refresh interval floor for this run
+prl --watch --interval 30s
+
 # Print only the total count
 prl --count
 
@@ -114,23 +117,23 @@ prl -o json
 
 ### Interactive Actions
 
-| Flag                     | Short | Description                                |
-| ------------------------ | ----- | ------------------------------------------ |
-| `--interactive`          | `-i`  | Launch the full-screen TUI browser         |
-| `--interval`             |       | Override TUI auto-refresh interval         |
-| `--approve`              |       | Approve each PR                            |
-| `--close`                |       | Close each PR                              |
-| `--copilot`              |       | Request Copilot review on each PR          |
-| `--delete-branch`        |       | Delete the branch after close              |
-| `--comment`              |       | Add a comment to each PR                   |
-| `--edit`                 | `-e`  | Edit title and body of each PR             |
-| `--mark-draft`           |       | Convert each PR to draft                   |
-| `--mark-ready`           |       | Mark each PR ready for review              |
-| `--merge` / `--no-merge` |       | Toggle auto-merge                          |
-| `--force-merge`          | `-M`  | Poll for checks, then force-merge          |
-| `--unsubscribe`          | `-U`  | Remove review request and unsubscribe      |
-| `--update`               |       | Update each PR branch from its base branch |
-| `--yes`                  | `-y`  | Skip the confirmation prompt               |
+| Flag                     | Short | Description                                  |
+| ------------------------ | ----- | -------------------------------------------- |
+| `--interactive`          | `-i`  | Launch the full-screen TUI browser           |
+| `--interval`             |       | Override auto-refresh interval for TUI/watch |
+| `--approve`              |       | Approve each PR                              |
+| `--close`                |       | Close each PR                                |
+| `--copilot`              |       | Request Copilot review on each PR            |
+| `--delete-branch`        |       | Delete the branch after close                |
+| `--comment`              |       | Add a comment to each PR                     |
+| `--edit`                 | `-e`  | Edit title and body of each PR               |
+| `--mark-draft`           |       | Convert each PR to draft                     |
+| `--mark-ready`           |       | Mark each PR ready for review                |
+| `--merge` / `--no-merge` |       | Toggle auto-merge                            |
+| `--force-merge`          | `-M`  | Poll for checks, then force-merge            |
+| `--unsubscribe`          | `-U`  | Remove review request and unsubscribe        |
+| `--update`               |       | Update each PR branch from its base branch   |
+| `--yes`                  | `-y`  | Skip the confirmation prompt                 |
 
 ### Actions
 
@@ -171,7 +174,7 @@ prl -o json
 
 ## TUI
 
-`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`.
+`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`.
 
 ## Date Syntax
 

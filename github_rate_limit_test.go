@@ -127,6 +127,16 @@ func TestRefreshDelayDoesNotShrinkLargeOverrideOnIdle(t *testing.T) {
 	require.Equal(t, refreshCooldownDelay(override), refreshDelay(5, watchIdleDecay, &override))
 }
 
+func TestWatchRefreshBaseDelayRespectsOverrideFloor(t *testing.T) {
+	override := 10 * time.Second
+	require.Equal(t, watchInterval(100), watchRefreshBaseDelay(100, &override))
+}
+
+func TestWatchRefreshBaseDelayUsesLargerOverride(t *testing.T) {
+	override := 90 * time.Second
+	require.Equal(t, refreshCooldownDelay(override), watchRefreshBaseDelay(5, &override))
+}
+
 func TestRateLimiterDoesNotSerializeMutatingRequestsWhenSpacingDisabled(t *testing.T) {
 	limiter := newGitHubRateLimiter()
 

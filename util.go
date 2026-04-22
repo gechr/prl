@@ -47,3 +47,14 @@ func pluralize(n int, singular, plural string) string {
 	}
 	return plural
 }
+
+func splitCSV(s string) []string {
+	var parts []string
+	for part := range strings.SplitSeq(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}

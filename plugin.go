@@ -30,6 +30,16 @@ type Plugin struct {
 	path string
 }
 
+type slackSendMessage struct {
+	Channel   string   `json:"channel"`
+	Reactions []string `json:"reactions,omitempty"`
+}
+
+type slackSendResult struct {
+	Messages []slackSendMessage
+	RawLines []string
+}
+
 var (
 	pluginMu    sync.Mutex
 	pluginCache = make(map[pluginCacheKey]pluginDiscoveryResult)
@@ -311,12 +321,14 @@ func (p *Plugin) run(args ...string) (string, error) {
 
 // Slack pipes JSON PRs to the plugin's slack subcommand.
 // The plugin handles formatting, routing, and sending.
-func (p *Plugin) Slack(prsJSON []byte, sendTo string) error {
+func (p *Plugin) Slack(prsJSON []byte, sendTo string) (slackSendResult, error) {
+	var result slackSendResult
+
 	if p == nil || p.path == "" {
-		return fmt.Errorf("--send requires a plugin (no prl-plugin-* binary found)")
+		return result, fmt.Errorf("--send requires a plugin (no prl-plugin-* binary found)")
 	}
 
-	args := []string{"slack"}
+	args := []string{"slack", "send"}
 	if sendTo != "" {
 		args = append(args, "--to", sendTo)
 	}
@@ -328,20 +340,47 @@ func (p *Plugin) Slack(prsJSON []byte, sendTo string) error {
 
 	cmd := exec.CommandContext(ctx, p.path, args...) //nolint:gosec // path from plugin discovery
 	cmd.Stdin = bytes.NewReader(prsJSON)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stdout := new(bytes.Buffer)
+	cmd.Stdout = stdout
+	stderr := new(bytes.Buffer)
+	cmd.Stderr = stderr
 
 	clog.Debug().Str("cmd", p.path).Strs("args", args).Msg("Running plugin slack")
 
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
-		if msg != "" {
-			return fmt.Errorf("plugin slack: %s", msg)
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
 		}
-		return fmt.Errorf("plugin slack: %w", err)
+		if msg != "" {
+			return result, fmt.Errorf("plugin slack: %s", msg)
+		}
+		return result, fmt.Errorf("plugin slack: %w", err)
 	}
 
-	return nil
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		return result, nil
+	}
+
+	result.RawLines = parsePluginLines(output)
+
+	var messages []slackSendMessage
+	if err := json.Unmarshal(stdout.Bytes(), &messages); err == nil {
+		result.Messages = messages
+		return result, nil
+	}
+
+	var single slackSendMessage
+	if err := json.Unmarshal(stdout.Bytes(), &single); err == nil {
+		result.Messages = []slackSendMessage{single}
+		return result, nil
+	}
+
+	clog.Debug().
+		Str("output", output).
+		Msg("Plugin slack returned non-JSON raw output")
+	return result, nil
 }
 
 // pluginSlackSend marshals PRs as JSON and sends them to Slack via the plugin.
@@ -355,7 +394,14 @@ func pluginSlackSend(cfg *Config, sendTo string, prs []PullRequest) error {
 	if err != nil {
 		return err
 	}
-	return plug.Slack(prsJSON, sendTo)
+
+	result, err := plug.Slack(prsJSON, sendTo)
+	if err != nil {
+		return err
+	}
+
+	logSlackSend(prs, sendTo, result)
+	return nil
 }
 
 // parsePluginLines splits plugin output into non-empty lines.
@@ -372,4 +418,89 @@ func parsePluginLines(output string) []string {
 		}
 	}
 	return lines
+}
+
+func logSlackSend(prs []PullRequest, sendTo string, result slackSendResult) {
+	if len(prs) == 0 {
+		return
+	}
+
+	if len(result.Messages) == 1 {
+		logSlackSendMessage(prs, result.Messages[0])
+		return
+	}
+
+	if len(result.Messages) > 1 {
+		for _, msg := range result.Messages {
+			entry := clog.Info().Int("total", len(prs))
+			addSlackPRFields(entry, prs)
+			addSlackRecipientFields(entry, msg.Channel)
+			if len(msg.Reactions) > 0 {
+				entry.Strs("reactions", msg.Reactions)
+			}
+			entry.Msg("Sent to Slack")
+		}
+		return
+	}
+
+	entry := clog.Info()
+	addSlackPRFields(entry, prs)
+	if sendTo != "" {
+		addSlackRecipientFields(entry, sendTo)
+	}
+	entry.Msg("Sent to Slack")
+}
+
+func logSlackSendMessage(prs []PullRequest, msg slackSendMessage) {
+	entry := clog.Info()
+	addSlackPRFields(entry, prs)
+	addSlackRecipientFields(entry, msg.Channel)
+	if len(msg.Reactions) > 0 {
+		entry.Strs("reactions", msg.Reactions)
+	}
+	entry.Msg("Sent to Slack")
+}
+
+func addSlackPRFields(entry *clog.Event, prs []PullRequest) {
+	if len(prs) == 1 {
+		entry.Link("pr", prs[0].URL, prs[0].Ref())
+		return
+	}
+
+	refs := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		refs = append(refs, pr.Ref())
+	}
+	entry.Strs("prs", refs)
+}
+
+func addSlackRecipientFields(entry *clog.Event, recipient string) {
+	recipient = strings.TrimSpace(recipient)
+	if recipient == "" {
+		return
+	}
+
+	if strings.HasPrefix(recipient, "#") {
+		entry.Str("channel", recipient)
+		return
+	}
+
+	if strings.Contains(recipient, ",") {
+		parts := splitCSV(recipient)
+		if len(parts) > 1 {
+			entry.Strs("users", parts)
+			return
+		}
+		if len(parts) == 1 {
+			addSlackRecipientFields(entry, parts[0])
+			return
+		}
+	}
+
+	if strings.HasPrefix(recipient, "@") || strings.Contains(recipient, "@") {
+		entry.Str("user", recipient)
+		return
+	}
+
+	entry.Str("channel", recipient)
 }
