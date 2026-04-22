@@ -52,6 +52,9 @@ prl --drift 0
 # Open an interactive TUI browser
 prl --interactive
 
+# Open the TUI with a slower refresh cadence for this run
+prl --interactive --interval 30s
+
 # Refresh results continuously
 prl --watch
 
@@ -114,6 +117,7 @@ prl -o json
 | Flag                     | Short | Description                                |
 | ------------------------ | ----- | ------------------------------------------ |
 | `--interactive`          | `-i`  | Launch the full-screen TUI browser         |
+| `--interval`             |       | Override TUI auto-refresh interval         |
 | `--approve`              |       | Approve each PR                            |
 | `--close`                |       | Close each PR                              |
 | `--copilot`              |       | Request Copilot review on each PR          |
@@ -167,7 +171,7 @@ prl -o json
 
 ## TUI
 
-`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`.
+`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`.
 
 ## Date Syntax
 

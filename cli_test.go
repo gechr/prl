@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,27 @@ func TestValidate_AllowsAuthorAndTeamTogether(t *testing.T) {
 		Author: &author,
 		Team:   clib.CSVFlag{Values: []string{"ops"}},
 	}
+
+	require.NoError(t, cli.Validate())
+}
+
+func TestValidate_IntervalRequiresInteractive(t *testing.T) {
+	interval := 30 * time.Second
+	cli := &CLI{Interval: &interval}
+
+	require.EqualError(t, cli.Validate(), "--interval requires --interactive")
+}
+
+func TestValidate_IntervalMustBePositive(t *testing.T) {
+	interval := time.Duration(0)
+	cli := &CLI{Interactive: true, Interval: &interval}
+
+	require.EqualError(t, cli.Validate(), "--interval must be greater than 0")
+}
+
+func TestValidate_AllowsInteractiveInterval(t *testing.T) {
+	interval := 30 * time.Second
+	cli := &CLI{Interactive: true, Interval: &interval}
 
 	require.NoError(t, cli.Validate())
 }

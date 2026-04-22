@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clog"
@@ -52,7 +53,8 @@ type CLI struct {
 	Draft           *bool    `name:"draft"       help:"Show only draft PRs"                                                    clib:"terse='Draft filter',group='Filters/6'"                                                                                                                                                                                             negatable:""`
 
 	// Interactive flags
-	Interactive bool `name:"interactive" help:"Launch interactive TUI browser" short:"i" clib:"terse='TUI browser',group='Interactive/0'"`
+	Interactive bool           `name:"interactive" help:"Launch interactive TUI browser" short:"i" clib:"terse='TUI browser',group='Interactive/0'"`
+	Interval    *time.Duration "help:\"Override TUI auto-refresh interval (requires `--interactive`)\" clib:\"terse='Refresh interval',group='Interactive/0'\" placeholder:\"<duration>\""
 
 	Approve      bool   `name:"approve"     help:"Approve each PR"                                                 clib:"terse='Approve PRs',group='Interactive/1'"`
 	Close        bool   `name:"close"       help:"Close each PR"                                                   clib:"terse='Close PRs',group='Interactive/1'"`
@@ -186,6 +188,12 @@ func (c *CLI) Validate() error {
 	}
 	if c.Interactive && c.Count {
 		return fmt.Errorf("--interactive and --count are mutually exclusive")
+	}
+	if c.Interval != nil && !c.Interactive {
+		return fmt.Errorf("--interval requires --interactive")
+	}
+	if c.Interval != nil && *c.Interval <= 0 {
+		return fmt.Errorf("--interval must be greater than 0")
 	}
 	if c.Watch && c.Count {
 		return fmt.Errorf("--watch and --count are mutually exclusive")

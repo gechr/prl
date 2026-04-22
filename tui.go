@@ -717,21 +717,41 @@ func (m tuiModel) Init() tea.Cmd {
 	if m.autoRefresh {
 		cmds = append(
 			cmds,
-			scheduleRefresh(len(m.items), m.refreshID, time.Since(m.lastInteraction)),
+			scheduleRefresh(
+				len(m.items),
+				m.refreshID,
+				time.Since(m.lastInteraction),
+				m.refreshIntervalOverride(),
+			),
 		)
 	}
 	return tea.Batch(cmds...)
 }
 
+func interactiveRefreshBaseDelay(n int, override *time.Duration) time.Duration {
+	d := watchInterval(n)
+	if override != nil && *override > d {
+		return *override
+	}
+	return d
+}
+
+func (m tuiModel) refreshIntervalOverride() *time.Duration {
+	if m.cli == nil {
+		return nil
+	}
+	return m.cli.Interval
+}
+
 // refreshDelay returns the next list refresh delay using the adaptive watch-mode
 // cadence plus idle-based slowdown.
-func refreshDelay(n int, idle time.Duration) time.Duration {
-	d := watchInterval(n)
-	if idle > 0 && idle < watchIdleDecay {
+func refreshDelay(n int, idle time.Duration, override *time.Duration) time.Duration {
+	d := interactiveRefreshBaseDelay(n, override)
+	if d < watchIdleMax && idle > 0 && idle < watchIdleDecay {
 		// Linearly blend from the base interval toward watchIdleMax.
 		frac := float64(idle) / float64(watchIdleDecay)
 		d = time.Duration(float64(d)*(1-frac) + float64(watchIdleMax)*frac)
-	} else if idle >= watchIdleDecay {
+	} else if d < watchIdleMax && idle >= watchIdleDecay {
 		d = watchIdleMax
 	}
 	return refreshCooldownDelay(d)
@@ -740,8 +760,8 @@ func refreshDelay(n int, idle time.Duration) time.Duration {
 // scheduleRefresh returns a tea.Cmd that fires a refreshTickMsg after a delay
 // scaled by the number of results (reusing watch-mode intervals) and further
 // slowed by user inactivity.
-func scheduleRefresh(n, id int, idle time.Duration) tea.Cmd {
-	d := refreshDelay(n, idle)
+func scheduleRefresh(n, id int, idle time.Duration, override *time.Duration) tea.Cmd {
+	d := refreshDelay(n, idle, override)
 	return tea.Tick(d, func(time.Time) tea.Msg { return refreshTickMsg{id: id} })
 }
 
@@ -860,7 +880,12 @@ func (m *tuiModel) invalidateRefresh() { m.refreshID++ }
 func (m *tuiModel) rescheduleRefresh() tea.Cmd {
 	if m.autoRefresh {
 		m.invalidateRefresh()
-		return scheduleRefresh(len(m.items), m.refreshID, time.Since(m.lastInteraction))
+		return scheduleRefresh(
+			len(m.items),
+			m.refreshID,
+			time.Since(m.lastInteraction),
+			m.refreshIntervalOverride(),
+		)
 	}
 	return nil
 }
@@ -872,7 +897,13 @@ func (m *tuiModel) refreshOrReschedule() tea.Cmd {
 	if m.refreshing {
 		return nil
 	}
-	if time.Since(m.lastRefreshAt) >= refreshDelay(len(m.items), time.Since(m.lastInteraction)) {
+	if time.Since(
+		m.lastRefreshAt,
+	) >= refreshDelay(
+		len(m.items),
+		time.Since(m.lastInteraction),
+		m.refreshIntervalOverride(),
+	) {
 		m.invalidateRefresh()
 		return m.startRefresh(false)
 	}

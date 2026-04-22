@@ -107,7 +107,24 @@ func TestRateLimiterRespectsCooldownOverBaseInterval(t *testing.T) {
 
 	require.GreaterOrEqual(t, refreshCooldownDelay(5*time.Second), 11*time.Second)
 	require.GreaterOrEqual(t, watchInterval(0), 11*time.Second)
-	require.GreaterOrEqual(t, refreshDelay(0, 0), 11*time.Second)
+	require.GreaterOrEqual(t, refreshDelay(0, 0, nil), 11*time.Second)
+}
+
+func TestRefreshDelayRespectsInteractiveOverrideFloor(t *testing.T) {
+	override := 10 * time.Second
+	require.Equal(t, watchInterval(100), interactiveRefreshBaseDelay(100, &override))
+	require.Equal(t, refreshCooldownDelay(watchInterval(100)), refreshDelay(100, 0, &override))
+}
+
+func TestRefreshDelayRespectsInteractiveOverrideWhenAboveFloor(t *testing.T) {
+	override := 90 * time.Second
+	require.Equal(t, override, interactiveRefreshBaseDelay(5, &override))
+	require.Equal(t, refreshCooldownDelay(override), refreshDelay(5, 0, &override))
+}
+
+func TestRefreshDelayDoesNotShrinkLargeOverrideOnIdle(t *testing.T) {
+	override := 4 * time.Minute
+	require.Equal(t, refreshCooldownDelay(override), refreshDelay(5, watchIdleDecay, &override))
 }
 
 func TestRateLimiterDoesNotSerializeMutatingRequestsWhenSpacingDisabled(t *testing.T) {
