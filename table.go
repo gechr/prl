@@ -172,7 +172,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				if !ctx.Ansi.Terminal() {
 					return table.TextCell(am.Display)
 				}
-				color := ctx.AssignEntityColor(am.Login)
+				color := p.AssignEntityColor(am.Login)
 				style := lipgloss.NewStyle().Foreground(color)
 				if am.IsBot {
 					style = style.Faint(true)

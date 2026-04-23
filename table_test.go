@@ -459,6 +459,49 @@ func TestRender_AuthorColumn(t *testing.T) {
 	require.Equal(t, "alice", rt.Rows[0].Cells[0].Plain)
 }
 
+func TestRender_AuthorColumnPreservesColorAcrossRenderers(t *testing.T) {
+	p := New()
+	cli := &CLI{Columns: CSVFlag{Values: []string{"author"}}}
+
+	firstModels := testModelsFrom([]PullRequest{{
+		Number:     1,
+		Title:      "first",
+		URL:        "https://github.com/owner/repo/pull/1",
+		State:      "open",
+		Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"},
+		Author:     Author{Login: "alice"},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}}, "")
+	first := p.newTableRenderer(cli, true, 0, table.WithReverse(false)).Render(firstModels)
+
+	secondModels := testModelsFrom([]PullRequest{{
+		Number:     2,
+		Title:      "second",
+		URL:        "https://github.com/owner/repo/pull/2",
+		State:      "open",
+		Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"},
+		Author:     Author{Login: "bob"},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}, {
+		Number:     3,
+		Title:      "third",
+		URL:        "https://github.com/owner/repo/pull/3",
+		State:      "open",
+		Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"},
+		Author:     Author{Login: "alice"},
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
+	}}, "")
+	second := p.newTableRenderer(cli, true, 0, table.WithReverse(false)).Render(secondModels)
+
+	require.Equal(t, first.Rows[0].Cells[0].Text, second.Rows[1].Cells[0].Text)
+	require.NotEqual(t, second.Rows[0].Cells[0].Text, second.Rows[1].Cells[0].Text)
+	require.Equal(t, "alice", second.Rows[1].Cells[0].Plain)
+	require.Equal(t, "bob", second.Rows[0].Cells[0].Plain)
+}
+
 func TestRender_LabelsColumn(t *testing.T) {
 	prs := []PullRequest{{
 		Number:     1,

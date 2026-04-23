@@ -3,6 +3,7 @@ package main
 import (
 	"image/color"
 	"strings"
+	"sync"
 
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/clib/theme"
@@ -98,6 +99,10 @@ var (
 // prl holds shared dependencies for the application.
 type prl struct {
 	theme *theme.Theme
+
+	entityColorMu sync.Mutex
+	entityColors  map[string]int
+	nextColor     int
 }
 
 // New creates a new prl with the configured theme.
@@ -106,6 +111,7 @@ func New() *prl {
 		theme: theme.Default().With(
 			theme.WithEnumStyle(theme.EnumStyleHighlightBoth),
 		),
+		entityColors: make(map[string]int),
 	}
 }
 
@@ -117,6 +123,28 @@ func (p *prl) RenderDim(s string) string { return p.theme.Dim.Render(s) }
 
 // EntityColors returns the theme's entity color palette.
 func (p *prl) EntityColors() []color.Color { return p.theme.EntityColors }
+
+// AssignEntityColor returns a stable session-scoped color for the given key.
+func (p *prl) AssignEntityColor(key string) color.Color {
+	colors := p.EntityColors()
+	if len(colors) == 0 {
+		return nil
+	}
+
+	key = strings.ToLower(key)
+
+	p.entityColorMu.Lock()
+	defer p.entityColorMu.Unlock()
+
+	if idx, ok := p.entityColors[key]; ok {
+		return colors[idx]
+	}
+
+	idx := p.nextColor % len(colors)
+	p.entityColors[key] = idx
+	p.nextColor++
+	return colors[idx]
+}
 
 // prMergeStyle returns the lipgloss style for an open PR based on its merge readiness.
 func (p *prl) prMergeStyle(pr PullRequest) lg.Style {
