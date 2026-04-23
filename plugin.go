@@ -491,7 +491,7 @@ func filterSkippedPRs(prs []PullRequest, skipped []string) []PullRequest {
 	}
 	out := make([]PullRequest, 0, len(prs))
 	for _, pr := range prs {
-		if !skip[pr.URL] {
+		if !skip[pr.URL] && !skip[pr.Repository.NameWithOwner] {
 			out = append(out, pr)
 		}
 	}

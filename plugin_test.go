@@ -200,6 +200,40 @@ exit 1
 	require.EqualError(t, err, "plugin slack: plain failure output")
 }
 
+func TestFilterSkippedPRs(t *testing.T) {
+	prs := []PullRequest{
+		{URL: "https://github.com/org/alpha/pull/1", Repository: Repository{NameWithOwner: "org/alpha"}},
+		{URL: "https://github.com/org/alpha/pull/2", Repository: Repository{NameWithOwner: "org/alpha"}},
+		{URL: "https://github.com/org/beta/pull/3", Repository: Repository{NameWithOwner: "org/beta"}},
+		{URL: "https://github.com/org/gamma/pull/4", Repository: Repository{NameWithOwner: "org/gamma"}},
+	}
+
+	t.Run("no skipped", func(t *testing.T) {
+		got := filterSkippedPRs(prs, nil)
+		require.Equal(t, prs, got)
+	})
+
+	t.Run("skip by PR URL", func(t *testing.T) {
+		got := filterSkippedPRs(prs, []string{"https://github.com/org/alpha/pull/1"})
+		require.Len(t, got, 3)
+		require.Equal(t, "https://github.com/org/alpha/pull/2", got[0].URL)
+	})
+
+	t.Run("skip by repo name", func(t *testing.T) {
+		got := filterSkippedPRs(prs, []string{"org/alpha"})
+		require.Len(t, got, 2)
+		require.Equal(t, "https://github.com/org/beta/pull/3", got[0].URL)
+		require.Equal(t, "https://github.com/org/gamma/pull/4", got[1].URL)
+	})
+
+	t.Run("skip by repo and URL", func(t *testing.T) {
+		got := filterSkippedPRs(prs, []string{"org/beta", "https://github.com/org/gamma/pull/4"})
+		require.Len(t, got, 2)
+		require.Equal(t, "https://github.com/org/alpha/pull/1", got[0].URL)
+		require.Equal(t, "https://github.com/org/alpha/pull/2", got[1].URL)
+	})
+}
+
 func resetPluginCacheForTest(t *testing.T) {
 	t.Helper()
 
