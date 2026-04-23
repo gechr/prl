@@ -75,6 +75,107 @@ printf '{"channel":"#pull-requests"}\n'
 	require.Equal(t, "#pull-requests", result.Messages[0].Channel)
 }
 
+func TestPluginSlackParsesLineDelimitedJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+cat >/dev/null
+printf 'INFO posted\n'
+printf '{"channel":"#pull-requests","reactions":[":one:",":automerged:"]}\n'
+`)
+
+	result, err := (&Plugin{path: path}).Slack([]byte(`[]`), "")
+	require.NoError(t, err)
+	require.Len(t, result.Messages, 1)
+	require.Equal(t, "#pull-requests", result.Messages[0].Channel)
+	require.Equal(t, []string{":one:", ":automerged:"}, result.Messages[0].Reactions)
+}
+
+func TestParseSlackSendMessagesParsesArraySingleAndLines(t *testing.T) {
+	t.Run("array", func(t *testing.T) {
+		messages := parseSlackSendMessages(
+			[]byte(`[{"channel":"#a"},{"channel":"#b","reactions":["x"]}]`),
+			nil,
+		)
+		require.Len(t, messages, 2)
+		require.Equal(t, "#a", messages[0].Channel)
+		require.Equal(t, "#b", messages[1].Channel)
+		require.Equal(t, []string{"x"}, messages[1].Reactions)
+	})
+
+	t.Run("single", func(t *testing.T) {
+		messages := parseSlackSendMessages([]byte(`{"channel":"#a"}`), nil)
+		require.Equal(t, []slackSendMessage{{Channel: "#a"}}, messages)
+	})
+
+	t.Run("lines", func(t *testing.T) {
+		messages := parseSlackSendMessages(
+			[]byte("noise\n{\"channel\":\"#a\"}\n{\"reactions\":[\"x\"]}\n"),
+			[]string{"noise", `{"channel":"#a"}`, `{"reactions":["x"]}`},
+		)
+		require.Equal(
+			t,
+			[]slackSendMessage{{Channel: "#a"}, {Reactions: []string{"x"}}},
+			messages,
+		)
+	})
+}
+
+func TestClassifySlackRecipient(t *testing.T) {
+	tests := []struct {
+		name      string
+		recipient string
+		wantField string
+		wantVals  []string
+	}{
+		{name: "empty", recipient: "", wantField: "", wantVals: nil},
+		{
+			name:      "bare channel",
+			recipient: "pull-requests",
+			wantField: "channel",
+			wantVals:  []string{"#pull-requests"},
+		},
+		{
+			name:      "prefixed channel",
+			recipient: "#pull-requests",
+			wantField: "channel",
+			wantVals:  []string{"#pull-requests"},
+		},
+		{
+			name:      "channel id",
+			recipient: "C123456",
+			wantField: "channel",
+			wantVals:  []string{"C123456"},
+		},
+		{name: "user handle", recipient: "@alice", wantField: "user", wantVals: []string{"@alice"}},
+		{
+			name:      "email",
+			recipient: "alice@example.com",
+			wantField: "user",
+			wantVals:  []string{"alice@example.com"},
+		},
+		{
+			name:      "group dm emails",
+			recipient: "alice@example.com,bob@example.com",
+			wantField: "users",
+			wantVals:  []string{"alice@example.com", "bob@example.com"},
+		},
+		{
+			name:      "group dm handles",
+			recipient: "@alice, @bob",
+			wantField: "users",
+			wantVals:  []string{"@alice", "@bob"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotField, gotVals := classifySlackRecipient(tt.recipient)
+			require.Equal(t, tt.wantField, gotField)
+			require.Equal(t, tt.wantVals, gotVals)
+		})
+	}
+}
+
 func TestPluginSlackSurfacesStderrFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh

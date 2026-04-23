@@ -78,8 +78,8 @@ func TestNormalizeSendToRecipient(t *testing.T) {
 		recipient string
 		want      string
 	}{
-		{name: "bare channel", recipient: "eng-prs", want: "#eng-prs"},
-		{name: "channel", recipient: "#eng-prs", want: "#eng-prs"},
+		{name: "bare channel", recipient: "pull-requests", want: "#pull-requests"},
+		{name: "channel", recipient: "#pull-requests", want: "#pull-requests"},
 		{name: "user handle", recipient: "@alice", want: "@alice"},
 		{name: "email", recipient: "alice@example.com", want: "alice@example.com"},
 		{name: "channel id", recipient: "C123456", want: "C123456"},

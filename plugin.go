@@ -365,15 +365,8 @@ func (p *Plugin) Slack(prsJSON []byte, sendTo string) (slackSendResult, error) {
 
 	result.RawLines = parsePluginLines(output)
 
-	var messages []slackSendMessage
-	if err := json.Unmarshal(stdout.Bytes(), &messages); err == nil {
+	if messages := parseSlackSendMessages(stdout.Bytes(), result.RawLines); len(messages) > 0 {
 		result.Messages = messages
-		return result, nil
-	}
-
-	var single slackSendMessage
-	if err := json.Unmarshal(stdout.Bytes(), &single); err == nil {
-		result.Messages = []slackSendMessage{single}
 		return result, nil
 	}
 
@@ -381,6 +374,31 @@ func (p *Plugin) Slack(prsJSON []byte, sendTo string) (slackSendResult, error) {
 		Str("output", output).
 		Msg("Plugin slack returned non-JSON raw output")
 	return result, nil
+}
+
+func parseSlackSendMessages(stdout []byte, rawLines []string) []slackSendMessage {
+	var messages []slackSendMessage
+	if err := json.Unmarshal(stdout, &messages); err == nil {
+		return messages
+	}
+
+	var single slackSendMessage
+	if err := json.Unmarshal(stdout, &single); err == nil {
+		return []slackSendMessage{single}
+	}
+
+	for _, line := range rawLines {
+		var msg slackSendMessage
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			continue
+		}
+		if msg.Channel == "" && len(msg.Reactions) == 0 {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages
 }
 
 // pluginSlackSend marshals PRs as JSON and sends them to Slack via the plugin.
@@ -475,32 +493,39 @@ func addSlackPRFields(entry *clog.Event, prs []PullRequest) {
 }
 
 func addSlackRecipientFields(entry *clog.Event, recipient string) {
-	recipient = strings.TrimSpace(recipient)
-	if recipient == "" {
+	field, values := classifySlackRecipient(recipient)
+	if field == "" {
 		return
 	}
 
-	if strings.HasPrefix(recipient, "#") {
-		entry.Str("channel", recipient)
+	if len(values) == 1 {
+		entry.Str(field, values[0])
 		return
+	}
+
+	entry.Strs(field, values)
+}
+
+func classifySlackRecipient(recipient string) (string, []string) {
+	recipient = normalizeSendToRecipient(strings.TrimSpace(recipient))
+	if recipient == "" {
+		return "", nil
 	}
 
 	if strings.Contains(recipient, ",") {
 		parts := splitCSV(recipient)
 		if len(parts) > 1 {
-			entry.Strs("users", parts)
-			return
+			return "users", parts
 		}
 		if len(parts) == 1 {
-			addSlackRecipientFields(entry, parts[0])
-			return
+			return classifySlackRecipient(parts[0])
 		}
+		return "", nil
 	}
 
 	if strings.HasPrefix(recipient, "@") || strings.Contains(recipient, "@") {
-		entry.Str("user", recipient)
-		return
+		return "user", []string{recipient}
 	}
 
-	entry.Str("channel", recipient)
+	return "channel", []string{recipient}
 }
