@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -110,6 +111,22 @@ type CLI struct {
 
 // Validate checks for mutually exclusive options.
 func (c *CLI) Validate() error {
+	// Resolve "." to the current directory's GitHub remote owner/repo.
+	hasDotRepo := slices.Contains(c.Repo.Values, ".")
+	hasDotOwner := slices.Contains(c.Owner.Values, ".")
+	if hasDotRepo || hasDotOwner {
+		owner, repo, err := gitRemoteOwnerRepo()
+		if err != nil {
+			return err
+		}
+		if hasDotRepo {
+			c.Repo.Values = replaceValue(c.Repo.Values, ".", owner+"/"+repo)
+		}
+		if hasDotOwner {
+			c.Owner.Values = replaceValue(c.Owner.Values, ".", owner)
+		}
+	}
+
 	if c.Close && c.Approve {
 		return fmt.Errorf("--close and --approve are mutually exclusive")
 	}

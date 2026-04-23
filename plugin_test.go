@@ -202,10 +202,22 @@ exit 1
 
 func TestFilterSkippedPRs(t *testing.T) {
 	prs := []PullRequest{
-		{URL: "https://github.com/org/alpha/pull/1", Repository: Repository{NameWithOwner: "org/alpha"}},
-		{URL: "https://github.com/org/alpha/pull/2", Repository: Repository{NameWithOwner: "org/alpha"}},
-		{URL: "https://github.com/org/beta/pull/3", Repository: Repository{NameWithOwner: "org/beta"}},
-		{URL: "https://github.com/org/gamma/pull/4", Repository: Repository{NameWithOwner: "org/gamma"}},
+		{
+			URL:        "https://github.com/org/alpha/pull/1",
+			Repository: Repository{NameWithOwner: "org/alpha"},
+		},
+		{
+			URL:        "https://github.com/org/alpha/pull/2",
+			Repository: Repository{NameWithOwner: "org/alpha"},
+		},
+		{
+			URL:        "https://github.com/org/beta/pull/3",
+			Repository: Repository{NameWithOwner: "org/beta"},
+		},
+		{
+			URL:        "https://github.com/org/gamma/pull/4",
+			Repository: Repository{NameWithOwner: "org/gamma"},
+		},
 	}
 
 	t.Run("no skipped", func(t *testing.T) {
