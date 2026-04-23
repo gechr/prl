@@ -408,6 +408,7 @@ func applyMergeStatusResult(
 	nodeID string,
 	ciState string,
 	reviewDecision *string,
+	automergeLoaded bool,
 	automergeEnabled bool,
 ) {
 	indices, ok := openIdx[nodeID]
@@ -422,8 +423,10 @@ func applyMergeStatusResult(
 	status := resolveMergeStatus(ciState, reviewDecision)
 	for _, idx := range indices {
 		prs[idx].MergeStatus = status
-		prs[idx].Automerge = automergeEnabled
-		prs[idx].automergeLoaded = true
+		if automergeLoaded {
+			prs[idx].Automerge = automergeEnabled
+			prs[idx].automergeLoaded = true
+		}
 		prs[idx].ReviewDecision = review
 		prs[idx].reviewDecisionLoaded = true
 	}
@@ -451,7 +454,11 @@ func applyListAutomergeNodes(prs []PullRequest, ids []string, nodes []listAutome
 	}
 }
 
-func applyListMergeStatusNodes(prs []PullRequest, nodes []listMergeStatusNode) {
+func applyListMergeStatusNodes(
+	prs []PullRequest,
+	nodes []listMergeStatusNode,
+	includeAutomerge bool,
+) {
 	if len(nodes) == 0 {
 		return
 	}
@@ -477,6 +484,7 @@ func applyListMergeStatusNodes(prs []PullRequest, nodes []listMergeStatusNode) {
 			node.ID,
 			ciState,
 			node.ReviewDecision,
+			includeAutomerge,
 			node.AutomergeRequest != nil,
 		)
 	}
@@ -588,18 +596,23 @@ func hydrateListMetadata(
 
 	if len(mergeIDs) > 0 {
 		queryDefs = append(queryDefs, "$mergeIDs: [ID!]!")
-		queryRoots = append(queryRoots, `mergeNodes: nodes(ids: $mergeIDs) {
-			... on PullRequest {
-				id
-				reviewDecision
-				autoMergeRequest { enabledAt }
-				commits(last: 1) {
-					nodes {
-						commit {
-							statusCheckRollup { state }
-						}
+		mergeFields := []string{
+			"id",
+			"reviewDecision",
+			`commits(last: 1) {
+				nodes {
+					commit {
+						statusCheckRollup { state }
 					}
 				}
+			}`,
+		}
+		if req.automerge {
+			mergeFields = append(mergeFields, "autoMergeRequest { enabledAt }")
+		}
+		queryRoots = append(queryRoots, `mergeNodes: nodes(ids: $mergeIDs) {
+			... on PullRequest {
+				`+strings.Join(mergeFields, nl)+`
 			}
 		}`)
 		variables["mergeIDs"] = mergeIDs
@@ -630,7 +643,7 @@ func hydrateListMetadata(
 	}
 
 	applyListAutomergeNodes(prs, automergeIDs, result.AutomergeNodes)
-	applyListMergeStatusNodes(prs, result.MergeNodes)
+	applyListMergeStatusNodes(prs, result.MergeNodes, req.automerge)
 
 	return timelineActorsFromNodes(result.TimelineNodes), nil
 }

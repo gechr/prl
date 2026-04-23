@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -259,6 +260,69 @@ func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
 
 	require.Equal(t, "alice", actors.closed["PR_1"])
 	require.Equal(t, "bob", actors.merged["PR_2"])
+}
+
+func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {
+	t.Helper()
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+
+		body := readBody(t, req.Body)
+		var got struct {
+			Query     string              `json:"query"`
+			Variables map[string][]string `json:"variables"`
+		}
+		err := json.Unmarshal([]byte(body), &got)
+		require.NoError(t, err)
+		require.Equal(t, `query ListMetadata($mergeIDs: [ID!]!) {
+			mergeNodes: nodes(ids: $mergeIDs) {
+			... on PullRequest {
+				id
+reviewDecision
+commits(last: 1) {
+				nodes {
+					commit {
+						statusCheckRollup { state }
+					}
+				}
+			}
+			}
+		}
+		}`, got.Query)
+		require.Equal(t, map[string][]string{"mergeIDs": {"PR_1"}}, got.Variables)
+
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{
+				"mergeNodes":[
+					{"id":"PR_1","reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
+				]
+			}}`,
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{
+		{NodeID: "PR_1", State: valueOpen},
+	}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{
+		mergeStatus: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, MergeStatusReady, prs[0].MergeStatus)
+	require.False(t, prs[0].Automerge)
+	require.False(t, prs[0].automergeLoaded)
+	require.Equal(t, valueReviewApproved, prs[0].ReviewDecision)
+	require.True(t, prs[0].reviewDecisionLoaded)
 }
 
 func TestSortPRs(t *testing.T) {
