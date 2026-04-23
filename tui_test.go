@@ -2216,6 +2216,49 @@ func TestRefreshResultCompletesSilently(t *testing.T) {
 	require.False(t, bm.flash.Active())
 }
 
+func TestHeadValidationMsgStartsRefreshWhenChanged(t *testing.T) {
+	m := tuiModel{
+		view:        tuiViewList,
+		styles:      newTuiStyles(),
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+		cli:         testCLI(),
+		queryGen:    2,
+		autoRefresh: true,
+	}
+
+	model, cmd := m.Update(headValidationMsg{
+		changed:  true,
+		queryGen: 2,
+	})
+
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.True(t, bm.refreshing)
+	require.Equal(t, 3, bm.queryGen)
+}
+
+func TestHeadValidationMsgIgnoredWhenStale(t *testing.T) {
+	m := tuiModel{
+		view:     tuiViewList,
+		queryGen: 2,
+	}
+
+	model, cmd := m.Update(headValidationMsg{
+		changed:  true,
+		queryGen: 1,
+	})
+
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.False(t, bm.refreshing)
+	require.Equal(t, 2, bm.queryGen)
+}
+
 func TestApplyTUIFilterDefaultsSetsNonExplicitFields(t *testing.T) {
 	cli := &CLI{}
 	cli.Normalize(&Config{

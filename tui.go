@@ -395,6 +395,12 @@ type refreshResultMsg struct {
 	queryGen int // refresh request generation; stale completions are discarded
 }
 
+type headValidationMsg struct {
+	changed  bool
+	err      error
+	queryGen int
+}
+
 // tuiModel is the Bubble Tea model for the interactive TUI.
 //
 //nolint:recvcheck // selection helpers use pointer receivers to mutate maps/fields in-place
@@ -776,6 +782,14 @@ func (m tuiModel) scheduleSpinnerTick() tea.Cmd {
 	return scheduleTick(m.spinner.interval, spinnerTickMsg{id: m.queryGen})
 }
 
+func prItems(items []PRRowModel) []PullRequest {
+	prs := make([]PullRequest, len(items))
+	for i, item := range items {
+		prs[i] = item.PR
+	}
+	return prs
+}
+
 func (m tuiModel) scheduleScreenCheck() tea.Cmd {
 	return scheduleTick(tuiScreenCheckInt, screenCheckMsg{})
 }
@@ -875,6 +889,21 @@ func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
 			return result
 		},
 	)
+}
+
+func (m *tuiModel) startHeadValidation(items []PRRowModel) tea.Cmd {
+	if m.actions == nil || m.actions.gql == nil || m.metadataCache == nil || len(items) == 0 {
+		return nil
+	}
+
+	prs := prItems(items)
+	queryGen := m.queryGen
+	gql := m.actions.gql
+	cache := m.metadataCache
+	return func() tea.Msg {
+		changed, err := validateCachedHeads(gql, prs, cache)
+		return headValidationMsg{changed: changed, err: err, queryGen: queryGen}
+	}
 }
 
 func (m *tuiModel) invalidateRefresh() { m.refreshID++ }
@@ -1263,7 +1292,21 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-render header with current sort state; the background
 		// goroutine may have captured a stale sortColumn/sortAsc.
 		m.header, _, m.colWidths = m.rerender()
-		return m, m.rescheduleRefresh()
+		return m, tea.Batch(m.rescheduleRefresh(), m.startHeadValidation(msg.items))
+
+	case headValidationMsg:
+		if msg.queryGen != m.queryGen {
+			return m, nil
+		}
+		if msg.err != nil {
+			clog.Debug().Err(msg.err).Msg("Head validation failed")
+			return m, nil
+		}
+		if msg.changed && !m.refreshing && m.view == tuiViewList {
+			m.invalidateRefresh()
+			return m, m.startRefresh(false)
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		m.touchInteraction()
