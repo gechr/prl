@@ -106,6 +106,7 @@ func run() error {
 	}
 
 	// Configure logging and color
+	clog.SetSliceSeparator(" ")
 	clog.SetVerbose(cli.Verbose)
 	symbols := clog.DefaultSymbols()
 	symbols[clog.LevelInfo] = "✅"
@@ -899,7 +900,7 @@ func runOnce(
 		}
 	}
 
-	if cli.HasAction() || cli.Clone {
+	if cli.HasAction() || cli.Clone || cli.Send {
 		return "", nil
 	}
 	return output, nil

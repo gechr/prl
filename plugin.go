@@ -33,6 +33,7 @@ type Plugin struct {
 type slackSendMessage struct {
 	Channel   string   `json:"channel"`
 	Reactions []string `json:"reactions,omitempty"`
+	Skipped   []string `json:"skipped,omitempty"`
 }
 
 type slackSendResult struct {
@@ -444,14 +445,15 @@ func logSlackSend(prs []PullRequest, sendTo string, result slackSendResult) {
 	}
 
 	if len(result.Messages) == 1 {
-		logSlackSendMessage(prs, result.Messages[0])
+		logSlackSendMessage(filterSkippedPRs(prs, result.Messages[0].Skipped), result.Messages[0])
 		return
 	}
 
 	if len(result.Messages) > 1 {
 		for _, msg := range result.Messages {
-			entry := clog.Info().Int("total", len(prs))
-			addSlackPRFields(entry, prs)
+			sent := filterSkippedPRs(prs, msg.Skipped)
+			entry := clog.Info().Int("total", len(sent))
+			addSlackPRFields(entry, sent)
 			addSlackRecipientFields(entry, msg.Channel)
 			if len(msg.Reactions) > 0 {
 				entry.Strs("reactions", msg.Reactions)
@@ -479,17 +481,34 @@ func logSlackSendMessage(prs []PullRequest, msg slackSendMessage) {
 	entry.Msg("Sent to Slack")
 }
 
+func filterSkippedPRs(prs []PullRequest, skipped []string) []PullRequest {
+	if len(skipped) == 0 {
+		return prs
+	}
+	skip := make(map[string]bool, len(skipped))
+	for _, u := range skipped {
+		skip[u] = true
+	}
+	out := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if !skip[pr.URL] {
+			out = append(out, pr)
+		}
+	}
+	return out
+}
+
 func addSlackPRFields(entry *clog.Event, prs []PullRequest) {
 	if len(prs) == 1 {
 		entry.Link("pr", prs[0].URL, prs[0].Ref())
 		return
 	}
 
-	refs := make([]string, 0, len(prs))
+	links := make([]clog.Link, 0, len(prs))
 	for _, pr := range prs {
-		refs = append(refs, pr.Ref())
+		links = append(links, clog.Link{URL: pr.URL, Text: pr.Ref()})
 	}
-	entry.Strs("prs", refs)
+	entry.Links("prs", links)
 }
 
 func addSlackRecipientFields(entry *clog.Event, recipient string) {
