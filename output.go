@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
@@ -13,6 +15,142 @@ import (
 type timelineActors struct {
 	closed map[string]string
 	merged map[string]string
+}
+
+func newTimelineActors() timelineActors {
+	return timelineActors{
+		closed: map[string]string{},
+		merged: map[string]string{},
+	}
+}
+
+type listMetadataCacheKey struct {
+	nodeID    string
+	updatedAt time.Time
+}
+
+type listMetadataCacheEntry struct {
+	mergeStatus       MergeStatus
+	mergeStatusLoaded bool
+	automerge         bool
+	automergeLoaded   bool
+	reviewDecision    string
+	reviewLoaded      bool
+	closedActor       string
+	closedActorLoaded bool
+	mergedActor       string
+	mergedActorLoaded bool
+}
+
+type listMetadataCache struct {
+	entries map[listMetadataCacheKey]listMetadataCacheEntry
+}
+
+func newListMetadataCache() *listMetadataCache {
+	return &listMetadataCache{entries: make(map[listMetadataCacheKey]listMetadataCacheEntry)}
+}
+
+func listMetadataKey(pr PullRequest) (listMetadataCacheKey, bool) {
+	if pr.NodeID == "" {
+		return listMetadataCacheKey{}, false
+	}
+	return listMetadataCacheKey{nodeID: pr.NodeID, updatedAt: pr.UpdatedAt}, true
+}
+
+func (c *listMetadataCache) apply(
+	pr *PullRequest,
+	req listMetadataRequest,
+	actors *timelineActors,
+) bool {
+	if c == nil || pr == nil {
+		return false
+	}
+
+	key, ok := listMetadataKey(*pr)
+	if !ok {
+		return false
+	}
+	entry, ok := c.entries[key]
+	if !ok {
+		return false
+	}
+
+	if req.timelineClosed {
+		if !entry.closedActorLoaded {
+			return false
+		}
+		actors.closed[pr.NodeID] = entry.closedActor
+	}
+	if req.timelineMerged {
+		if !entry.mergedActorLoaded {
+			return false
+		}
+		actors.merged[pr.NodeID] = entry.mergedActor
+	}
+	if req.mergeStatus && pr.State == valueOpen {
+		if !entry.mergeStatusLoaded || !entry.reviewLoaded {
+			return false
+		}
+		pr.MergeStatus = entry.mergeStatus
+		pr.ReviewDecision = entry.reviewDecision
+		pr.reviewDecisionLoaded = true
+		if req.automerge {
+			if !entry.automergeLoaded {
+				return false
+			}
+			pr.Automerge = entry.automerge
+			pr.automergeLoaded = true
+		}
+	}
+	if req.automerge && (!req.mergeStatus || pr.State != valueOpen) {
+		if !entry.automergeLoaded {
+			return false
+		}
+		pr.Automerge = entry.automerge
+		pr.automergeLoaded = true
+	}
+	return true
+}
+
+func (c *listMetadataCache) store(
+	pr PullRequest,
+	req listMetadataRequest,
+	actors timelineActors,
+) {
+	if c == nil {
+		return
+	}
+
+	key, ok := listMetadataKey(pr)
+	if !ok {
+		return
+	}
+
+	entry := c.entries[key]
+	if req.timelineClosed {
+		entry.closedActor = actors.closed[pr.NodeID]
+		entry.closedActorLoaded = true
+	}
+	if req.timelineMerged {
+		entry.mergedActor = actors.merged[pr.NodeID]
+		entry.mergedActorLoaded = true
+	}
+	if req.mergeStatus && pr.State == valueOpen {
+		entry.mergeStatus = pr.MergeStatus
+		entry.mergeStatusLoaded = true
+		entry.reviewDecision = pr.ReviewDecision
+		entry.reviewLoaded = pr.reviewDecisionLoaded
+	}
+	if req.automerge && (pr.State != valueOpen || !req.mergeStatus) {
+		entry.automerge = pr.Automerge
+		entry.automergeLoaded = pr.automergeLoaded
+	}
+	if req.automerge && req.mergeStatus && pr.State == valueOpen && pr.automergeLoaded {
+		entry.automerge = pr.Automerge
+		entry.automergeLoaded = true
+	}
+
+	c.entries[key] = entry
 }
 
 // applyFilters applies local filters (bots, drift) and sorts PRs.
@@ -514,10 +652,7 @@ func hydrateListMetadata(
 	req listMetadataRequest,
 ) (timelineActors, error) {
 	if len(prs) == 0 {
-		return timelineActors{
-			closed: map[string]string{},
-			merged: map[string]string{},
-		}, nil
+		return newTimelineActors(), nil
 	}
 
 	timelineIDs := []string{}
@@ -619,10 +754,7 @@ func hydrateListMetadata(
 	}
 
 	if len(queryRoots) == 0 {
-		return timelineActors{
-			closed: map[string]string{},
-			merged: map[string]string{},
-		}, nil
+		return newTimelineActors(), nil
 	}
 
 	var result struct {
@@ -646,6 +778,47 @@ func hydrateListMetadata(
 	applyListMergeStatusNodes(prs, result.MergeNodes, req.automerge)
 
 	return timelineActorsFromNodes(result.TimelineNodes), nil
+}
+
+func hydrateListMetadataCached(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	req listMetadataRequest,
+	cache *listMetadataCache,
+) (timelineActors, error) {
+	if cache == nil || len(prs) == 0 {
+		return hydrateListMetadata(gql, prs, req)
+	}
+
+	actors := newTimelineActors()
+	missingPRs := make([]PullRequest, 0, len(prs))
+	missingIdx := make([]int, 0, len(prs))
+
+	for i := range prs {
+		if cache.apply(&prs[i], req, &actors) {
+			continue
+		}
+		missingPRs = append(missingPRs, prs[i])
+		missingIdx = append(missingIdx, i)
+	}
+
+	if len(missingPRs) == 0 {
+		return actors, nil
+	}
+
+	freshActors, err := hydrateListMetadata(gql, missingPRs, req)
+	if err != nil {
+		return timelineActors{}, err
+	}
+
+	for i, idx := range missingIdx {
+		prs[idx] = missingPRs[i]
+		cache.store(prs[idx], req, freshActors)
+	}
+	maps.Copy(actors.closed, freshActors.closed)
+	maps.Copy(actors.merged, freshActors.merged)
+
+	return actors, nil
 }
 
 func filterByTimelineActorsLoaded(

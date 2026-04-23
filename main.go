@@ -353,8 +353,9 @@ func runWatch(
 		prs    []PullRequest
 		err    error
 	}
+	cache := newListMetadataCache()
 	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
-		out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params)
+		out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params, cache)
 		return fetchResult{out, prs, fErr}
 	})
 
@@ -385,7 +386,7 @@ func runWatch(
 	results := make(chan fetchResult, 1)
 	fetch := func() {
 		go func() {
-			out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params)
+			out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params, cache)
 			results <- fetchResult{out, prs, fErr}
 		}()
 	}
@@ -475,6 +476,7 @@ func applyListMetadata(
 	needMergeStatus bool,
 	closedAllowed map[string]bool,
 	mergedAllowed map[string]bool,
+	cache *listMetadataCache,
 ) ([]PullRequest, error) {
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
 	if !needTimeline && !needMergeStatus && !needAutomerge {
@@ -490,12 +492,12 @@ func applyListMetadata(
 		return prs, nil
 	}
 
-	actors, err := hydrateListMetadata(g, prs, listMetadataRequest{
+	actors, err := hydrateListMetadataCached(g, prs, listMetadataRequest{
 		automerge:      needAutomerge,
 		mergeStatus:    needMergeStatus,
 		timelineClosed: len(closedAllowed) > 0,
 		timelineMerged: len(mergedAllowed) > 0,
-	})
+	}, cache)
 	if err != nil {
 		if cli.Merge != nil || needTimeline {
 			return nil, err
@@ -522,6 +524,7 @@ func buildOutput(
 	cfg *Config,
 	tty bool,
 	params *SearchParams,
+	cache *listMetadataCache,
 ) (string, []PullRequest, error) {
 	// Execute search
 	prs, err := executeSearch(rest, params)
@@ -575,6 +578,7 @@ func buildOutput(
 		needMergeStatus,
 		closedAllowed,
 		mergedAllowed,
+		cache,
 	)
 	if err != nil {
 		return "", nil, err
@@ -710,6 +714,7 @@ func runOnce(
 		needMergeStatus,
 		closedAllowed,
 		mergedAllowed,
+		nil,
 	)
 	if err != nil {
 		return "", err

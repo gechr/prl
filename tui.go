@@ -484,13 +484,14 @@ type tuiModel struct {
 	login string
 
 	// Retained for re-rendering the table on resize and background refresh.
-	p        *prl
-	cli      *CLI
-	cfg      *Config
-	tty      bool
-	resolver *AuthorResolver
-	rest     *api.RESTClient
-	params   *SearchParams
+	p             *prl
+	cli           *CLI
+	cfg           *Config
+	tty           bool
+	resolver      *AuthorResolver
+	rest          *api.RESTClient
+	params        *SearchParams
+	metadataCache *listMetadataCache
 }
 
 // isCurrentUserPR reports whether the given PR was authored by the authenticated user.
@@ -569,6 +570,7 @@ type refreshSnapshot struct {
 	rest     *api.RESTClient
 	params   *SearchParams
 	width    int
+	cache    *listMetadataCache
 }
 
 func newRefreshSnapshot(m tuiModel) refreshSnapshot {
@@ -586,6 +588,7 @@ func newRefreshSnapshot(m tuiModel) refreshSnapshot {
 		rest:     m.rest,
 		params:   cloneSearchParams(m.params),
 		width:    m.width,
+		cache:    m.metadataCache,
 	}
 }
 
@@ -625,11 +628,11 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 
 	if len(prs) > 0 && (needTimeline || needMergeStatus) {
 		if r.gql != nil {
-			actors, hydrateErr := hydrateListMetadata(r.gql, prs, listMetadataRequest{
+			actors, hydrateErr := hydrateListMetadataCached(r.gql, prs, listMetadataRequest{
 				mergeStatus:    needMergeStatus,
 				timelineClosed: len(closedAllowed) > 0,
 				timelineMerged: len(mergedAllowed) > 0,
-			})
+			}, r.cache)
 			if hydrateErr != nil {
 				clog.Debug().Err(hydrateErr).Msg("list metadata hydration failed")
 			} else if needTimeline {
@@ -2923,9 +2926,11 @@ func runTui(
 		items     []PRRowModel
 		header    string
 		colWidths []int
+		cache     *listMetadataCache
 		err       error
 	}
 	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
+		cache := newListMetadataCache()
 		snapshot := refreshSnapshot{
 			cli:      cli,
 			cfg:      cfg,
@@ -2936,15 +2941,18 @@ func runTui(
 			rest:     rest,
 			params:   params,
 			width:    term.Width(os.Stdout),
+			cache:    cache,
 		}
 		items, searchErr := snapshot.fetchAndBuild()
 		if searchErr != nil {
-			return fetchResult{err: searchErr}
+			return fetchResult{err: searchErr, cache: cache}
 		}
 		initWidth := max(0, snapshot.width-tuiListPrefixWidth(len(items)))
 		renderer := p.newTableRenderer(cli, tty, initWidth, table.WithShowIndex(false))
 		header, rows, colWidths := renderTUITable(renderer, items, "", false, initWidth)
-		return fetchResult{rows: rows, items: items, header: header, colWidths: colWidths}
+		return fetchResult{
+			rows: rows, items: items, header: header, colWidths: colWidths, cache: cache,
+		}
 	})
 
 	if r.err != nil {
@@ -2992,6 +3000,7 @@ func runTui(
 		resolver:        resolver,
 		rest:            rest,
 		params:          params,
+		metadataCache:   r.cache,
 	}
 
 	// Apply persisted sort settings.

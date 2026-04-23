@@ -325,6 +325,109 @@ commits(last: 1) {
 	require.True(t, prs[0].reviewDecisionLoaded)
 }
 
+func TestHydrateListMetadataCachedReusesUnchangedPRMetadata(t *testing.T) {
+	t.Helper()
+
+	var calls int
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		calls++
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{
+				"mergeNodes":[
+					{"id":"PR_1","reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
+				]
+			}}`,
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	updatedAt := time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC)
+	req := listMetadataRequest{mergeStatus: true}
+	cache := newListMetadataCache()
+
+	prs := []PullRequest{{NodeID: "PR_1", State: valueOpen, UpdatedAt: updatedAt}}
+	_, err = hydrateListMetadataCached(gql, prs, req, cache)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Equal(t, MergeStatusReady, prs[0].MergeStatus)
+
+	prs = []PullRequest{{NodeID: "PR_1", State: valueOpen, UpdatedAt: updatedAt}}
+	_, err = hydrateListMetadataCached(gql, prs, req, cache)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Equal(t, MergeStatusReady, prs[0].MergeStatus)
+	require.Equal(t, valueReviewApproved, prs[0].ReviewDecision)
+	require.True(t, prs[0].reviewDecisionLoaded)
+}
+
+func TestHydrateListMetadataCachedRefetchesWhenPRUpdatedAtChanges(t *testing.T) {
+	t.Helper()
+
+	var calls int
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		calls++
+
+		state := "SUCCESS"
+		if calls > 1 {
+			state = "PENDING"
+		}
+
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{
+				"mergeNodes":[
+					{"id":"PR_1","reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"`+state+`"}}}]}}
+				]
+			}}`,
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	req := listMetadataRequest{mergeStatus: true}
+	cache := newListMetadataCache()
+
+	prs := []PullRequest{
+		{
+			NodeID:    "PR_1",
+			State:     valueOpen,
+			UpdatedAt: time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	_, err = hydrateListMetadataCached(gql, prs, req, cache)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Equal(t, MergeStatusReady, prs[0].MergeStatus)
+
+	prs = []PullRequest{
+		{
+			NodeID:    "PR_1",
+			State:     valueOpen,
+			UpdatedAt: time.Date(2026, 4, 23, 12, 1, 0, 0, time.UTC),
+		},
+	}
+	_, err = hydrateListMetadataCached(gql, prs, req, cache)
+	require.NoError(t, err)
+	require.Equal(t, 2, calls)
+	require.Equal(t, MergeStatusCIPending, prs[0].MergeStatus)
+}
+
 func TestSortPRs(t *testing.T) {
 	now := time.Now().UTC()
 	prs := []PullRequest{
