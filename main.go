@@ -199,6 +199,7 @@ func run() error {
 			return fmt.Errorf("--interactive requires a TTY")
 		}
 		cli.setOutput(valueTable)
+		clog.SetLevel(clog.LevelFatal) // TUI manages its own notifications
 		return runTui(prl, rest, &cli, cfg, tty, params, s)
 	}
 
