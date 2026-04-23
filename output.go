@@ -452,6 +452,42 @@ type listMetadataRequest struct {
 	timelineMerged bool
 }
 
+func buildTimelineRoot(req listMetadataRequest) string {
+	var fields []string
+	if req.timelineClosed {
+		fields = append(
+			fields,
+			`closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}}`,
+		)
+	}
+	if req.timelineMerged {
+		fields = append(
+			fields,
+			`merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}`,
+		)
+	}
+	return `timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id ` + strings.Join(
+		fields,
+		" ",
+	) + `}}`
+}
+
+func buildAutomergeRoot() string {
+	return `automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}}`
+}
+
+func buildMergeStatusRoot(includeAutomerge bool) string {
+	fields := []string{
+		"id",
+		"reviewDecision",
+		"commits(last:1){nodes{commit{statusCheckRollup{state}}}}",
+	}
+	if includeAutomerge {
+		fields = append(fields, "autoMergeRequest{enabledAt}")
+	}
+	return `mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{` + strings.Join(fields, " ") + `}}`
+}
+
 type listTimelineNode struct {
 	ID     string `json:"id"`
 	Closed struct {
@@ -687,69 +723,19 @@ func hydrateListMetadata(
 
 	if len(timelineIDs) > 0 {
 		queryDefs = append(queryDefs, "$timelineIDs: [ID!]!")
-		var fields []string
-		if req.timelineClosed {
-			fields = append(fields, `closed: timelineItems(itemTypes: [CLOSED_EVENT], last: 1) {
-				nodes {
-					... on ClosedEvent {
-						actor { login }
-					}
-				}
-			}`)
-		}
-		if req.timelineMerged {
-			fields = append(fields, `merged: timelineItems(itemTypes: [MERGED_EVENT], last: 1) {
-				nodes {
-					... on MergedEvent {
-						actor { login }
-					}
-				}
-			}`)
-		}
-		queryRoots = append(
-			queryRoots,
-			fmt.Sprintf(`timelineNodes: nodes(ids: $timelineIDs) {
-				... on PullRequest {
-					id
-					%s
-				}
-			}`, strings.Join(fields, nl)),
-		)
+		queryRoots = append(queryRoots, buildTimelineRoot(req))
 		variables["timelineIDs"] = timelineIDs
 	}
 
 	if len(automergeIDs) > 0 {
 		queryDefs = append(queryDefs, "$automergeIDs: [ID!]!")
-		queryRoots = append(queryRoots, `automergeNodes: nodes(ids: $automergeIDs) {
-			... on PullRequest {
-				id
-				autoMergeRequest { enabledAt }
-			}
-		}`)
+		queryRoots = append(queryRoots, buildAutomergeRoot())
 		variables["automergeIDs"] = automergeIDs
 	}
 
 	if len(mergeIDs) > 0 {
 		queryDefs = append(queryDefs, "$mergeIDs: [ID!]!")
-		mergeFields := []string{
-			"id",
-			"reviewDecision",
-			`commits(last: 1) {
-				nodes {
-					commit {
-						statusCheckRollup { state }
-					}
-				}
-			}`,
-		}
-		if req.automerge {
-			mergeFields = append(mergeFields, "autoMergeRequest { enabledAt }")
-		}
-		queryRoots = append(queryRoots, `mergeNodes: nodes(ids: $mergeIDs) {
-			... on PullRequest {
-				`+strings.Join(mergeFields, nl)+`
-			}
-		}`)
+		queryRoots = append(queryRoots, buildMergeStatusRoot(req.automerge))
 		variables["mergeIDs"] = mergeIDs
 	}
 
@@ -764,11 +750,9 @@ func hydrateListMetadata(
 	}
 
 	query := fmt.Sprintf(
-		`query ListMetadata(%s) {
-			%s
-		}`,
+		`query ListMetadata(%s){%s}`,
 		strings.Join(queryDefs, ", "),
-		strings.Join(queryRoots, nl),
+		strings.Join(queryRoots, " "),
 	)
 	if err := gql.Do(query, variables, &result); err != nil {
 		return timelineActors{}, fmt.Errorf("querying list metadata: %w", err)

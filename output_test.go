@@ -207,9 +207,26 @@ func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
 		calls++
 
 		body := readBody(t, req.Body)
-		require.Contains(t, body, "timelineNodes: nodes")
-		require.Contains(t, body, "automergeNodes: nodes")
-		require.Contains(t, body, "mergeNodes: nodes")
+		var got struct {
+			Query     string              `json:"query"`
+			Variables map[string][]string `json:"variables"`
+		}
+		err := json.Unmarshal([]byte(body), &got)
+		require.NoError(t, err)
+		require.Equal(
+			t,
+			`query ListMetadata($timelineIDs: [ID!]!, $automergeIDs: [ID!]!, $mergeIDs: [ID!]!){timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}} merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}}} automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}} mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}} autoMergeRequest{enabledAt}}}}`,
+			got.Query,
+		)
+		require.Equal(
+			t,
+			map[string][]string{
+				"timelineIDs":  {"PR_1", "PR_2"},
+				"automergeIDs": {"PR_2"},
+				"mergeIDs":     {"PR_1"},
+			},
+			got.Variables,
+		)
 
 		return jsonResponse(
 			req,
@@ -275,21 +292,11 @@ func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {
 		}
 		err := json.Unmarshal([]byte(body), &got)
 		require.NoError(t, err)
-		require.Equal(t, `query ListMetadata($mergeIDs: [ID!]!) {
-			mergeNodes: nodes(ids: $mergeIDs) {
-			... on PullRequest {
-				id
-reviewDecision
-commits(last: 1) {
-				nodes {
-					commit {
-						statusCheckRollup { state }
-					}
-				}
-			}
-			}
-		}
-		}`, got.Query)
+		require.Equal(
+			t,
+			`query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}`,
+			got.Query,
+		)
 		require.Equal(t, map[string][]string{"mergeIDs": {"PR_1"}}, got.Variables)
 
 		return jsonResponse(
