@@ -160,7 +160,7 @@ func parseOutputFormat(s string) (OutputFormat, bool) {
 		return OutputURL, true
 	case "bullet", "b":
 		return OutputBullet, true
-	case "json", "j":
+	case outputJSON, "j":
 		return OutputJSON, true
 	case valueRepo, "r":
 		return OutputRepo, true
@@ -178,7 +178,7 @@ func (f OutputFormat) String() string {
 	case OutputBullet:
 		return "bullet"
 	case OutputJSON:
-		return "json"
+		return outputJSON
 	case OutputRepo:
 		return valueRepo
 	default:

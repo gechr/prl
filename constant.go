@@ -35,6 +35,11 @@ const (
 	copilotReviewer = "copilot-pull-request-reviewer[bot]"
 )
 
+// Output format string values.
+const (
+	outputJSON = "json"
+)
+
 // GitHub API status values.
 const (
 	valueCIError         = "ERROR"

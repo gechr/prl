@@ -354,8 +354,14 @@ func runWatch(
 		err    error
 	}
 	cache := newListMetadataCache()
+	initialCLI := cli
+	initialFetchDeferred := shouldDeferInitialWatchEnrichment(cli, tty)
+	if initialFetchDeferred {
+		initialCLI = cloneCLI(cli)
+		initialCLI.Quick = true
+	}
 	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
-		out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params, cache)
+		out, prs, fErr := buildOutput(p, rest, initialCLI, cfg, tty, params, cache)
 		return fetchResult{out, prs, fErr}
 	})
 
@@ -409,6 +415,11 @@ func runWatch(
 	}
 	interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
 	nextFetchAt = time.Now().Add(interval)
+	if initialFetchDeferred {
+		fetching = true
+		nextFetchAt = time.Time{}
+		fetch()
+	}
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -466,6 +477,22 @@ func runWatch(
 	}
 
 	return nil
+}
+
+func shouldDeferInitialWatchEnrichment(cli *CLI, tty bool) bool {
+	if cli == nil || !tty {
+		return false
+	}
+	if cli.Quick || cli.OutputFormat() != OutputTable {
+		return false
+	}
+	if cli.PRState() == StateReady || cli.CIStatus() != CINone {
+		return false
+	}
+	if len(cli.ClosedBy.Values) > 0 || len(cli.MergedBy.Values) > 0 {
+		return false
+	}
+	return true
 }
 
 func applyListMetadata(
