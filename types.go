@@ -110,6 +110,7 @@ type PullRequest struct {
 	MergeStatus    MergeStatus `json:"mergeStatus"`
 	NodeID         string      `json:"-"`
 	Number         int         `json:"number"`
+	HeadSHA        string      `json:"-"`
 	ReviewDecision string      `json:"-"`
 	Repository     Repository  `json:"repository"`
 	State          string      `json:"state"`

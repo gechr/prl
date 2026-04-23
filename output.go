@@ -6,6 +6,7 @@ import (
 	"maps"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
@@ -30,6 +31,7 @@ type listMetadataCacheKey struct {
 }
 
 type listMetadataCacheEntry struct {
+	headSHA           string
 	mergeStatus       MergeStatus
 	mergeStatusLoaded bool
 	automerge         bool
@@ -43,6 +45,7 @@ type listMetadataCacheEntry struct {
 }
 
 type listMetadataCache struct {
+	mu      sync.Mutex
 	entries map[listMetadataCacheKey]listMetadataCacheEntry
 }
 
@@ -65,6 +68,9 @@ func (c *listMetadataCache) apply(
 	if c == nil || pr == nil {
 		return false
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	key, ok := listMetadataKey(*pr)
 	if !ok {
@@ -112,6 +118,66 @@ func (c *listMetadataCache) apply(
 	return true
 }
 
+func (c *listMetadataCache) pendingHeadChecks(prs []PullRequest) []string {
+	if c == nil || len(prs) == 0 {
+		return nil
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ids := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		if pr.State != valueOpen || pr.NodeID == "" {
+			continue
+		}
+		key, ok := listMetadataKey(pr)
+		if !ok {
+			continue
+		}
+		entry, ok := c.entries[key]
+		if !ok || entry.headSHA == "" {
+			continue
+		}
+		ids = append(ids, pr.NodeID)
+	}
+	return ids
+}
+
+func (c *listMetadataCache) invalidateHeadMismatches(
+	prs []PullRequest,
+	heads map[string]string,
+) bool {
+	if c == nil || len(prs) == 0 || len(heads) == 0 {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	changed := false
+	for _, pr := range prs {
+		if pr.State != valueOpen || pr.NodeID == "" {
+			continue
+		}
+		key, ok := listMetadataKey(pr)
+		if !ok {
+			continue
+		}
+		entry, ok := c.entries[key]
+		if !ok || entry.headSHA == "" {
+			continue
+		}
+		headSHA, ok := heads[pr.NodeID]
+		if !ok || headSHA == "" || headSHA == entry.headSHA {
+			continue
+		}
+		delete(c.entries, key)
+		changed = true
+	}
+	return changed
+}
+
 func (c *listMetadataCache) store(
 	pr PullRequest,
 	req listMetadataRequest,
@@ -120,6 +186,9 @@ func (c *listMetadataCache) store(
 	if c == nil {
 		return
 	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	key, ok := listMetadataKey(pr)
 	if !ok {
@@ -136,6 +205,7 @@ func (c *listMetadataCache) store(
 		entry.mergedActorLoaded = true
 	}
 	if req.mergeStatus && pr.State == valueOpen {
+		entry.headSHA = pr.HeadSHA
 		entry.mergeStatus = pr.MergeStatus
 		entry.mergeStatusLoaded = true
 		entry.reviewDecision = pr.ReviewDecision
@@ -479,6 +549,7 @@ func buildAutomergeRoot() string {
 func buildMergeStatusRoot(includeAutomerge bool) string {
 	fields := []string{
 		"id",
+		"headRefOid",
 		"reviewDecision",
 		"commits(last:1){nodes{commit{statusCheckRollup{state}}}}",
 	}
@@ -515,6 +586,7 @@ type listAutomergeNode struct {
 
 type listMergeStatusNode struct {
 	ID               string  `json:"id"`
+	HeadRefOID       string  `json:"headRefOid"`
 	ReviewDecision   *string `json:"reviewDecision"`
 	AutomergeRequest *struct {
 		EnabledAt string `json:"enabledAt"`
@@ -580,6 +652,7 @@ func applyMergeStatusResult(
 	prs []PullRequest,
 	openIdx map[string][]int,
 	nodeID string,
+	headSHA string,
 	ciState string,
 	reviewDecision *string,
 	automergeLoaded bool,
@@ -596,6 +669,7 @@ func applyMergeStatusResult(
 	}
 	status := resolveMergeStatus(ciState, reviewDecision)
 	for _, idx := range indices {
+		prs[idx].HeadSHA = headSHA
 		prs[idx].MergeStatus = status
 		if automergeLoaded {
 			prs[idx].Automerge = automergeEnabled
@@ -656,6 +730,7 @@ func applyListMergeStatusNodes(
 			prs,
 			openIdx,
 			node.ID,
+			node.HeadRefOID,
 			ciState,
 			node.ReviewDecision,
 			includeAutomerge,
@@ -678,6 +753,33 @@ func timelineActorsFromNodes(nodes []listTimelineNode) timelineActors {
 		}
 	}
 	return actors
+}
+
+func fetchHeadRefOIDs(gql *api.GraphQLClient, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+
+	var result struct {
+		Nodes []struct {
+			ID         string `json:"id"`
+			HeadRefOID string `json:"headRefOid"`
+		} `json:"nodes"`
+	}
+
+	if err := gql.Do(
+		`query HeadRefOIDs($ids:[ID!]!){nodes(ids:$ids){... on PullRequest{id headRefOid}}}`,
+		map[string]any{"ids": ids},
+		&result,
+	); err != nil {
+		return nil, fmt.Errorf("querying head refs: %w", err)
+	}
+
+	heads := make(map[string]string, len(result.Nodes))
+	for _, node := range result.Nodes {
+		heads[node.ID] = node.HeadRefOID
+	}
+	return heads, nil
 }
 
 // hydrateListMetadata batches the list-view GraphQL lookups needed for
@@ -803,6 +905,27 @@ func hydrateListMetadataCached(
 	maps.Copy(actors.merged, freshActors.merged)
 
 	return actors, nil
+}
+
+func validateCachedHeads(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	cache *listMetadataCache,
+) (bool, error) {
+	if cache == nil || len(prs) == 0 {
+		return false, nil
+	}
+
+	ids := cache.pendingHeadChecks(prs)
+	if len(ids) == 0 {
+		return false, nil
+	}
+
+	heads, err := fetchHeadRefOIDs(gql, ids)
+	if err != nil {
+		return false, err
+	}
+	return cache.invalidateHeadMismatches(prs, heads), nil
 }
 
 func filterByTimelineActorsLoaded(

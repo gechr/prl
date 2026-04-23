@@ -215,7 +215,7 @@ func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(
 			t,
-			`query ListMetadata($timelineIDs: [ID!]!, $automergeIDs: [ID!]!, $mergeIDs: [ID!]!){timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}} merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}}} automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}} mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}} autoMergeRequest{enabledAt}}}}`,
+			`query ListMetadata($timelineIDs: [ID!]!, $automergeIDs: [ID!]!, $mergeIDs: [ID!]!){timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}} merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}}} automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}} mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}} autoMergeRequest{enabledAt}}}}`,
 			got.Query,
 		)
 		require.Equal(
@@ -240,7 +240,7 @@ func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
 					{"id":"PR_2","autoMergeRequest":{"enabledAt":"2026-04-10T00:00:00Z"}}
 				],
 				"mergeNodes":[
-					{"id":"PR_1","reviewDecision":"APPROVED","autoMergeRequest":null,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
+					{"id":"PR_1","headRefOid":"sha-1","reviewDecision":"APPROVED","autoMergeRequest":null,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
 				]
 			}}`,
 		), nil
@@ -294,7 +294,7 @@ func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(
 			t,
-			`query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}`,
+			`query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}`,
 			got.Query,
 		)
 		require.Equal(t, map[string][]string{"mergeIDs": {"PR_1"}}, got.Variables)
@@ -304,7 +304,7 @@ func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {
 			http.StatusOK,
 			`{"data":{
 				"mergeNodes":[
-					{"id":"PR_1","reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
+					{"id":"PR_1","headRefOid":"sha-1","reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}
 				]
 			}}`,
 		), nil
@@ -433,6 +433,68 @@ func TestHydrateListMetadataCachedRefetchesWhenPRUpdatedAtChanges(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, 2, calls)
 	require.Equal(t, MergeStatusCIPending, prs[0].MergeStatus)
+}
+
+func TestValidateCachedHeadsInvalidatesChangedEntries(t *testing.T) {
+	t.Helper()
+
+	var calls int
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		calls++
+
+		body := readBody(t, req.Body)
+		var got struct {
+			Query     string              `json:"query"`
+			Variables map[string][]string `json:"variables"`
+		}
+		err := json.Unmarshal([]byte(body), &got)
+		require.NoError(t, err)
+		require.Equal(
+			t,
+			`query HeadRefOIDs($ids:[ID!]!){nodes(ids:$ids){... on PullRequest{id headRefOid}}}`,
+			got.Query,
+		)
+		require.Equal(t, map[string][]string{"ids": {"PR_1"}}, got.Variables)
+
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{"nodes":[{"id":"PR_1","headRefOid":"sha-2"}]}}`,
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	cache := newListMetadataCache()
+	pr := PullRequest{
+		NodeID:         "PR_1",
+		State:          valueOpen,
+		UpdatedAt:      time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC),
+		HeadSHA:        "sha-1",
+		MergeStatus:    MergeStatusReady,
+		ReviewDecision: valueReviewApproved,
+	}
+	cache.store(pr, listMetadataRequest{mergeStatus: true}, newTimelineActors())
+
+	changed, err := validateCachedHeads(gql, []PullRequest{{
+		NodeID:    "PR_1",
+		State:     valueOpen,
+		UpdatedAt: pr.UpdatedAt,
+	}}, cache)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, 1, calls)
+	require.Empty(t, cache.pendingHeadChecks([]PullRequest{{
+		NodeID:    "PR_1",
+		State:     valueOpen,
+		UpdatedAt: pr.UpdatedAt,
+	}}))
 }
 
 func TestSortPRs(t *testing.T) {

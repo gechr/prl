@@ -353,7 +353,22 @@ func runWatch(
 		prs    []PullRequest
 		err    error
 	}
+	type validationResult struct {
+		changed bool
+		err     error
+	}
 	cache := newListMetadataCache()
+	var gql *api.GraphQLClient
+	getGQL := func() (*api.GraphQLClient, error) {
+		if gql == nil {
+			var err error
+			gql, err = newGraphQLClient(withDebug(cli.Debug))
+			if err != nil {
+				return nil, fmt.Errorf("creating GraphQL client: %w", err)
+			}
+		}
+		return gql, nil
+	}
 	initialCLI := cli
 	initialFetchDeferred := shouldDeferInitialWatchEnrichment(cli, tty)
 	if initialFetchDeferred {
@@ -390,11 +405,23 @@ func runWatch(
 	signal.Notify(winch, syscall.SIGWINCH)
 
 	results := make(chan fetchResult, 1)
+	validations := make(chan validationResult, 1)
 	fetch := func() {
 		go func() {
 			out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params, cache)
 			results <- fetchResult{out, prs, fErr}
 		}()
+	}
+	validate := func(prs []PullRequest) {
+		go func(prs []PullRequest) {
+			g, err := getGQL()
+			if err != nil {
+				validations <- validationResult{err: err}
+				return
+			}
+			changed, err := validateCachedHeads(g, prs, cache)
+			validations <- validationResult{changed: changed, err: err}
+		}(append([]PullRequest(nil), prs...))
 	}
 
 	var (
@@ -443,6 +470,19 @@ func runWatch(
 			}
 			interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
 			nextFetchAt = time.Now().Add(interval)
+			if len(lastPRs) > 0 {
+				validate(lastPRs)
+			}
+		case v := <-validations:
+			if v.err != nil {
+				clog.Debug().Err(v.err).Msg("Head validation failed")
+				break
+			}
+			if v.changed && !fetching {
+				fetching = true
+				spinnerTick = 0
+				fetch()
+			}
 		default:
 		}
 
