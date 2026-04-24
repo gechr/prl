@@ -294,30 +294,50 @@ func (p *Plugin) run(args ...string) (string, error) {
 	clog.Debug().Str("cmd", p.path).Strs("args", args).Msg("Running plugin")
 
 	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			clog.Warn().Str("cmd", p.path).Strs("args", args).Msg("Plugin timed out")
-			return "", fmt.Errorf("plugin timed out after %s", pluginTimeout)
-		}
-
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			clog.Debug().Str("cmd", p.path).Strs("args", args).Msg("Plugin: not implemented")
-			return "", errPluginNotImplemented
-		}
-
-		msg := strings.TrimSpace(stderr.String())
-		clog.Warn().
-			Str("cmd", p.path).
-			Strs("args", args).
-			Str("stderr", msg).
-			Msg("Plugin failed")
-		if msg != "" {
-			return "", fmt.Errorf("%w: %s", err, msg)
-		}
-		return "", err
+		return "", p.runError(ctx, err, args, stdout.String(), stderr.String())
 	}
 
 	return stdout.String(), nil
+}
+
+func (p *Plugin) runError(
+	ctx context.Context,
+	err error,
+	args []string,
+	stdout, stderr string,
+) error {
+	if ctx.Err() != nil {
+		clog.Warn().Str("cmd", p.path).Strs("args", args).Msg("Plugin timed out")
+		return fmt.Errorf("plugin timed out after %s", pluginTimeout)
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		clog.Debug().Str("cmd", p.path).Strs("args", args).Msg("Plugin: not implemented")
+		return errPluginNotImplemented
+	}
+
+	out := strings.TrimSpace(stdout)
+	msg := strings.TrimSpace(stderr)
+	event := clog.Warn().Str("cmd", p.path).Strs("args", args)
+	if out != "" {
+		event = event.Str("stdout", out)
+	}
+	if msg != "" {
+		event = event.Str("stderr", msg)
+	}
+	event.Msg("Plugin failed")
+
+	switch {
+	case out != "" && msg != "":
+		return fmt.Errorf("%w: %s; %s", err, out, msg)
+	case out != "":
+		return fmt.Errorf("%w: %s", err, out)
+	case msg != "":
+		return fmt.Errorf("%w: %s", err, msg)
+	default:
+		return err
+	}
 }
 
 // Slack pipes JSON PRs to the plugin's slack subcommand.
