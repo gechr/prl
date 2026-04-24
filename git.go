@@ -7,19 +7,28 @@ import (
 	"strings"
 )
 
-// gitRemoteOwnerRepo returns the GitHub owner and repo name from the current
-// directory's git remote origin. Fails if not in a git repo or if the remote
-// is not a GitHub URL.
-func gitRemoteOwnerRepo() (string, string, error) {
+// gitRemoteOwnerRepo returns the GitHub owner and repo name from the git
+// remote origin (or upstream) of the given directory. Fails if not a git
+// repo or if the remote is not a GitHub URL.
+func gitRemoteOwnerRepo(dir string) (string, string, error) {
 	for _, remote := range []string{"origin", "upstream"} {
-		out, err := exec.CommandContext(context.Background(), "git", "remote", "get-url", remote).
-			Output()
+		cmd := exec.CommandContext(
+			context.Background(),
+			"git",
+			"-C",
+			dir,
+			"remote",
+			"get-url",
+			remote,
+		)
+		out, err := cmd.Output()
 		if err == nil {
 			return parseGitHubRemote(strings.TrimSpace(string(out)))
 		}
 	}
 	return "", "", fmt.Errorf(
-		"-R . / -O . requires a git repository with a remote named 'origin' or 'upstream'",
+		"%q must be a git repository with a remote named 'origin' or 'upstream'",
+		dir,
 	)
 }
 
@@ -47,14 +56,15 @@ func splitOwnerRepo(path string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func replaceValue(ss []string, find, replace string) []string {
-	out := make([]string, len(ss))
-	for i, s := range ss {
-		if s == find {
-			out[i] = replace
-		} else {
-			out[i] = s
+// isPathLike reports whether a CLI repo/owner value should be interpreted as
+// a filesystem path rather than a GitHub owner or owner/repo slug. GitHub
+// owners cannot begin with "." or "/" or "~", so these prefixes unambiguously
+// signal a path.
+func isPathLike(s string) bool {
+	for _, p := range []string{".", "/", "~"} {
+		if strings.HasPrefix(s, p) {
+			return true
 		}
 	}
-	return out
+	return false
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -111,20 +110,26 @@ type CLI struct {
 
 // Validate checks for mutually exclusive options.
 func (c *CLI) Validate() error {
-	// Resolve "." to the current directory's GitHub remote owner/repo.
-	hasDotRepo := slices.Contains(c.Repo.Values, ".")
-	hasDotOwner := slices.Contains(c.Owner.Values, ".")
-	if hasDotRepo || hasDotOwner {
-		owner, repo, err := gitRemoteOwnerRepo()
+	// Resolve filesystem paths to their GitHub remote owner/repo.
+	for i, v := range c.Repo.Values {
+		if !isPathLike(v) {
+			continue
+		}
+		owner, repo, err := gitRemoteOwnerRepo(v)
 		if err != nil {
 			return err
 		}
-		if hasDotRepo {
-			c.Repo.Values = replaceValue(c.Repo.Values, ".", owner+"/"+repo)
+		c.Repo.Values[i] = owner + "/" + repo
+	}
+	for i, v := range c.Owner.Values {
+		if !isPathLike(v) {
+			continue
 		}
-		if hasDotOwner {
-			c.Owner.Values = replaceValue(c.Owner.Values, ".", owner)
+		owner, _, err := gitRemoteOwnerRepo(v)
+		if err != nil {
+			return err
 		}
+		c.Owner.Values[i] = owner
 	}
 
 	if c.Close && c.Approve {
