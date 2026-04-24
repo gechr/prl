@@ -19,6 +19,7 @@ import (
 	"github.com/gechr/clog"
 	cspinner "github.com/gechr/clog/fx/spinner"
 	"github.com/gechr/primer/pick"
+	xansi "github.com/gechr/x/ansi"
 	"github.com/gechr/x/terminal"
 )
 
@@ -243,7 +244,7 @@ func withSpinner[T any](tty bool, s spinner, fn func(stop func()) T) T {
 		done <- fn(stop)
 	}()
 
-	fmt.Print(ansiHideCursor)
+	fmt.Print(xansi.HideCursor)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
@@ -389,8 +390,8 @@ func runWatch(
 		return errFatal
 	}
 
-	fmt.Print(ansiAltScreenOn + ansiHideCursor)
-	cleanup := func() { fmt.Print(ansiShowCursor + ansiAltScreenOff) }
+	fmt.Print(xansi.EnterAltScreen + xansi.HideCursor)
+	cleanup := func() { fmt.Print(xansi.ShowCursor + xansi.ExitAltScreen) }
 	defer cleanup()
 
 	// Restore terminal on interrupt.
@@ -500,13 +501,13 @@ func runWatch(
 		}
 
 		// Repaint.
-		fmt.Print(ansiClearScreen)
+		fmt.Print(xansi.EraseEntireScreen + xansi.CursorHomePosition)
 		if lastOutput != "" {
 			fmt.Println(lastOutput)
 		}
 		if fetching && lastOutput != "" {
 			frame := s.frames[spinnerTick%len(s.frames)]
-			fmt.Print(ansiMoveTo1x1 + frame)
+			fmt.Print(xansi.CursorHomePosition + frame)
 			spinnerTick++
 		}
 

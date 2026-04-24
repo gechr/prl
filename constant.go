@@ -1,6 +1,10 @@
 package main
 
-import "time"
+import (
+	"time"
+
+	xansi "github.com/gechr/x/ansi"
+)
 
 const nl = "\n"
 
@@ -140,22 +144,17 @@ const (
 
 // Watch mode.
 const (
-	watchMinInterval    = 7 * time.Second                // floor: few results
-	watchMaxInterval    = 1 * time.Minute                // ceiling: many results
-	watchScalePer       = 1 * time.Second                // additional delay per result
-	watchIdleDecay      = 45 * time.Minute               // no interaction for this long → interval reaches watchIdleMax
-	watchIdleMax        = 3 * time.Minute                // ceiling when fully idle
-	detailCheckInterval = 15 * time.Second               // poll interval for detail-view check refresh
-	ansiClearScreen     = "\033[2J\033[H"                // clear screen + move cursor to top-left
-	ansiHideCursor      = "\033[?25l"                    // hide cursor
-	ansiShowCursor      = "\033[?25h"                    // show cursor
-	ansiAltScreenOn     = "\033[?1049h"                  // switch to alternate screen buffer
-	ansiAltScreenOff    = "\033[?1049l"                  // switch back to main screen buffer
-	ansiDECXCPR         = "\033[?6n"                     // request extended cursor position (unambiguous)
-	ansiMoveTo1x1       = "\033[1;1H"                    // move cursor to row 1, col 1
-	ansiClearLine       = "\x1b[2K\r"                    // erase current line and return cursor to col 0
-	ansiSpinnerClear    = ansiClearLine + ansiShowCursor // erase spinner line and restore cursor
+	watchMinInterval    = 7 * time.Second  // floor: few results
+	watchMaxInterval    = 1 * time.Minute  // ceiling: many results
+	watchScalePer       = 1 * time.Second  // additional delay per result
+	watchIdleDecay      = 45 * time.Minute // no interaction for this long → interval reaches watchIdleMax
+	watchIdleMax        = 3 * time.Minute  // ceiling when fully idle
+	detailCheckInterval = 15 * time.Second // poll interval for detail-view check refresh
 )
+
+// ansiSpinnerClear erases the spinner line and restores the cursor. Composed
+// from xansi primitives so the shared package owns the literals.
+const ansiSpinnerClear = xansi.ClearLine + xansi.ShowCursor
 
 const ciStatusCompleted = "completed"
 

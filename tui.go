@@ -32,7 +32,7 @@ import (
 	"github.com/gechr/primer/table"
 	"github.com/gechr/primer/term"
 	"github.com/gechr/primer/view"
-	"github.com/gechr/x/ansi"
+	xansi "github.com/gechr/x/ansi"
 )
 
 type confirmSubmission struct {
@@ -1232,7 +1232,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cfg == nil || !m.cfg.TUI.ScreenRepair {
 			return m, nil
 		}
-		return m, tea.Batch(tea.Raw(ansiDECXCPR), m.scheduleScreenCheck())
+		return m, tea.Batch(tea.Raw(xansi.RequestExtendedCursorPosition), m.scheduleScreenCheck())
 
 	case tea.CursorPositionMsg:
 		if m.cfg == nil || !m.cfg.TUI.ScreenRepair {
@@ -1247,7 +1247,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Y == 0 && m.height > 1 {
 			m.touchInteraction()
 			m.repaintTick = !m.repaintTick
-			return m, tea.Sequence(tea.ClearScreen, tea.Raw(ansiDECXCPR))
+			return m, tea.Sequence(tea.ClearScreen, tea.Raw(xansi.RequestExtendedCursorPosition))
 		}
 		return m, nil
 
@@ -1725,11 +1725,11 @@ func (m tuiModel) viewDiff() tea.View {
 				" "
 		}
 		ref := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
-		headerLine += ansi.Force().Hyperlink(pr.URL,
+		headerLine += xansi.Force().Hyperlink(pr.URL,
 			headerStyle.Render(ref)+styleText.Render(" » ")+
 				styleTitle.Render(normalizeTUIDisplayText(pr.Title)))
 		if m.width > 0 && lg.Width(headerLine) > m.width {
-			headerLine = ansi.Truncate(headerLine, m.width-1, valueEllipsis)
+			headerLine = xansi.Truncate(headerLine, m.width-1, valueEllipsis)
 		}
 		header = headerLine
 	}
@@ -1778,10 +1778,10 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	const indicatorPrefix = " "
 	available := m.width - lg.Width(indicatorPrefix) - lg.Width(suffix)
 	if available <= 0 {
-		return ansi.Truncate(suffix, m.width, "")
+		return xansi.Truncate(suffix, m.width, "")
 	}
 	if lg.Width(indicator) > available {
-		indicator = ansi.Truncate(indicator, available, valueEllipsis)
+		indicator = xansi.Truncate(indicator, available, valueEllipsis)
 	}
 	pad := max(m.width-lg.Width(indicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
 	return m.styles.separator.Render(layout.Separator(pad, col)) +
@@ -1916,17 +1916,17 @@ func (m tuiModel) renderDetailContent() []string {
 	if author != pr.Author.Login {
 		authorDisplay += " (" + author + ")"
 	}
-	styledAuthor := ansi.Force().Hyperlink(authorLink, styleText.Render(authorDisplay))
+	styledAuthor := xansi.Force().Hyperlink(authorLink, styleText.Render(authorDisplay))
 	lines = append(
 		lines,
 		detailIndent+labelStyle.Render(
 			"  Title: ",
-		)+ansi.Force().Hyperlink(pr.URL, styleText.Render(
+		)+xansi.Force().Hyperlink(pr.URL, styleText.Render(
 			normalizeTUIDisplayText(pr.Title),
 		)),
 	)
 	lines = append(lines, detailIndent+labelStyle.Render(" Author: ")+styledAuthor)
-	styledURL := ansi.Force().Hyperlink(pr.URL, styleText.Render(pr.URL))
+	styledURL := xansi.Force().Hyperlink(pr.URL, styleText.Render(pr.URL))
 	lines = append(lines, detailIndent+labelStyle.Render("    URL: ")+styledURL)
 	if len(m.detail.Reviews) > 0 {
 		var parts []string
@@ -1950,7 +1950,7 @@ func (m tuiModel) renderDetailContent() []string {
 			} else {
 				link = "https://github.com/" + r.User
 			}
-			styled := ansi.Force().Hyperlink(link, styleText.Render(name))
+			styled := xansi.Force().Hyperlink(link, styleText.Render(name))
 			parts = append(parts, icon+" "+styled)
 		}
 		lines = append(lines, detailIndent+labelStyle.Render("Reviews: ")+
@@ -2641,7 +2641,7 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	if statusWidth < usableWidth {
 		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status
 	}
-	return prefix + ansi.Truncate(status, usableWidth, valueEllipsis)
+	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
 }
 
 func (m tuiModel) renderHelp(pairs []key.Hint) string {
@@ -2731,7 +2731,7 @@ func (m tuiModel) clearConfirm() tuiModel {
 // styledRef returns a bold, hyperlinked PR ref for use in confirm prompts.
 func styledRef(pr *PullRequest) string {
 	ref := styleRef.Bold(true).Render(pr.Ref())
-	return ansi.Force().Hyperlink(pr.URL, ref)
+	return xansi.Force().Hyperlink(pr.URL, ref)
 }
 
 // overlayCenter places a box on top of a background string, centered.
