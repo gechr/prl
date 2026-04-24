@@ -598,13 +598,6 @@ func newRefreshSnapshot(m tuiModel) refreshSnapshot {
 	}
 }
 
-func tuiNeedsMergeStatus(cli *CLI) bool {
-	if cli == nil {
-		return false
-	}
-	return cli.PRState() == StateReady || cli.CIStatus() != CINone
-}
-
 // fetchAndBuild runs the search, filter, enrich, and build pipeline.
 // It returns the built row models, or an error.
 func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
@@ -617,8 +610,6 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 		return nil, err
 	}
 
-	// Determine if post-enrichment filters require GraphQL data.
-	needsEnrich := tuiNeedsMergeStatus(r.cli)
 	closedAllowed, err := resolveTimelineLogins(r.rest, r.cli.ClosedBy.Values)
 	if err != nil {
 		clog.Debug().Err(err).Msg("timeline filters failed")
@@ -630,9 +621,9 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 		mergedAllowed = map[string]bool{}
 	}
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
-	needMergeStatus := len(prs) > 0 && needsEnrich
+	needMergeStatus := len(prs) > 0
 
-	if len(prs) > 0 && (needTimeline || needMergeStatus) {
+	if needMergeStatus || needTimeline {
 		if r.gql != nil {
 			actors, hydrateErr := hydrateListMetadataCached(r.gql, prs, listMetadataRequest{
 				mergeStatus:    needMergeStatus,
@@ -643,13 +634,6 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 				clog.Debug().Err(hydrateErr).Msg("list metadata hydration failed")
 			} else if needTimeline {
 				prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
-			}
-		}
-	}
-	if len(prs) > 0 && !needMergeStatus {
-		for i := range prs {
-			if prs[i].State == valueOpen {
-				prs[i].MergeStatus = MergeStatusBlocked
 			}
 		}
 	}
