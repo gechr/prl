@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,46 +187,151 @@ func fetchHeadBranchesGraphQL(
 
 	ids := make([]string, 0, len(prs))
 	repoByID := make(map[string]string, len(prs))
+	missingIDs := make([]PullRequest, 0, len(prs))
 	for _, pr := range prs {
 		if pr.NodeID == "" {
+			missingIDs = append(missingIDs, pr)
 			continue
 		}
 		ids = append(ids, pr.NodeID)
 		repoByID[pr.NodeID] = pr.Repository.NameWithOwner
 	}
-	if len(ids) == 0 {
+
+	branches := make(map[string]string, len(prs))
+
+	if len(ids) > 0 {
+		var result struct {
+			Nodes []struct {
+				ID          string `json:"id"`
+				HeadRefName string `json:"headRefName"`
+			} `json:"nodes"`
+		}
+
+		if err := gql.Do(
+			`query HeadRefNames($ids: [ID!]!) {
+				nodes(ids: $ids) {
+					... on PullRequest {
+						id
+						headRefName
+					}
+				}
+			}`,
+			map[string]any{"ids": ids},
+			&result,
+		); err != nil {
+			return nil, fmt.Errorf("querying head branch names by node id: %w", err)
+		}
+
+		for _, node := range result.Nodes {
+			nwo := repoByID[node.ID]
+			if nwo == "" {
+				continue
+			}
+			branches[nwo] = node.HeadRefName
+		}
+	}
+
+	if len(missingIDs) == 0 {
+		return branches, nil
+	}
+
+	fallbackBranches, err := fetchHeadBranchesGraphQLByRepoNumber(gql, missingIDs)
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(branches, fallbackBranches)
+	return branches, nil
+}
+
+func fetchHeadBranchesGraphQLByRepoNumber(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+) (map[string]string, error) {
+	if len(prs) == 0 {
 		return map[string]string{}, nil
 	}
 
-	var result struct {
-		Nodes []struct {
-			ID          string `json:"id"`
-			HeadRefName string `json:"headRefName"`
-		} `json:"nodes"`
+	type repoGroup struct {
+		alias string
+		nwo   string
+		prs   []PullRequest
 	}
 
-	if err := gql.Do(
-		`query HeadRefNames($ids: [ID!]!) {
-			nodes(ids: $ids) {
-				... on PullRequest {
-					id
-					headRefName
-				}
+	grouped := make(map[string]*repoGroup)
+	var order []string
+	for _, pr := range prs {
+		nwo := pr.Repository.NameWithOwner
+		group := grouped[nwo]
+		if group == nil {
+			group = &repoGroup{
+				alias: fmt.Sprintf("_repo_%d", len(order)),
+				nwo:   nwo,
 			}
-		}`,
-		map[string]any{"ids": ids},
-		&result,
-	); err != nil {
-		return nil, fmt.Errorf("querying head branch names: %w", err)
+			grouped[nwo] = group
+			order = append(order, nwo)
+		}
+		group.prs = append(group.prs, pr)
 	}
 
-	branches := make(map[string]string, len(result.Nodes))
-	for _, node := range result.Nodes {
-		nwo := repoByID[node.ID]
-		if nwo == "" {
+	var query strings.Builder
+	query.WriteString("query {")
+	prAliases := make(map[string]string, len(prs))
+	for _, nwo := range order {
+		group := grouped[nwo]
+		owner, repo, ok := strings.Cut(group.nwo, "/")
+		if !ok {
 			continue
 		}
-		branches[nwo] = node.HeadRefName
+
+		fmt.Fprintf(&query, "%s: repository(owner: %q, name: %q) {", group.alias, owner, repo)
+		for i, pr := range group.prs {
+			prAlias := fmt.Sprintf("_pr_%d_%d", len(prAliases), i)
+			prAliases[group.alias+"."+prAlias] = group.nwo
+			fmt.Fprintf(&query, "%s: pullRequest(number: %d) { headRefName }", prAlias, pr.Number)
+		}
+		query.WriteString("}")
+	}
+	query.WriteString("}")
+
+	var result map[string]json.RawMessage
+	if err := gql.Do(query.String(), nil, &result); err != nil {
+		return nil, fmt.Errorf("querying head branch names by repo and number: %w", err)
+	}
+
+	branches := make(map[string]string, len(prs))
+	for _, nwo := range order {
+		group := grouped[nwo]
+		repoRaw := result[group.alias]
+		if len(repoRaw) == 0 || string(repoRaw) == "null" {
+			continue
+		}
+
+		var repoData map[string]json.RawMessage
+		if err := json.Unmarshal(repoRaw, &repoData); err != nil {
+			return nil, fmt.Errorf("decoding head branch names for %s: %w", group.nwo, err)
+		}
+
+		for key, raw := range repoData {
+			if len(raw) == 0 || string(raw) == "null" {
+				continue
+			}
+
+			var prData struct {
+				HeadRefName string `json:"headRefName"`
+			}
+			if err := json.Unmarshal(raw, &prData); err != nil {
+				return nil, fmt.Errorf(
+					"decoding head branch name for %s.%s: %w",
+					group.nwo,
+					key,
+					err,
+				)
+			}
+			if prData.HeadRefName != "" {
+				branches[group.nwo] = prData.HeadRefName
+				break
+			}
+		}
 	}
 	return branches, nil
 }
