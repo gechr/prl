@@ -2040,6 +2040,8 @@ func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 		return styleClosed.Render("CI failed")
 	case resolvedBlocked:
 		return styleWarning.Render("Needs review")
+	case resolvedConflict:
+		return styleHeading.Render("Merge conflicts")
 	case resolvedUnknown:
 		return styleDim.Render("Unknown")
 	}

@@ -215,7 +215,7 @@ func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(
 			t,
-			`query ListMetadata($timelineIDs: [ID!]!, $automergeIDs: [ID!]!, $mergeIDs: [ID!]!){timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}} merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}}} automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}} mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}} autoMergeRequest{enabledAt}}}}`,
+			`query ListMetadata($timelineIDs: [ID!]!, $automergeIDs: [ID!]!, $mergeIDs: [ID!]!){timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}} merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}}} automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}} mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}} autoMergeRequest{enabledAt}}}}`,
 			got.Query,
 		)
 		require.Equal(
@@ -294,7 +294,7 @@ func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(
 			t,
-			`query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}`,
+			`query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}`,
 			got.Query,
 		)
 		require.Equal(t, map[string][]string{"mergeIDs": {"PR_1"}}, got.Variables)

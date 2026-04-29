@@ -165,6 +165,8 @@ func (p *prl) prMergeStyle(pr PullRequest) lg.Style {
 		return p.theme.Red.Bold(true)
 	case resolvedBlocked:
 		return *p.theme.Blue
+	case resolvedConflict:
+		return styleHeading
 	case resolvedUnknown:
 		return *p.theme.Dim
 	}
@@ -191,7 +193,7 @@ func (p *prl) renderMergeStatus(pr PullRequest) string {
 		return valueBlocked
 	case MergeStatusCIFailed:
 		return valueBlocked
-	case MergeStatusBlocked:
+	case MergeStatusBlocked, MergeStatusConflict:
 		return valueBlocked
 	case MergeStatusUnknown:
 		return valueUnknown

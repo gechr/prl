@@ -142,6 +142,8 @@ func deriveMergeReason(pr PullRequest) string {
 		return "ci_fail"
 	case MergeStatusBlocked:
 		return "needs_review"
+	case MergeStatusConflict:
+		return "merge_conflict"
 	case MergeStatusUnknown:
 		return valueUnknown
 	}

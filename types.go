@@ -21,6 +21,7 @@ const (
 	MergeStatusBlocked               // CI passing, awaiting review/approval
 	MergeStatusCIPending             // CI in progress
 	MergeStatusCIFailed              // CI failed or errored
+	MergeStatusConflict              // merge conflicts with base branch
 )
 
 func (m MergeStatus) String() string {
@@ -35,6 +36,8 @@ func (m MergeStatus) String() string {
 		return "ci_pending"
 	case MergeStatusCIFailed:
 		return "ci_failed"
+	case MergeStatusConflict:
+		return valueConflict
 	}
 	return "unknown"
 }
@@ -56,6 +59,7 @@ const (
 	resolvedCIPending                  // open + CI in progress
 	resolvedCIFailed                   // open + CI failed
 	resolvedBlocked                    // open + awaiting review
+	resolvedConflict                   // open + merge conflicts
 	resolvedUnknown                    // unknown state
 )
 
@@ -86,6 +90,8 @@ func resolvePRStatus(pr PullRequest) resolvedStatus {
 		return resolvedCIFailed
 	case MergeStatusBlocked:
 		return resolvedBlocked
+	case MergeStatusConflict:
+		return resolvedConflict
 	case MergeStatusUnknown:
 		return resolvedUnknown
 	}

@@ -550,6 +550,7 @@ func buildMergeStatusRoot(includeAutomerge bool) string {
 	fields := []string{
 		"id",
 		"headRefOid",
+		"mergeStateStatus",
 		"reviewDecision",
 		"commits(last:1){nodes{commit{statusCheckRollup{state}}}}",
 	}
@@ -587,6 +588,7 @@ type listAutomergeNode struct {
 type listMergeStatusNode struct {
 	ID               string  `json:"id"`
 	HeadRefOID       string  `json:"headRefOid"`
+	MergeStateStatus string  `json:"mergeStateStatus"`
 	ReviewDecision   *string `json:"reviewDecision"`
 	AutomergeRequest *struct {
 		EnabledAt string `json:"enabledAt"`
@@ -720,6 +722,21 @@ func applyListMergeStatusNodes(
 	}
 
 	for _, node := range nodes {
+		if node.MergeStateStatus == valueMergeStateDirty {
+			indices, ok := openIdx[node.ID]
+			if ok {
+				for _, idx := range indices {
+					prs[idx].HeadSHA = node.HeadRefOID
+					prs[idx].MergeStatus = MergeStatusConflict
+					if includeAutomerge {
+						prs[idx].Automerge = node.AutomergeRequest != nil
+						prs[idx].automergeLoaded = true
+					}
+					prs[idx].reviewDecisionLoaded = true
+				}
+			}
+			continue
+		}
 		var ciState string
 		if len(node.Commits.Nodes) > 0 {
 			if rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
