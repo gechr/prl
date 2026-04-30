@@ -49,6 +49,7 @@ const (
 
 	claudeReviewModelSonnet = "sonnet"
 	claudeReviewModelOpus   = "opus"
+	codexReviewModel55      = "gpt-5.5"
 	codexReviewModel54      = "gpt-5.4"
 	codexReviewModel54Mini  = "gpt-5.4-mini"
 	codexReviewModel53Codex = "gpt-5.3-codex"
@@ -105,11 +106,12 @@ var claudeReviewConfig = reviewProviderConfig{
 
 var codexReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
+		{label: codexReviewModel55, value: codexReviewModel55},
 		{label: codexReviewModel54, value: codexReviewModel54},
 		{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
 		{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
 	},
-	defaultModel: codexReviewModel54,
+	defaultModel: codexReviewModel55,
 }
 
 var geminiReviewConfig = reviewProviderConfig{

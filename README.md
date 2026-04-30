@@ -263,7 +263,7 @@ tui:
           URL: {prURL}
       codex:
         # Optional: override the available model/effort choices.
-        # models: [gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
+        # models: [gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
         # efforts: [low, medium, high, xhigh]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.

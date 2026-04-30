@@ -220,6 +220,7 @@ func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) 
 	require.Equal(
 		t,
 		[]filterChoice{
+			{label: codexReviewModel55, value: codexReviewModel55},
 			{label: codexReviewModel54, value: codexReviewModel54},
 			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
 			{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
