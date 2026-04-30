@@ -394,6 +394,43 @@ func TestUpdateConfirmOverlayPromptDoesNotExitOnArrowKeys(t *testing.T) {
 	require.True(t, bm.confirmInput.Focused())
 }
 
+func TestDoPasteRoutesToFocusedReviewPrompt(t *testing.T) {
+	m := tuiModel{
+		confirmInput: newConfirmInput(),
+		styles:       newTuiStyles(),
+		view:         tuiViewList,
+	}
+	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
+	m.confirmInput.SetValue("")
+	m, cmd := m.focusConfirmInput()
+	require.NotNil(t, cmd)
+
+	model, _ := m.Update(tea.PasteMsg{Content: "line one\nline two"})
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, "line one\nline two", bm.confirmInput.Value())
+}
+
+func TestDoPasteRoutesToFocusedFilter(t *testing.T) {
+	m := tuiModel{
+		filterInput: textinput.New(),
+		rows: []TableRow{
+			{Cells: []table.Cell{{Plain: "owner/repo alpha"}}},
+			{Cells: []table.Cell{{Plain: "owner/repo beta"}}},
+		},
+		view: tuiViewList,
+	}
+	m.filterInput.Focus()
+
+	model, _ := m.Update(tea.PasteMsg{Content: "beta"})
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, "beta", bm.filterInput.Value())
+	require.Equal(t, 1, bm.cursor)
+}
+
 func TestRenderHelpOverlayAlignsExtendedSelectionKey(t *testing.T) {
 	m := tuiModel{styles: newTuiStyles()}
 

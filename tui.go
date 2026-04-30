@@ -1292,6 +1292,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.PasteMsg:
+		m.touchInteraction()
+		return m.doPaste(msg)
+
 	case tea.KeyMsg:
 		m.touchInteraction()
 		switch m.view {
@@ -1304,6 +1308,27 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	return m, nil
+}
+
+func (m tuiModel) doPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.filterInput.Focused() {
+		prev := m.filterInput.Value()
+		var cmd tea.Cmd
+		m.filterInput, cmd = m.filterInput.Update(msg)
+		if m.filterInput.Value() != prev {
+			if vis := m.visibleIndices(); len(vis) > 0 {
+				m.cursor = vis[0]
+			}
+			m.offset = 0
+		}
+		return m, cmd
+	}
+	if m.confirmAction != "" && m.confirmHasInput && m.confirmInput.Focused() {
+		var cmd tea.Cmd
+		m.confirmInput, cmd = m.confirmInput.Update(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 
