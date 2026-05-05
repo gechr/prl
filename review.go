@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -606,7 +607,7 @@ func writeReviewPromptFile(prompt string) (string, error) {
 // promptArg returns a shell expression that expands to the prompt
 // contents at runtime, plus a cleanup snippet for the temp file. The
 // expression must not be further shell-quoted.
-func promptArg(promptFile string) (expr, cleanup string) {
+func promptArg(promptFile string) (string, string) {
 	q := shell.Quote(promptFile)
 	return fmt.Sprintf(`"$(cat %s)"`, q), fmt.Sprintf("; rm -f %s", q)
 }
@@ -626,11 +627,13 @@ func buildAIReviewCommand(
 	// works for open, closed, and fork PRs alike.
 	remote := "git@github.com:" + nwo
 	// Use a fixed review directory so the user only has to trust it once.
-	cacheHome := os.Getenv("XDG_CACHE_HOME")
-	if cacheHome == "" {
-		cacheHome = os.Getenv("HOME") + "/.cache"
+	cacheHome, err := shell.XDGCacheHome()
+	if err != nil {
+		cacheHome = filepath.Join(os.TempDir(), ".cache")
 	}
-	reviewDir := fmt.Sprintf("%s/prl/reviews/%s/%d", cacheHome, pr.Repository.Name, pr.Number)
+	reviewDir := filepath.Join(
+		cacheHome, "prl", "reviews", pr.Repository.Name, strconv.Itoa(pr.Number),
+	)
 	baseCmd := fmt.Sprintf(
 		"/usr/bin/trash %s 2>/dev/null; /bin/mkdir -p %s && cd %s && git clone --quiet --depth 1 %s . && git fetch origin refs/pull/%d/head:pr-%d --no-tags && git checkout pr-%d && ",
 		shell.Quote(reviewDir),

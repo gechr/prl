@@ -135,15 +135,15 @@ func deriveMergeReason(pr PullRequest) string {
 	}
 	switch pr.MergeStatus {
 	case MergeStatusReady:
-		return "ready_to_merge"
+		return valueReadyToMerge
 	case MergeStatusCIPending:
-		return "ci_pending"
+		return valueMergeCIPending
 	case MergeStatusCIFailed:
-		return "ci_fail"
+		return valueCIFail
 	case MergeStatusBlocked:
-		return "needs_review"
+		return valueNeedsReview
 	case MergeStatusConflict:
-		return "merge_conflict"
+		return valueMergeConflict
 	case MergeStatusUnknown:
 		return valueUnknown
 	}

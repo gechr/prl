@@ -359,7 +359,7 @@ type searchPRDetail struct {
 func toPullRequest(item searchItem) PullRequest {
 	// Determine state: the API returns "open" or "closed"; we infer "merged"
 	state := strings.ToLower(item.State)
-	if state == "closed" && item.PullRequest.MergedAt != nil {
+	if state == valueClosed && item.PullRequest.MergedAt != nil {
 		state = valueMerged
 	}
 

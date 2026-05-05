@@ -86,7 +86,7 @@ func newTestRendererWithTTY(
 		ansiOpts = append(ansiOpts, ansi.WithHyperlinkFallback(ansi.HyperlinkFallbackURL))
 	}
 	ctx := table.NewRenderContext(testPRL, ansi.New(ansiOpts...))
-	// prl default: newest at top → clib WithReverse(true).
+	// prl default: newest at top -> clib WithReverse(true).
 	allOpts := []table.Option{table.WithReverse(true), table.WithTTY(tty)}
 	allOpts = append(allOpts, opts...)
 	return table.NewRenderer[PRRowModel](columns, ctx, allOpts...)
@@ -138,7 +138,7 @@ func TestRender_NoColumns(t *testing.T) {
 }
 
 func TestRender_DefaultOrder_NewestAtTop(t *testing.T) {
-	// Default (prl reverse=true → newest at top).
+	// Default (prl reverse=true -> newest at top).
 	models := testModels("owner")
 	r := newTestRenderer(simpleColumns())
 	rt := r.Render(models)
@@ -149,7 +149,7 @@ func TestRender_DefaultOrder_NewestAtTop(t *testing.T) {
 }
 
 func TestRender_Reverse_OldestAtTop(t *testing.T) {
-	// --reverse: oldest first → clib reverse=false.
+	// --reverse: oldest first -> clib reverse=false.
 	models := testModels("owner")
 	r := newTestRenderer(simpleColumns(), table.WithReverse(false))
 	rt := r.Render(models)
@@ -687,7 +687,7 @@ func TestNewTableRenderer_OwnerFilter_Multiple(t *testing.T) {
 	}
 	r := testPRL.newTableRenderer(cli, true, 0)
 
-	// Multiple owners → no owner filter → ref includes full owner/repo
+	// Multiple owners -> no owner filter -> ref includes full owner/repo
 	models := testModelsFrom(testPRs()[:1], "")
 	rt := r.Render(models)
 	visible := ansi.Strip(rt.Rows[0].Cells[0].Text)
@@ -698,7 +698,7 @@ func TestNewTableRenderer_Reverse(t *testing.T) {
 	cli := &CLI{Reverse: true, Columns: CSVFlag{Values: []string{"ref"}}}
 	r := testPRL.newTableRenderer(cli, true, 0)
 
-	// --reverse → oldest at top (clib reverse=false).
+	// --reverse -> oldest at top (clib reverse=false).
 	models := testModels("")
 	rt := r.Render(models)
 	require.Equal(t, "oldest PR", rt.Rows[0].Item.Title)
@@ -708,7 +708,7 @@ func TestNewTableRenderer_Reverse(t *testing.T) {
 // --- Layout computation tests ---
 
 func TestComputeLayout_ZeroWidth(t *testing.T) {
-	// Zero width (non-TTY / unknown) → no compact, no hiding.
+	// Zero width (non-TTY / unknown) -> no compact, no hiding.
 	layout := computeLayout(0, defaultColumns())
 	require.False(t, layout.compact)
 	require.Empty(t, layout.hidden)
@@ -880,7 +880,7 @@ func TestComputeLayout_NeverHidesRef(t *testing.T) {
 }
 
 func TestComputeLayout_HideOrder(t *testing.T) {
-	// Verify the progressive hiding order: created → updated → title.
+	// Verify the progressive hiding order: created -> updated -> title.
 	cols := defaultColumns()
 	var (
 		createdHiddenAt int

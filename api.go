@@ -121,7 +121,7 @@ func (a *ActionRunner) diffRESTClient() (*api.RESTClient, error) {
 	}
 	a.diffClientOnce.Do(func() {
 		a.diffClient, a.diffClientErr = api.NewRESTClient(api.ClientOptions{
-			Headers: map[string]string{"Accept": "application/vnd.github.diff"},
+			Headers: map[string]string{"Accept": mediaTypeGitHubDiff},
 		})
 	})
 	return a.diffClient, a.diffClientErr
@@ -376,7 +376,7 @@ func jsonBody(v any) *bytes.Buffer {
 
 func (a *ActionRunner) comment(owner, repo string, number int, body string) error {
 	path := fmt.Sprintf("repos/%s/%s/issues/%d/comments", owner, repo, number)
-	return a.rest.Post(path, jsonBody(map[string]string{"body": body}), nil)
+	return a.rest.Post(path, jsonBody(map[string]string{keyBody: body}), nil)
 }
 
 func (a *ActionRunner) approvePR(pr PullRequest) error {
@@ -403,7 +403,7 @@ func (a *ActionRunner) approvePR(pr PullRequest) error {
 
 func (a *ActionRunner) reopenPR(owner, repo string, number int) error {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
-	return a.rest.Patch(path, jsonBody(map[string]string{"state": "open"}), nil)
+	return a.rest.Patch(path, jsonBody(map[string]string{colState: valueOpen}), nil)
 }
 
 func (a *ActionRunner) closePR(
@@ -430,7 +430,7 @@ func (a *ActionRunner) closePR(
 	}
 	if err := a.rest.Patch(
 		path,
-		jsonBody(map[string]string{"state": "closed"}),
+		jsonBody(map[string]string{colState: valueClosed}),
 		closeResult,
 	); err != nil {
 		return fmt.Errorf("close PR: %w", err)
@@ -495,7 +495,7 @@ func (a *ActionRunner) mergePR(owner, repo string, number int) error {
 
 func (a *ActionRunner) updatePR(owner, repo string, number int, title, body string) error {
 	path := fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, number)
-	return a.rest.Patch(path, jsonBody(map[string]string{"title": title, "body": body}), nil)
+	return a.rest.Patch(path, jsonBody(map[string]string{colTitle: title, keyBody: body}), nil)
 }
 
 func (a *ActionRunner) fetchPRBody(owner, repo string, number int) (string, error) {
@@ -558,8 +558,8 @@ type prDetailFirstPage struct {
 
 func normalizePRFileStatus(changeType string) string {
 	switch strings.ToLower(changeType) {
-	case "deleted":
-		return "removed"
+	case valueDeleted:
+		return valueRemoved
 	default:
 		return strings.ToLower(changeType)
 	}
@@ -907,7 +907,7 @@ func (a *ActionRunner) fetchPRDetailReviewPage(
 				}
 			}
 		}`,
-		map[string]any{"id": nodeID, "after": after},
+		map[string]any{"id": nodeID, keyAfter: after},
 		&result,
 	)
 	if err != nil {
@@ -967,7 +967,7 @@ func (a *ActionRunner) fetchPRDetailFilePage(
 				}
 			}
 		}`,
-		map[string]any{"id": nodeID, "after": after},
+		map[string]any{"id": nodeID, keyAfter: after},
 		&result,
 	)
 	if err != nil {
@@ -1045,7 +1045,7 @@ func (a *ActionRunner) fetchPRDetailCheckPage(
 				}
 			}
 		}`,
-		map[string]any{"id": nodeID, "after": after},
+		map[string]any{"id": nodeID, keyAfter: after},
 		&result,
 	)
 	if err != nil {
@@ -1604,7 +1604,7 @@ func (a *ActionRunner) fetchChecksGraphQL(nodeID string) ([]PRCheck, error) {
 
 		if err := a.gql.Do(
 			query,
-			map[string]any{"id": nodeID, "after": after},
+			map[string]any{"id": nodeID, keyAfter: after},
 			&result,
 		); err != nil {
 			return nil, err
@@ -1815,7 +1815,7 @@ func (a *ActionRunner) queryCheckStates(nodeIDs []string) (map[string]checkState
 				}
 			}
 		}`,
-		map[string]any{"ids": nodeIDs},
+		map[string]any{keyIDs: nodeIDs},
 		&result,
 	)
 	if err != nil {

@@ -15,6 +15,7 @@ linters:
     - gocyclo # noisy
     - godot # noisy
     - gomoddirectives # unnecessary
+    - gomodguard # deprecated
     - inamedparam # noisy
     - ireturn # noisy
     - lll # noisy
@@ -95,7 +96,7 @@ linters:
           paramsOnly: false
         underef:
           skipRecvDeref: false
-    gomodguard:
+    gomodguard_v2:
       blocked:
         modules:
           - github.com/golang/protobuf:

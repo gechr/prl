@@ -27,15 +27,15 @@ const (
 func (m MergeStatus) String() string {
 	switch m {
 	case MergeStatusUnknown:
-		return "unknown"
+		return valueUnknown
 	case MergeStatusReady:
-		return "ready"
+		return valueReady
 	case MergeStatusBlocked:
-		return "blocked"
+		return valueBlocked
 	case MergeStatusCIPending:
-		return "ci_pending"
+		return valueMergeCIPending
 	case MergeStatusCIFailed:
-		return "ci_failed"
+		return valueMergeCIFailed
 	case MergeStatusConflict:
 		return valueConflict
 	}
@@ -165,7 +165,7 @@ func parseOutputFormat(s string) (OutputFormat, bool) {
 		return OutputTable, true
 	case valueURL, "u":
 		return OutputURL, true
-	case "bullet", "b":
+	case valueBullet, "b":
 		return OutputBullet, true
 	case outputJSON, "j":
 		return OutputJSON, true

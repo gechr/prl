@@ -1559,7 +1559,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		digit := int(msg.String()[0] - '0')
 		if m.jumpDigit > 0 {
-			// Second digit: combine with first (e.g. 1,0 → row 10).
+			// Second digit: combine with first (e.g. 1,0 -> row 10).
 			target := m.jumpDigit*10 + digit - 1
 			m.jumpDigit = 0
 			visible := m.visibleIndices()
@@ -2027,11 +2027,11 @@ func (m tuiModel) renderDetailContent() []string {
 		for _, f := range m.detail.Files {
 			var prefix string
 			switch f.Status {
-			case "added":
+			case valueAdded:
 				prefix = styleGreen.Bold(true).Render("A")
-			case "removed":
+			case valueRemoved:
 				prefix = styleRed.Bold(true).Render("D")
-			case "renamed":
+			case valueRenamed:
 				prefix = styleMagenta.Bold(true).Render("R")
 			default:
 				prefix = styleYellow.Bold(true).Render("M")
@@ -2880,7 +2880,7 @@ func (m tuiModel) rowIndexAt(y int) (int, bool) {
 	return visible[row], true
 }
 
-// toggleSort cycles a column through: default direction → reverse → off.
+// toggleSort cycles a column through: default direction -> reverse -> off.
 // Clicking a different column activates it with its default direction.
 func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
 	sortable := m.sortableColumns()
@@ -2890,12 +2890,12 @@ func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
 
 	oldRows := m.rows
 	if m.sortColumn == col {
-		// Already sorted by this column: cycle direction → off.
+		// Already sorted by this column: cycle direction -> off.
 		if m.sortAsc == defaultSortAsc(col) {
-			// Currently default direction → reverse.
+			// Currently default direction -> reverse.
 			m.sortAsc = !m.sortAsc
 		} else {
-			// Currently reversed → turn off.
+			// Currently reversed -> turn off.
 			m.sortColumn = ""
 			m.sortAsc = false
 		}
@@ -2943,7 +2943,7 @@ func (m tuiModel) sortableColumns() []string {
 // Time columns default to descending (newest first); strings to ascending (A-Z).
 func defaultSortAsc(column string) bool {
 	switch column {
-	case "updated", "created":
+	case valueUpdated, valueCreated:
 		return false
 	default:
 		return true

@@ -19,11 +19,11 @@ func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 	var results []string
 
 	switch kind {
-	case "author":
+	case colAuthor:
 		results = completeAuthors(cfg)
 	case "team":
 		results = completeTeams(cfg)
-	case "repo":
+	case valueRepo:
 		results = completeRepositories(cfg)
 	case "topic":
 		results = completeTopics(cfg)
@@ -58,7 +58,7 @@ func completeAuthors(cfg *Config) []string {
 	}
 
 	// Try plugin
-	if pluginResults := tryPluginComplete(cfg, "users"); pluginResults != nil {
+	if pluginResults := tryPluginComplete(cfg, valueUsers); pluginResults != nil {
 		for _, r := range pluginResults {
 			val, desc, _ := strings.Cut(r, tab)
 			normalized := normalizeBotAuthorValue(val, bots)

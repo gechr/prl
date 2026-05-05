@@ -51,7 +51,7 @@ func (p *prl) newTableRenderer(
 		if layout.hidden[colName] {
 			continue
 		}
-		if colName == "index" || colName == "idx" || colName == "i" {
+		if colName == colIndex || colName == colIdx || colName == colI {
 			if !cli.IsInteractive() {
 				showIndex = true
 			}
@@ -61,9 +61,9 @@ func (p *prl) newTableRenderer(
 			cols = append(cols, def)
 			// Inject status column after ref when not a terminal (plain text
 			// substitute for the color-coded merge status).
-			if colName == "ref" && !tty {
-				cols = append(cols, defs["status"])
-				cols = append(cols, defs["reason"])
+			if colName == colRef && !tty {
+				cols = append(cols, defs[colStatus])
+				cols = append(cols, defs[colReason])
 			}
 		} else {
 			clog.Warn().Str("column", colName).Msg("unknown column, ignoring")
@@ -71,8 +71,8 @@ func (p *prl) newTableRenderer(
 	}
 
 	renderOpts := []table.Option{
-		// prl default: newest at top → clib reverse=true.
-		// --reverse flag means oldest at top → clib reverse=false.
+		// prl default: newest at top -> clib reverse=true.
+		// --reverse flag means oldest at top -> clib reverse=false.
 		// Non-TTY / interactive multi-select: always newest at top.
 		table.WithReverse(cli.Interactive || cli.IsInteractive() || !cli.Reverse || !tty),
 		table.WithShowIndex(showIndex),
@@ -89,18 +89,18 @@ func (p *prl) newTableRenderer(
 // merge reason) is pre-computed in buildPRRowModels.
 func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 	return map[string]Column{
-		"index": {Name: "index", Header: "", Render: nil},
-		"idx":   {Name: "index", Header: "", Render: nil},
-		"i":     {Name: "index", Header: "", Render: nil},
-		"owner": {
-			Name:   "owner",
+		colIndex: {Name: colIndex, Header: "", Render: nil},
+		colIdx:   {Name: colIndex, Header: "", Render: nil},
+		colI:     {Name: colIndex, Header: "", Render: nil},
+		colOwner: {
+			Name:   colOwner,
 			Header: "OWNER",
 			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
 				return table.TextCell(row.Owner)
 			},
 		},
-		"ref": {
-			Name:   "ref",
+		colRef: {
+			Name:   colRef,
 			Header: "PR",
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				style := p.prMergeStyle(row.PR)
@@ -108,22 +108,22 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				return table.StyledCell(display, row.Ref)
 			},
 		},
-		"status": {
-			Name:   "status",
+		colStatus: {
+			Name:   colStatus,
 			Header: "STATUS",
 			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
 				return table.TextCell(p.renderMergeStatus(row.PR))
 			},
 		},
-		"reason": {
-			Name:   "reason",
+		colReason: {
+			Name:   colReason,
 			Header: "REASON",
 			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
 				return table.TextCell(row.MergeReason)
 			},
 		},
-		"repo": {
-			Name:   "repo",
+		valueRepo: {
+			Name:   valueRepo,
 			Header: "REPO",
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				url := fmt.Sprintf("https://github.com/%s", row.RepoNWO)
@@ -131,8 +131,8 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				return table.StyledCell(display, row.Repo)
 			},
 		},
-		"number": {
-			Name:   "number",
+		colNumber: {
+			Name:   colNumber,
 			Header: "NUMBER",
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				num := fmt.Sprintf("#%d", row.Number)
@@ -142,7 +142,8 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 			},
 		},
 		colTitle: {
-			Name:   colTitle,
+			Name: colTitle,
+			//nolint:goconst // column header literal; tests assert on rendered text
 			Header: "TITLE",
 			Flex:   true,
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
@@ -157,15 +158,15 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				return table.TextCell(title)
 			},
 		},
-		"labels": {
-			Name:   "labels",
+		colLabels: {
+			Name:   colLabels,
 			Header: "LABELS",
 			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
 				return table.TextCell(strings.Join(row.Labels, ", "))
 			},
 		},
-		"author": {
-			Name:   "author",
+		colAuthor: {
+			Name:   colAuthor,
 			Header: "AUTHOR",
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				am := row.Author
@@ -183,8 +184,8 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				return table.StyledCell(display, am.Display)
 			},
 		},
-		"state": {
-			Name:   "state",
+		colState: {
+			Name:   colState,
 			Header: "STATE",
 			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
 				return table.TextCell(row.State)
@@ -216,8 +217,8 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				return table.TimeCell(text, row.UpdatedAt)
 			},
 		},
-		"url": {
-			Name:   "url",
+		valueURL: {
+			Name:   valueURL,
 			Header: "URL",
 			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
 				return table.TextCell(row.URL)
@@ -228,12 +229,12 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 
 // defaultColumns returns the default column names for standard mode.
 func defaultColumns() []string {
-	return []string{"index", colTitle, "ref", "created", "updated"}
+	return []string{colIndex, colTitle, colRef, valueCreated, valueUpdated}
 }
 
 // defaultColumnsWithAuthor returns columns with the author column added.
 func defaultColumnsWithAuthor() []string {
-	return []string{"index", colTitle, "ref", "created", "updated", "author"}
+	return []string{colIndex, colTitle, colRef, valueCreated, valueUpdated, colAuthor}
 }
 
 // truncateTitle truncates a title to maxTitleLen runes, appending an ellipsis if needed.
@@ -257,17 +258,17 @@ func normalizeTUIDisplayText(text string) string {
 //
 //nolint:mnd // width estimates are inherently magic numbers
 var columnWidthEstimate = map[string]int{
-	"index": 3, "idx": 3, "i": 3,
-	"ref": 20, "repo": 15, "owner": 25,
-	"number": 5, "author": 12, "state": 6, "labels": 15,
-	"status": 8, "reason": 12, "url": 50,
-	"created": 14, "updated": 14,
+	colIndex: 3, colIdx: 3, colI: 3,
+	colRef: 20, valueRepo: 15, colOwner: 25,
+	colNumber: 5, colAuthor: 12, colState: 6, colLabels: 15,
+	colStatus: 8, colReason: 12, valueURL: 50,
+	valueCreated: 14, valueUpdated: 14,
 	colTitle: 30,
 }
 
 //nolint:mnd // width estimates are inherently magic numbers
 var columnWidthEstimateCompact = map[string]int{
-	"created": 7, "updated": 7,
+	valueCreated: 7, valueUpdated: 7,
 }
 
 // Column groups to progressively hide when the terminal is too narrow, in order.

@@ -554,7 +554,7 @@ func classifySlackRecipient(recipient string) (string, []string) {
 	if strings.Contains(recipient, ",") {
 		parts := splitCSV(recipient)
 		if len(parts) > 1 {
-			return "users", parts
+			return valueUsers, parts
 		}
 		if len(parts) == 1 {
 			return classifySlackRecipient(parts[0])
@@ -563,8 +563,8 @@ func classifySlackRecipient(recipient string) (string, []string) {
 	}
 
 	if strings.HasPrefix(recipient, "@") || strings.Contains(recipient, "@") {
-		return "user", []string{recipient}
+		return valueUser, []string{recipient}
 	}
 
-	return "channel", []string{recipient}
+	return valueChannel, []string{recipient}
 }

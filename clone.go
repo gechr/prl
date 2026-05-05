@@ -65,7 +65,7 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool)
 					t.Number,
 				)
 		}
-		return "repo", repoURL, name
+		return valueRepo, repoURL, name
 	}
 
 	useJJ := strings.EqualFold(vcs, vcsJJ)
@@ -216,7 +216,7 @@ func fetchHeadBranchesGraphQL(
 					}
 				}
 			}`,
-			map[string]any{"ids": ids},
+			map[string]any{keyIDs: ids},
 			&result,
 		); err != nil {
 			return nil, fmt.Errorf("querying head branch names by node id: %w", err)

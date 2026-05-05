@@ -91,21 +91,21 @@ func parseDate(input string) (string, error) {
 		}
 
 		switch unit {
-		case "y", "year", "years":
+		case "y", unitYear, unitYears:
 			years += n
-		case "mo", "month", "months":
+		case "mo", unitMonth, unitMonths:
 			months += n
-		case "w", "week", "weeks":
+		case "w", unitWeek, unitWeeks:
 			days += n * daysPerWeek
-		case "d", "day", "days":
+		case "d", unitDay, unitDays:
 			days += n
-		case "h", "hr", "hrs", "hour", "hours":
+		case "h", "hr", "hrs", unitHour, unitHours:
 			dur += time.Duration(n) * time.Hour
 			useDateTime = true
-		case "m", "min", "mins", "minute", "minutes":
+		case "m", "min", "mins", unitMinute, unitMinutes:
 			dur += time.Duration(n) * time.Minute
 			useDateTime = true
-		case "s", "sec", "secs", "second", "seconds":
+		case "s", "sec", "secs", unitSecond, unitSeconds:
 			dur += time.Duration(n) * time.Second
 			useDateTime = true
 		}
@@ -147,19 +147,19 @@ var (
 // driftUnitMultiplier returns the multiplier in seconds for a drift unit.
 func driftUnitMultiplier(unit string) int64 {
 	switch unit {
-	case "y", "year", "years":
+	case "y", unitYear, unitYears:
 		return secsPerYear
-	case "mo", "month", "months":
+	case "mo", unitMonth, unitMonths:
 		return secsPerMonth
-	case "w", "week", "weeks":
+	case "w", unitWeek, unitWeeks:
 		return secsPerWeek
-	case "d", "day", "days":
+	case "d", unitDay, unitDays:
 		return secsPerDay
-	case "h", "hr", "hrs", "hour", "hours":
+	case "h", "hr", "hrs", unitHour, unitHours:
 		return secsPerHour
-	case "m", "min", "mins", "minute", "minutes":
+	case "m", "min", "mins", unitMinute, unitMinutes:
 		return secsPerMinute
-	case "s", "sec", "secs", "second", "seconds":
+	case "s", "sec", "secs", unitSecond, unitSeconds:
 		return 1
 	default:
 		return 0
@@ -268,13 +268,13 @@ func formatDuration(seconds int64) string {
 		plural  string
 	}
 	units := []unit{
-		{secsPerYear, "year", "years"},
-		{secsPerMonth, "month", "months"},
-		{secsPerWeek, "week", "weeks"},
-		{secsPerDay, "day", "days"},
-		{secsPerHour, "hour", "hours"},
-		{secsPerMinute, "minute", "minutes"},
-		{1, "second", "seconds"},
+		{secsPerYear, unitYear, unitYears},
+		{secsPerMonth, unitMonth, unitMonths},
+		{secsPerWeek, unitWeek, unitWeeks},
+		{secsPerDay, unitDay, unitDays},
+		{secsPerHour, unitHour, unitHours},
+		{secsPerMinute, unitMinute, unitMinutes},
+		{1, unitSecond, unitSeconds},
 	}
 	for _, u := range units {
 		if seconds%u.divisor == 0 {

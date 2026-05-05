@@ -38,12 +38,12 @@ func normalizeReviewProvider(provider string) reviewProvider {
 func reviewPromptPlaceholderNames() []string {
 	return []string{
 		"prNumber",
-		"repo",
-		"owner",
+		valueRepo,
+		colOwner,
 		"ownerWithRepo",
 		"prURL",
 		"prRef",
-		"title",
+		colTitle,
 	}
 }
 
@@ -139,12 +139,12 @@ func renderReviewPrompt(template string, pr PullRequest) (string, error) {
 	owner, repo := prOwnerRepo(pr)
 	values := map[string]string{
 		"prNumber":      fmt.Sprintf("%d", pr.Number),
-		"repo":          repo,
-		"owner":         owner,
+		valueRepo:       repo,
+		colOwner:        owner,
 		"ownerWithRepo": pr.Repository.NameWithOwner,
 		"prURL":         pr.URL,
 		"prRef":         pr.Ref(),
-		"title":         pr.Title,
+		colTitle:        pr.Title,
 	}
 
 	rendered := aiReviewPromptPlaceholderPattern.ReplaceAllStringFunc(

@@ -16,26 +16,69 @@ const valueEllipsis = "…"
 
 // Filter/state string values.
 const (
+	valueAdded    = "added"
 	valueAll      = "all"
 	valueAny      = "any"
 	valueAtMe     = "@me"
 	valueBehind   = "behind"
 	valueBlocked  = "blocked"
+	valueBullet   = "bullet"
+	valueChannel  = "channel"
 	valueClosed   = "closed"
 	valueConflict = "conflict"
 	valueCreated  = "created"
+	valueDeleted  = "deleted"
+	valueHide     = "hide"
 	valueMerged   = "merged"
 	valueName     = "name"
 	valueOpen     = "open"
 	valueReady    = "ready"
 	valueRejected = "rejected"
+	valueRemoved  = "removed"
+	valueRenamed  = "renamed"
 	valueRepo     = "repo"
 	valueTable    = "table"
 	valueUnknown  = "unknown"
 	valueUpdated  = "updated"
 	valueURL      = "url"
+	valueUser     = "user"
+	valueUsers    = "users"
 
-	colTitle = "title"
+	colAuthor = "author"
+	colI      = "i"
+	colIdx    = "idx"
+	colIndex  = "index"
+	colLabels = "labels"
+	colNumber = "number"
+	colOwner  = "owner"
+	colReason = "reason"
+	colRef    = "ref"
+	colState  = "state"
+	colStatus = "status"
+	colTitle  = "title"
+
+	// Time-unit tokens parsed in query relative-date expressions.
+	unitYear    = "year"
+	unitYears   = "years"
+	unitMonth   = "month"
+	unitMonths  = "months"
+	unitWeek    = "week"
+	unitWeeks   = "weeks"
+	unitDay     = "day"
+	unitDays    = "days"
+	unitHour    = "hour"
+	unitHours   = "hours"
+	unitMinute  = "minute"
+	unitMinutes = "minutes"
+	unitSecond  = "second"
+	unitSeconds = "seconds"
+
+	// JSON/GraphQL field names exchanged with the GitHub API.
+	keyAfter = "after"
+	keyBody  = "body"
+	keyIDs   = "ids"
+
+	mediaTypeGitHubDiff = "application/vnd.github.diff"
 
 	copilotReviewer = "copilot-pull-request-reviewer[bot]"
 )
@@ -43,6 +86,22 @@ const (
 // Output format string values.
 const (
 	outputJSON = "json"
+)
+
+// MergeStatus.String() display strings. Distinct from the GitHub API
+// check-state enum values below (valueCIPending, valueCIFailure).
+const (
+	valueMergeCIFailed  = "ci_failed"
+	valueMergeCIPending = "ci_pending"
+)
+
+// PR table-model status strings (pr_table_model.go). valueMergeCIPending
+// above is shared.
+const (
+	valueCIFail        = "ci_fail"
+	valueMergeConflict = "merge_conflict"
+	valueNeedsReview   = "needs_review"
+	valueReadyToMerge  = "ready_to_merge"
 )
 
 // GitHub API status values.
@@ -149,7 +208,7 @@ const (
 	watchMinInterval    = 7 * time.Second  // floor: few results
 	watchMaxInterval    = 1 * time.Minute  // ceiling: many results
 	watchScalePer       = 1 * time.Second  // additional delay per result
-	watchIdleDecay      = 45 * time.Minute // no interaction for this long → interval reaches watchIdleMax
+	watchIdleDecay      = 45 * time.Minute // no interaction for this long -> interval reaches watchIdleMax
 	watchIdleMax        = 3 * time.Minute  // ceiling when fully idle
 	detailCheckInterval = 15 * time.Second // poll interval for detail-view check refresh
 )

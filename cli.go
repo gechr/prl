@@ -290,7 +290,10 @@ func (c *CLI) Validate() error {
 	}
 	if c.Review != "" {
 		switch c.Review {
-		case "none", "required", "approved", "changes_requested":
+		case valueReviewFilterNone,
+			valueReviewFilterRequired,
+			valueReviewFilterApproved,
+			valueReviewFilterChanges:
 			// valid
 		default:
 			return fmt.Errorf(
@@ -301,7 +304,7 @@ func (c *CLI) Validate() error {
 	}
 	if c.Match != "" {
 		switch c.Match {
-		case "title", "body", "comments":
+		case colTitle, keyBody, "comments":
 			// valid
 		default:
 			return fmt.Errorf(
@@ -315,7 +318,7 @@ func (c *CLI) Validate() error {
 
 // Normalize applies post-parse normalization.
 func (c *CLI) Normalize(cfg *Config) {
-	// Normalize "any" → "all" for author
+	// Normalize "any" -> "all" for author
 	if c.Author != nil {
 		for i, v := range c.Author.Values {
 			if strings.ToLower(v) == valueAny {
@@ -536,7 +539,7 @@ func (c *CLI) LimitValue() int {
 // A leading "-" or "!" on any term is converted to the GitHub "NOT" keyword
 // because GitHub search uses "-" only for qualifier negation (e.g. -author:foo),
 // not for free-text negation. Multi-word terms are quoted so the phrase is
-// treated as a unit (e.g. -"foo bar" → NOT "foo bar").
+// treated as a unit (e.g. -"foo bar" -> NOT "foo bar").
 func (c *CLI) QueryString() string {
 	parts := make([]string, len(c.Query))
 	for i, q := range c.Query {

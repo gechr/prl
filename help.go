@@ -73,7 +73,7 @@ func (p *prl) buildConfigurationSection(cfg *Config) help.Section {
 			help.Text("  A plugin binary enables smart filtering:"),
 			help.FlagGroup{
 				{
-					Long: "author",
+					Long: colAuthor,
 					Desc: "Show real names via plugin or config authors",
 				},
 				{

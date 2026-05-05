@@ -214,7 +214,7 @@ func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 		codexReviewEffortMedium,
 	)
 
-	// Prompt is loaded from a file at runtime — the typed shell command
+	// Prompt is loaded from a file at runtime - the typed shell command
 	// must not embed the prompt body (which may contain newlines that
 	// terminal initial-input automation would otherwise execute as
 	// separate commands).

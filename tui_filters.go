@@ -96,27 +96,36 @@ type filterOptionDef struct {
 // Bots value represents NoBot (true=hide). Archived value represents Archived flag (true=show).
 var filterOptionDefs = [...]filterOptionDef{
 	{"State", []filterChoice{
-		{"open", "open"},
-		{"closed", "closed"},
-		{"merged", "merged"},
-		{"ready", "ready"},
-		{"all", "all"},
+		{valueOpen, valueOpen},
+		{valueClosed, valueClosed},
+		{valueMerged, valueMerged},
+		{valueReady, valueReady},
+		{valueAll, valueAll},
 	}},
 	{
 		"Drafts",
-		[]filterChoice{{"show", ""}, {"hide", filterChoiceFalse}},
+		[]filterChoice{{tuiHelpShow, ""}, {valueHide, filterChoiceFalse}},
 	},
-	{"Bots", []filterChoice{{"show", filterChoiceFalse}, {"hide", filterChoiceTrue}}},
-	{"Archived", []filterChoice{{"show", filterChoiceTrue}, {"hide", filterChoiceFalse}}},
-	{"CI", []filterChoice{
-		{"success", "success"}, {"failure", "failure"}, {"pending", "pending"}, {"all", ""},
-	}},
+	{"Bots", []filterChoice{{tuiHelpShow, filterChoiceFalse}, {valueHide, filterChoiceTrue}}},
+	{"Archived", []filterChoice{{tuiHelpShow, filterChoiceTrue}, {valueHide, filterChoiceFalse}}},
+	{
+		"CI",
+		[]filterChoice{
+			{
+				ciStatusSuccess,
+				ciStatusSuccess,
+			},
+			{ciStatusFailure, ciStatusFailure},
+			{ciStatusPending, ciStatusPending},
+			{valueAll, ""},
+		},
+	},
 	{"Review", []filterChoice{
-		{"required", valueReviewFilterRequired},
-		{"approved", valueReviewFilterApproved},
+		{valueReviewFilterRequired, valueReviewFilterRequired},
+		{valueReviewFilterApproved, valueReviewFilterApproved},
 		{"changes", valueReviewFilterChanges},
-		{"none", valueReviewFilterNone},
-		{"all", ""},
+		{valueReviewFilterNone, valueReviewFilterNone},
+		{valueAll, ""},
 	}},
 }
 

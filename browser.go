@@ -15,6 +15,7 @@ func openBrowser(urls ...string) error {
 	case "linux":
 		name = "xdg-open"
 	default:
+		//nolint:goconst // macOS launcher binary, not the PR state value
 		name = "open"
 	}
 	for _, url := range urls {

@@ -189,7 +189,7 @@ func defaultConfig() map[string]any {
 		keyDefaultAuthors:     []string{valueAtMe},
 		keyDefaultBots:        true,
 		keyDefaultLimit:       defaultLimit,
-		keyDefaultMatch:       "title",
+		keyDefaultMatch:       colTitle,
 		keyDefaultMergeMethod: "squash",
 		keyDefaultOwners:      []string{},
 		keyDefaultOutput:      valueTable,
@@ -281,7 +281,7 @@ func loadConfig() (*Config, error) {
 	}
 	if cfg.Default.Match != "" {
 		switch cfg.Default.Match {
-		case "title", "body", "comments":
+		case colTitle, keyBody, "comments":
 		default:
 			return nil, fmt.Errorf(
 				"invalid default.match %q (expected title, body, or comments)",

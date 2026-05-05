@@ -338,7 +338,7 @@ func fetchAutomergeStatus(gql *api.GraphQLClient, prs []PullRequest) (map[string
 				}
 			}
 		}`,
-		map[string]any{"ids": ids},
+		map[string]any{keyIDs: ids},
 		&result,
 	); err != nil {
 		return nil, fmt.Errorf("querying automerge status: %w", err)
@@ -429,7 +429,7 @@ func fetchReviewDecisions(gql *api.GraphQLClient, prs []PullRequest) (map[string
 				}
 			}
 		}`,
-		map[string]any{"ids": ids},
+		map[string]any{keyIDs: ids},
 		&result,
 	); err != nil {
 		return nil, fmt.Errorf("querying review decisions: %w", err)
@@ -786,7 +786,7 @@ func fetchHeadRefOIDs(gql *api.GraphQLClient, ids []string) (map[string]string, 
 
 	if err := gql.Do(
 		`query HeadRefOIDs($ids:[ID!]!){nodes(ids:$ids){... on PullRequest{id headRefOid}}}`,
-		map[string]any{"ids": ids},
+		map[string]any{keyIDs: ids},
 		&result,
 	); err != nil {
 		return nil, fmt.Errorf("querying head refs: %w", err)
