@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"al.essio.dev/pkg/shellescape"
 	tea "charm.land/bubbletea/v2"
+	"github.com/gechr/x/shell"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,7 +136,7 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	pr := testReviewPullRequest()
 	const promptFile = "/tmp/prl-prompt.txt"
-	promptExpr := fmt.Sprintf(`"$(cat %s)"`, shellescape.Quote(promptFile))
+	promptExpr := fmt.Sprintf(`"$(cat %s)"`, shell.Quote(promptFile))
 
 	cmd := buildAIReviewCommand(
 		pr,
@@ -146,19 +146,19 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		claudeReviewModelSonnet,
 		claudeReviewEffortHigh,
 	)
-	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelSonnet)))
-	require.Equal(t, 0, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelOpus)))
-	require.Equal(t, 1, strings.Count(cmd, "--effort="+shellescape.Quote(claudeReviewEffortHigh)))
+	require.Equal(t, 1, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelSonnet)))
+	require.Equal(t, 0, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelOpus)))
+	require.Equal(t, 1, strings.Count(cmd, "--effort="+shell.Quote(claudeReviewEffortHigh)))
 	require.Contains(t, cmd, promptExpr)
 
 	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewProviderClaude, "", "")
-	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelSonnet)))
+	require.Equal(t, 1, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelSonnet)))
 	require.Equal(
 		t,
 		1,
 		strings.Count(
 			cmd,
-			"--effort="+shellescape.Quote(claudeReviewEffortMedium),
+			"--effort="+shell.Quote(claudeReviewEffortMedium),
 		),
 	)
 
@@ -175,8 +175,8 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		cmd,
 		fmt.Sprintf(
 			"codex -m %s -c model_reasoning_effort=%s %s",
-			shellescape.Quote(codexReviewModel54Mini),
-			shellescape.Quote(codexReviewEffortXHigh),
+			shell.Quote(codexReviewModel54Mini),
+			shell.Quote(codexReviewEffortXHigh),
 			promptExpr,
 		),
 	)
@@ -194,7 +194,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		cmd,
 		fmt.Sprintf(
 			"gemini --model %s --prompt-interactive %s",
-			shellescape.Quote("prl-review"),
+			shell.Quote("prl-review"),
 			promptExpr,
 		),
 	)
@@ -218,8 +218,8 @@ func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 	// must not embed the prompt body (which may contain newlines that
 	// terminal initial-input automation would otherwise execute as
 	// separate commands).
-	require.Contains(t, cmd, fmt.Sprintf(`"$(cat %s)"`, shellescape.Quote(promptFile)))
-	require.Contains(t, cmd, fmt.Sprintf("; rm -f %s", shellescape.Quote(promptFile)))
+	require.Contains(t, cmd, fmt.Sprintf(`"$(cat %s)"`, shell.Quote(promptFile)))
+	require.Contains(t, cmd, fmt.Sprintf("; rm -f %s", shell.Quote(promptFile)))
 }
 
 func TestWriteReviewPromptFilePreservesContent(t *testing.T) {

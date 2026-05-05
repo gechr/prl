@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"al.essio.dev/pkg/shellescape"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
@@ -22,6 +21,7 @@ import (
 	"github.com/gechr/primer/scrollwheel"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/x/ansi"
+	"github.com/gechr/x/shell"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,7 +55,7 @@ low  medium  high  xhigh  max  auto
 }
 
 func TestShellSingleQuoteEscapesSingleQuotes(t *testing.T) {
-	require.Equal(t, `'it'"'"'s fine'`, shellescape.Quote("it's fine"))
+	require.Equal(t, `'it'"'"'s fine'`, shell.Quote("it's fine"))
 }
 
 func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {

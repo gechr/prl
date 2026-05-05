@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	"al.essio.dev/pkg/shellescape"
 	tea "charm.land/bubbletea/v2"
+	"github.com/gechr/x/shell"
 )
 
 type aiReviewLauncher string
@@ -607,7 +607,7 @@ func writeReviewPromptFile(prompt string) (string, error) {
 // contents at runtime, plus a cleanup snippet for the temp file. The
 // expression must not be further shell-quoted.
 func promptArg(promptFile string) (expr, cleanup string) {
-	q := shellescape.Quote(promptFile)
+	q := shell.Quote(promptFile)
 	return fmt.Sprintf(`"$(cat %s)"`, q), fmt.Sprintf("; rm -f %s", q)
 }
 
@@ -633,10 +633,10 @@ func buildAIReviewCommand(
 	reviewDir := fmt.Sprintf("%s/prl/reviews/%s/%d", cacheHome, pr.Repository.Name, pr.Number)
 	baseCmd := fmt.Sprintf(
 		"/usr/bin/trash %s 2>/dev/null; /bin/mkdir -p %s && cd %s && git clone --quiet --depth 1 %s . && git fetch origin refs/pull/%d/head:pr-%d --no-tags && git checkout pr-%d && ",
-		shellescape.Quote(reviewDir),
-		shellescape.Quote(reviewDir),
-		shellescape.Quote(reviewDir),
-		shellescape.Quote(remote),
+		shell.Quote(reviewDir),
+		shell.Quote(reviewDir),
+		shell.Quote(reviewDir),
+		shell.Quote(remote),
 		pr.Number,
 		pr.Number,
 		pr.Number,
@@ -648,8 +648,8 @@ func buildAIReviewCommand(
 	case reviewProviderCodex:
 		return baseCmd + fmt.Sprintf(
 			"codex -m %s -c model_reasoning_effort=%s %s%s",
-			shellescape.Quote(cmdModel),
-			shellescape.Quote(cmdEffort),
+			shell.Quote(cmdModel),
+			shell.Quote(cmdEffort),
 			prompt,
 			cleanup,
 		)
@@ -658,9 +658,9 @@ func buildAIReviewCommand(
 	case reviewProviderUnknown, reviewProviderClaude:
 		return baseCmd + fmt.Sprintf(
 			"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s%s",
-			shellescape.Quote(cmdModel),
+			shell.Quote(cmdModel),
 			claudeEffortArg(cmdEffort),
-			shellescape.Quote(
+			shell.Quote(
 				"You are an expert code reviewer. Be thorough, precise, and actionable.",
 			),
 			prompt,
@@ -669,9 +669,9 @@ func buildAIReviewCommand(
 	}
 	return baseCmd + fmt.Sprintf(
 		"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s%s",
-		shellescape.Quote(cmdModel),
+		shell.Quote(cmdModel),
 		claudeEffortArg(cmdEffort),
-		shellescape.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
+		shell.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
 		prompt,
 		cleanup,
 	)
@@ -681,7 +681,7 @@ func claudeEffortArg(effort string) string {
 	if effort == claudeReviewEffortAuto {
 		return ""
 	}
-	return fmt.Sprintf("--effort=%s ", shellescape.Quote(effort))
+	return fmt.Sprintf("--effort=%s ", shell.Quote(effort))
 }
 
 // buildGeminiReviewCommand expects promptExpr to be an already shell-safe
@@ -691,16 +691,16 @@ func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string) strin
 	if err != nil {
 		return fmt.Sprintf(
 			"gemini --model %s --prompt-interactive %s",
-			shellescape.Quote(model),
+			shell.Quote(model),
 			promptExpr,
 		)
 	}
 	return fmt.Sprintf(
 		"/bin/mkdir -p %s/.gemini && printf '%%s' %s > %s/.gemini/settings.json && gemini --model %s --prompt-interactive %s",
-		shellescape.Quote(reviewDir),
-		shellescape.Quote(string(settingsJSON)),
-		shellescape.Quote(reviewDir),
-		shellescape.Quote("prl-review"),
+		shell.Quote(reviewDir),
+		shell.Quote(string(settingsJSON)),
+		shell.Quote(reviewDir),
+		shell.Quote("prl-review"),
 		promptExpr,
 	)
 }

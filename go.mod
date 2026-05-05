@@ -5,7 +5,6 @@ go 1.26.2
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
 require (
-	al.essio.dev/pkg/shellescape v1.6.0
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/huh/v2 v2.0.3
