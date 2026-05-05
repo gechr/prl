@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -134,10 +135,12 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 
 func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	pr := testReviewPullRequest()
+	const promptFile = "/tmp/prl-prompt.txt"
+	promptExpr := fmt.Sprintf(`"$(cat %s)"`, shellescape.Quote(promptFile))
 
 	cmd := buildAIReviewCommand(
 		pr,
-		"review prompt",
+		promptFile,
 		nil,
 		reviewProviderClaude,
 		claudeReviewModelSonnet,
@@ -146,8 +149,9 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelSonnet)))
 	require.Equal(t, 0, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelOpus)))
 	require.Equal(t, 1, strings.Count(cmd, "--effort="+shellescape.Quote(claudeReviewEffortHigh)))
+	require.Contains(t, cmd, promptExpr)
 
-	cmd = buildAIReviewCommand(pr, "review prompt", nil, reviewProviderClaude, "", "")
+	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewProviderClaude, "", "")
 	require.Equal(t, 1, strings.Count(cmd, "--model="+shellescape.Quote(claudeReviewModelSonnet)))
 	require.Equal(
 		t,
@@ -160,7 +164,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 
 	cmd = buildAIReviewCommand(
 		pr,
-		"review prompt",
+		promptFile,
 		nil,
 		reviewProviderCodex,
 		codexReviewModel54Mini,
@@ -173,13 +177,13 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 			"codex -m %s -c model_reasoning_effort=%s %s",
 			shellescape.Quote(codexReviewModel54Mini),
 			shellescape.Quote(codexReviewEffortXHigh),
-			shellescape.Quote("review prompt"),
+			promptExpr,
 		),
 	)
 
 	cmd = buildAIReviewCommand(
 		pr,
-		"review prompt",
+		promptFile,
 		nil,
 		reviewProviderGemini,
 		geminiReviewModel3Pro,
@@ -191,31 +195,42 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		fmt.Sprintf(
 			"gemini --model %s --prompt-interactive %s",
 			shellescape.Quote("prl-review"),
-			shellescape.Quote("review prompt"),
+			promptExpr,
 		),
 	)
 	require.Contains(t, cmd, `"thinkingLevel":"HIGH"`)
 }
 
-func TestBuildAIReviewCommandPreservesPromptNewlines(t *testing.T) {
+func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 	pr := testReviewPullRequest()
-	prompt := `line one
-
-line two`
+	const promptFile = "/tmp/prl-prompt.txt"
 
 	cmd := buildAIReviewCommand(
 		pr,
-		prompt,
+		promptFile,
 		nil,
 		reviewProviderCodex,
 		codexReviewModel54,
 		codexReviewEffortMedium,
 	)
 
-	require.Contains(t, cmd, `'line one
+	// Prompt is loaded from a file at runtime — the typed shell command
+	// must not embed the prompt body (which may contain newlines that
+	// terminal initial-input automation would otherwise execute as
+	// separate commands).
+	require.Contains(t, cmd, fmt.Sprintf(`"$(cat %s)"`, shellescape.Quote(promptFile)))
+	require.Contains(t, cmd, fmt.Sprintf("; rm -f %s", shellescape.Quote(promptFile)))
+}
 
-line two'`)
-	require.NotContains(t, cmd, `line one\n\nline two`)
+func TestWriteReviewPromptFilePreservesContent(t *testing.T) {
+	prompt := "line one\n\nline two\nwith 'single quotes' and \"doubles\""
+	path, err := writeReviewPromptFile(prompt)
+	require.NoError(t, err)
+	defer os.Remove(path)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, prompt, string(got))
 }
 
 func TestDefaultAIReviewPromptUsesParagraphs(t *testing.T) {
@@ -376,7 +391,7 @@ func TestBuildAIReviewCommandUsesConfiguredFallbackChoices(t *testing.T) {
 		},
 	}
 
-	cmd := buildAIReviewCommand(pr, "review prompt", cfg, reviewProviderCodex, "", "")
+	cmd := buildAIReviewCommand(pr, "/tmp/prl-prompt.txt", cfg, reviewProviderCodex, "", "")
 
 	require.Contains(t, cmd, "codex -m gpt-5.5 -c model_reasoning_effort=deep")
 }
@@ -386,7 +401,7 @@ func TestBuildAIReviewCommandUsesGeminiBudgetFor25Flash(t *testing.T) {
 
 	cmd := buildAIReviewCommand(
 		pr,
-		"review prompt",
+		"/tmp/prl-prompt.txt",
 		nil,
 		reviewProviderGemini,
 		geminiReviewModelFlash,

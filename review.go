@@ -559,9 +559,14 @@ func launchAIReview(
 		return fmt.Errorf("unsupported terminal %q", os.Getenv("TERM_PROGRAM"))
 	}
 
+	promptFile, err := writeReviewPromptFile(prompt)
+	if err != nil {
+		return err
+	}
+
 	script, err := buildAIReviewAppleScript(
 		launcher,
-		buildAIReviewCommand(pr, prompt, cfg, provider, model, effort),
+		buildAIReviewCommand(pr, promptFile, cfg, provider, model, effort),
 	)
 	if err != nil {
 		return err
@@ -579,9 +584,36 @@ func launchAIReview(
 	return nil
 }
 
+// writeReviewPromptFile writes the prompt to a temp file so the
+// AppleScript-typed shell command can reference it by path. Inlining the
+// prompt as a quoted argv fails when the prompt contains newlines:
+// terminal "initial input" / "write text" automation interprets each \n
+// as Enter, executing prompt lines as separate shell commands before the
+// AI tool ever runs.
+func writeReviewPromptFile(prompt string) (string, error) {
+	f, err := os.CreateTemp("", "prl-review-*.txt")
+	if err != nil {
+		return "", fmt.Errorf("write prompt file: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(prompt); err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("write prompt file: %w", err)
+	}
+	return f.Name(), nil
+}
+
+// promptArg returns a shell expression that expands to the prompt
+// contents at runtime, plus a cleanup snippet for the temp file. The
+// expression must not be further shell-quoted.
+func promptArg(promptFile string) (expr, cleanup string) {
+	q := shellescape.Quote(promptFile)
+	return fmt.Sprintf(`"$(cat %s)"`, q), fmt.Sprintf("; rm -f %s", q)
+}
+
 func buildAIReviewCommand(
 	pr PullRequest,
-	prompt string,
+	promptFile string,
 	cfg *Config,
 	provider reviewProvider,
 	model string,
@@ -611,43 +643,37 @@ func buildAIReviewCommand(
 	)
 	cmdModel := normalizeReviewModel(cfg, provider, model)
 	cmdEffort := normalizeReviewEffort(cfg, provider, cmdModel, effort)
+	prompt, cleanup := promptArg(promptFile)
 	switch provider {
 	case reviewProviderCodex:
 		return baseCmd + fmt.Sprintf(
-			"codex -m %s -c model_reasoning_effort=%s %s",
+			"codex -m %s -c model_reasoning_effort=%s %s%s",
 			shellescape.Quote(cmdModel),
 			shellescape.Quote(cmdEffort),
-			shellescape.Quote(prompt),
+			prompt,
+			cleanup,
 		)
 	case reviewProviderGemini:
-		return baseCmd + buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt)
-	case reviewProviderUnknown:
+		return baseCmd + buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt) + cleanup
+	case reviewProviderUnknown, reviewProviderClaude:
 		return baseCmd + fmt.Sprintf(
-			"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+			"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s%s",
 			shellescape.Quote(cmdModel),
 			claudeEffortArg(cmdEffort),
 			shellescape.Quote(
 				"You are an expert code reviewer. Be thorough, precise, and actionable.",
 			),
-			shellescape.Quote(prompt),
-		)
-	case reviewProviderClaude:
-		return baseCmd + fmt.Sprintf(
-			"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s",
-			shellescape.Quote(cmdModel),
-			claudeEffortArg(cmdEffort),
-			shellescape.Quote(
-				"You are an expert code reviewer. Be thorough, precise, and actionable.",
-			),
-			shellescape.Quote(prompt),
+			prompt,
+			cleanup,
 		)
 	}
 	return baseCmd + fmt.Sprintf(
-		"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s",
+		"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s%s",
 		shellescape.Quote(cmdModel),
 		claudeEffortArg(cmdEffort),
 		shellescape.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
-		shellescape.Quote(prompt),
+		prompt,
+		cleanup,
 	)
 }
 
@@ -658,13 +684,15 @@ func claudeEffortArg(effort string) string {
 	return fmt.Sprintf("--effort=%s ", shellescape.Quote(effort))
 }
 
-func buildGeminiReviewCommand(reviewDir, model, effort, prompt string) string {
+// buildGeminiReviewCommand expects promptExpr to be an already shell-safe
+// expression (e.g. "$(cat /path)"); it must not be further quoted.
+func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string) string {
 	settingsJSON, err := json.Marshal(geminiReviewSettings(model, effort))
 	if err != nil {
 		return fmt.Sprintf(
 			"gemini --model %s --prompt-interactive %s",
 			shellescape.Quote(model),
-			shellescape.Quote(prompt),
+			promptExpr,
 		)
 	}
 	return fmt.Sprintf(
@@ -673,7 +701,7 @@ func buildGeminiReviewCommand(reviewDir, model, effort, prompt string) string {
 		shellescape.Quote(string(settingsJSON)),
 		shellescape.Quote(reviewDir),
 		shellescape.Quote("prl-review"),
-		shellescape.Quote(prompt),
+		promptExpr,
 	)
 }
 
