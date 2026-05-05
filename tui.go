@@ -1863,7 +1863,7 @@ func (m tuiModel) renderViewportContent(
 	vp viewport.Model,
 	withScrollbar bool,
 ) string {
-	return view.RenderContent(lines, vp, withScrollbar, scrollbar.Styles{
+	return view.RenderContent(lines, vp, withScrollbar, scrollbar.Config{}, scrollbar.Styles{
 		Thumb: lg.NewStyle().Foreground(colorAccent),
 		Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
 	})
