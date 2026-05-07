@@ -372,6 +372,15 @@ func TestBuildSearchQuery_UsesOwnerQualifier(t *testing.T) {
 	require.Equal(t, "type:pr archived:false state:open user:acme", params.Query)
 }
 
+func TestBuildSearchQuery_SelfRequiredUsesGitHubRequiredQualifier(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Review: valueReviewFilterSelfRequired,
+	}, &Config{})
+	require.NoError(t, err)
+	require.Contains(t, params.Query, "review:required")
+	require.NotContains(t, params.Query, valueReviewFilterSelfRequired)
+}
+
 func TestBuildSearchQuery_AppendsBotSuffixForPluginProvidedBots(t *testing.T) {
 	dir := t.TempDir()
 	pluginPath := writeExecutable(

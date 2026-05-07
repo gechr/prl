@@ -31,17 +31,19 @@ type listMetadataCacheKey struct {
 }
 
 type listMetadataCacheEntry struct {
-	headSHA           string
-	mergeStatus       MergeStatus
-	mergeStatusLoaded bool
-	automerge         bool
-	automergeLoaded   bool
-	reviewDecision    string
-	reviewLoaded      bool
-	closedActor       string
-	closedActorLoaded bool
-	mergedActor       string
-	mergedActorLoaded bool
+	headSHA              string
+	mergeStatus          MergeStatus
+	mergeStatusLoaded    bool
+	automerge            bool
+	automergeLoaded      bool
+	reviewDecision       string
+	reviewLoaded         bool
+	viewerApproved       bool
+	viewerApprovalLoaded bool
+	closedActor          string
+	closedActorLoaded    bool
+	mergedActor          string
+	mergedActorLoaded    bool
 }
 
 type listMetadataCache struct {
@@ -107,6 +109,13 @@ func (c *listMetadataCache) apply(
 			pr.Automerge = entry.automerge
 			pr.automergeLoaded = true
 		}
+	}
+	if req.viewerApproval {
+		if !entry.viewerApprovalLoaded {
+			return false
+		}
+		pr.viewerApproved = entry.viewerApproved
+		pr.viewerApprovalLoaded = true
 	}
 	if req.automerge && (!req.mergeStatus || pr.State != valueOpen) {
 		if !entry.automergeLoaded {
@@ -210,6 +219,10 @@ func (c *listMetadataCache) store(
 		entry.mergeStatusLoaded = true
 		entry.reviewDecision = pr.ReviewDecision
 		entry.reviewLoaded = pr.reviewDecisionLoaded
+	}
+	if req.viewerApproval {
+		entry.viewerApproved = pr.viewerApproved
+		entry.viewerApprovalLoaded = pr.viewerApprovalLoaded
 	}
 	if req.automerge && (pr.State != valueOpen || !req.mergeStatus) {
 		entry.automerge = pr.Automerge
@@ -520,6 +533,7 @@ type listMetadataRequest struct {
 	mergeStatus    bool
 	timelineClosed bool
 	timelineMerged bool
+	viewerApproval bool
 }
 
 func buildTimelineRoot(req listMetadataRequest) string {
@@ -558,6 +572,10 @@ func buildMergeStatusRoot(includeAutomerge bool) string {
 		fields = append(fields, "autoMergeRequest{enabledAt}")
 	}
 	return `mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{` + strings.Join(fields, " ") + `}}`
+}
+
+func buildViewerApprovalRoot() string {
+	return `viewer{login} viewerReviewNodes:nodes(ids:$viewerReviewIDs){... on PullRequest{id latestOpinionatedReviews(last:100){nodes{author{login} state}}}}`
 }
 
 type listTimelineNode struct {
@@ -602,6 +620,18 @@ type listMergeStatusNode struct {
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
+}
+
+type listViewerReviewNode struct {
+	ID                       string `json:"id"`
+	LatestOpinionatedReviews struct {
+		Nodes []struct {
+			Author *struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			State string `json:"state"`
+		} `json:"nodes"`
+	} `json:"latestOpinionatedReviews"`
 }
 
 func collectPRNodeIDs(prs []PullRequest) []string {
@@ -756,6 +786,35 @@ func applyListMergeStatusNodes(
 	}
 }
 
+func applyListViewerReviewNodes(prs []PullRequest, viewer string, nodes []listViewerReviewNode) {
+	if viewer == "" {
+		return
+	}
+
+	viewer = strings.ToLower(viewer)
+	approved := make(map[string]bool, len(nodes))
+	loaded := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		loaded[node.ID] = true
+		for _, review := range node.LatestOpinionatedReviews.Nodes {
+			if review.Author == nil || !strings.EqualFold(review.Author.Login, viewer) {
+				continue
+			}
+			approved[node.ID] = review.State == valueReviewApproved
+			break
+		}
+	}
+
+	for i := range prs {
+		if !loaded[prs[i].NodeID] {
+			continue
+		}
+		prs[i].viewerApproved = approved[prs[i].NodeID]
+		prs[i].viewerApprovalLoaded = true
+		prs[i].viewerIsAuthor = strings.EqualFold(prs[i].Author.Login, viewer)
+	}
+}
+
 func timelineActorsFromNodes(nodes []listTimelineNode) timelineActors {
 	actors := timelineActors{
 		closed: make(map[string]string, len(nodes)),
@@ -834,6 +893,11 @@ func hydrateListMetadata(
 		}
 	}
 
+	viewerReviewIDs := []string{}
+	if req.viewerApproval {
+		viewerReviewIDs = collectMergeStatusNodeIDs(prs)
+	}
+
 	var (
 		queryDefs  []string
 		queryRoots []string
@@ -858,6 +922,12 @@ func hydrateListMetadata(
 		variables["mergeIDs"] = mergeIDs
 	}
 
+	if len(viewerReviewIDs) > 0 {
+		queryDefs = append(queryDefs, "$viewerReviewIDs: [ID!]!")
+		queryRoots = append(queryRoots, buildViewerApprovalRoot())
+		variables["viewerReviewIDs"] = viewerReviewIDs
+	}
+
 	if len(queryRoots) == 0 {
 		return newTimelineActors(), nil
 	}
@@ -866,6 +936,10 @@ func hydrateListMetadata(
 		TimelineNodes  []listTimelineNode    `json:"timelineNodes"`
 		AutomergeNodes []listAutomergeNode   `json:"automergeNodes"`
 		MergeNodes     []listMergeStatusNode `json:"mergeNodes"`
+		Viewer         struct {
+			Login string `json:"login"`
+		} `json:"viewer"`
+		ViewerReviewNodes []listViewerReviewNode `json:"viewerReviewNodes"`
 	}
 
 	query := fmt.Sprintf(
@@ -879,6 +953,7 @@ func hydrateListMetadata(
 
 	applyListAutomergeNodes(prs, automergeIDs, result.AutomergeNodes)
 	applyListMergeStatusNodes(prs, result.MergeNodes, req.automerge)
+	applyListViewerReviewNodes(prs, result.Viewer.Login, result.ViewerReviewNodes)
 
 	return timelineActorsFromNodes(result.TimelineNodes), nil
 }
@@ -965,6 +1040,20 @@ func filterByTimelineActorsLoaded(
 				Link("pr", pr.URL, pr.Ref()).
 				Str("actor", actors.merged[pr.NodeID]).
 				Msg("Filtered by merged-by")
+			continue
+		}
+		filtered = append(filtered, pr)
+	}
+	return filtered
+}
+
+func filterByViewerApproval(prs []PullRequest) []PullRequest {
+	filtered := make([]PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if pr.viewerApprovalLoaded && (pr.viewerApproved || pr.viewerIsAuthor) {
+			clog.Debug().
+				Link("pr", pr.URL, pr.Ref()).
+				Msg("Filtered by self-required review")
 			continue
 		}
 		filtered = append(filtered, pr)

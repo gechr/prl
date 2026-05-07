@@ -622,19 +622,24 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	}
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
 	needMergeStatus := len(prs) > 0
+	needViewerApproval := r.cli.ReviewSelfRequired()
+	needMetadata := needMergeStatus || needTimeline || needViewerApproval
 
-	if needMergeStatus || needTimeline {
-		if r.gql != nil {
-			actors, hydrateErr := hydrateListMetadataCached(r.gql, prs, listMetadataRequest{
-				mergeStatus:    needMergeStatus,
-				timelineClosed: len(closedAllowed) > 0,
-				timelineMerged: len(mergedAllowed) > 0,
-			}, r.cache)
-			if hydrateErr != nil {
-				clog.Debug().Err(hydrateErr).Msg("list metadata hydration failed")
-			} else if needTimeline {
-				prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
-			}
+	if needMetadata && r.gql != nil {
+		actors, hydrateErr := hydrateListMetadataCached(r.gql, prs, listMetadataRequest{
+			mergeStatus:    needMergeStatus,
+			timelineClosed: len(closedAllowed) > 0,
+			timelineMerged: len(mergedAllowed) > 0,
+			viewerApproval: needViewerApproval,
+		}, r.cache)
+		if hydrateErr != nil {
+			clog.Debug().Err(hydrateErr).Msg("list metadata hydration failed")
+		}
+		if hydrateErr == nil && needTimeline {
+			prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
+		}
+		if hydrateErr == nil && needViewerApproval {
+			prs = filterByViewerApproval(prs)
 		}
 	}
 

@@ -549,13 +549,14 @@ func applyListMetadata(
 	cache *listMetadataCache,
 ) ([]PullRequest, error) {
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
-	if !needTimeline && !needMergeStatus && !needAutomerge {
+	needViewerApproval := cli.ReviewSelfRequired()
+	if !needTimeline && !needMergeStatus && !needAutomerge && !needViewerApproval {
 		return prs, nil
 	}
 
 	g, err := getGQL()
 	if err != nil {
-		if cli.Merge != nil || needTimeline {
+		if cli.Merge != nil || needTimeline || needViewerApproval {
 			return nil, err
 		}
 		clog.Debug().Err(err).Msg("skipping list metadata hydration")
@@ -567,9 +568,10 @@ func applyListMetadata(
 		mergeStatus:    needMergeStatus,
 		timelineClosed: len(closedAllowed) > 0,
 		timelineMerged: len(mergedAllowed) > 0,
+		viewerApproval: needViewerApproval,
 	}, cache)
 	if err != nil {
-		if cli.Merge != nil || needTimeline {
+		if cli.Merge != nil || needTimeline || needViewerApproval {
 			return nil, err
 		}
 		clog.Debug().Err(err).Msg("skipping list metadata hydration")
@@ -581,6 +583,9 @@ func applyListMetadata(
 	}
 	if needTimeline {
 		prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
+	}
+	if needViewerApproval {
+		prs = filterByViewerApproval(prs)
 	}
 	return prs, nil
 }

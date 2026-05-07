@@ -127,6 +127,9 @@ type PullRequest struct {
 
 	automergeLoaded      bool
 	reviewDecisionLoaded bool
+	viewerApproved       bool
+	viewerApprovalLoaded bool
+	viewerIsAuthor       bool
 }
 
 // refSingleOwner is set when all results belong to a single owner,

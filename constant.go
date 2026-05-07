@@ -121,10 +121,11 @@ const (
 )
 
 const (
-	valueReviewFilterNone     = "none"
-	valueReviewFilterRequired = "required"
-	valueReviewFilterApproved = "approved"
-	valueReviewFilterChanges  = "changes_requested"
+	valueReviewFilterNone         = "none"
+	valueReviewFilterRequired     = "required"
+	valueReviewFilterSelfRequired = "self_required"
+	valueReviewFilterApproved     = "approved"
+	valueReviewFilterChanges      = "changes_requested"
 )
 
 // Defaults.

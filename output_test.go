@@ -159,6 +159,54 @@ func TestApplyReviewDecisions(t *testing.T) {
 	require.True(t, prs[1].reviewDecisionLoaded)
 }
 
+func viewerReviewNode(id, login, state string) listViewerReviewNode {
+	node := listViewerReviewNode{ID: id}
+	node.LatestOpinionatedReviews.Nodes = append(node.LatestOpinionatedReviews.Nodes, struct {
+		Author *struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		State string `json:"state"`
+	}{
+		Author: &struct {
+			Login string `json:"login"`
+		}{Login: login},
+		State: state,
+	})
+	return node
+}
+
+func TestApplyListViewerReviewNodes(t *testing.T) {
+	prs := []PullRequest{
+		{NodeID: "pr-1"},
+		{NodeID: "pr-2"},
+		{NodeID: "pr-3"},
+	}
+
+	applyListViewerReviewNodes(prs, "alice", []listViewerReviewNode{
+		viewerReviewNode("pr-1", "alice", valueReviewApproved),
+		viewerReviewNode("pr-2", "alice", valueReviewChanges),
+	})
+
+	require.True(t, prs[0].viewerApprovalLoaded)
+	require.True(t, prs[0].viewerApproved)
+	require.True(t, prs[1].viewerApprovalLoaded)
+	require.False(t, prs[1].viewerApproved)
+	require.False(t, prs[2].viewerApprovalLoaded)
+}
+
+func TestFilterByViewerApproval(t *testing.T) {
+	prs := []PullRequest{
+		{NodeID: "pr-1", viewerApprovalLoaded: true, viewerApproved: true},
+		{NodeID: "pr-2", viewerApprovalLoaded: true, viewerApproved: false},
+		{NodeID: "pr-3"},
+		{NodeID: "pr-4", viewerApprovalLoaded: true, viewerIsAuthor: true},
+	}
+
+	got := filterByViewerApproval(prs)
+
+	require.Equal(t, []PullRequest{prs[1], prs[2]}, got)
+}
+
 func TestFilterByTimelineActorsLoaded(t *testing.T) {
 	prs := []PullRequest{
 		{
@@ -330,6 +378,58 @@ func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {
 	require.False(t, prs[0].automergeLoaded)
 	require.Equal(t, valueReviewApproved, prs[0].ReviewDecision)
 	require.True(t, prs[0].reviewDecisionLoaded)
+}
+
+func TestHydrateListMetadataLoadsViewerApproval(t *testing.T) {
+	t.Helper()
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+
+		body := readBody(t, req.Body)
+		var got struct {
+			Query     string              `json:"query"`
+			Variables map[string][]string `json:"variables"`
+		}
+		err := json.Unmarshal([]byte(body), &got)
+		require.NoError(t, err)
+		require.Contains(t, got.Query, "viewer{login}")
+		require.Contains(t, got.Query, "latestOpinionatedReviews(last:100)")
+		require.Equal(t, map[string][]string{"viewerReviewIDs": {"PR_1", "PR_2"}}, got.Variables)
+
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{
+				"viewer":{"login":"alice"},
+				"viewerReviewNodes":[
+					{"id":"PR_1","latestOpinionatedReviews":{"nodes":[{"author":{"login":"alice"},"state":"APPROVED"}]}},
+					{"id":"PR_2","latestOpinionatedReviews":{"nodes":[{"author":{"login":"alice"},"state":"CHANGES_REQUESTED"}]}}
+				]
+			}}`,
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{
+		{NodeID: "PR_1", State: valueOpen},
+		{NodeID: "PR_2", State: valueOpen},
+	}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{
+		viewerApproval: true,
+	})
+	require.NoError(t, err)
+	require.True(t, prs[0].viewerApprovalLoaded)
+	require.True(t, prs[0].viewerApproved)
+	require.True(t, prs[1].viewerApprovalLoaded)
+	require.False(t, prs[1].viewerApproved)
 }
 
 func TestHydrateListMetadataCachedReusesUnchangedPRMetadata(t *testing.T) {

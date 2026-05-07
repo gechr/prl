@@ -17,6 +17,10 @@ func formatCSV(values []string) string {
 	return strings.Join(values, ",")
 }
 
+func normalizeReviewFilterValue(value string) string {
+	return strings.ReplaceAll(strings.ToLower(value), "-", "_")
+}
+
 // CLI represents the command-line interface.
 type CLI struct {
 	// Embedded flags (hidden)
@@ -27,30 +31,30 @@ type CLI struct {
 
 	// Filter flags
 	Owner           CSVFlag  `help:"Limit to GitHub owner"                                        short:"O" clib:"terse='Owner',group='Filters/1'"`
-	Repo            CSVFlag  `help:"Limit to specific repo(s)"                                    short:"R" clib:"terse='Repository',complete='predictor=repo,comma',group='Filters/1'"                                                                                                   aliases:"repository"`
+	Repo            CSVFlag  `help:"Limit to specific repo(s)"                                    short:"R" clib:"terse='Repository',complete='predictor=repo,comma',group='Filters/1'"                                                                                                                                 aliases:"repository"`
 	Filter          []string `help:"Search qualifier"                                             short:"f" clib:"terse='Search qualifier',group='Filters/2'"`
-	Match           string   `help:"Restrict text search to field"                                          clib:"terse='Search field',complete='values=title body comments',group='Filters/2',enum='title,body,comments',highlight='t,b,c',default='title'"                                                                 placeholder:"<field>"`
-	Author          *CSVFlag `help:"Filter by author"                                             short:"a" clib:"terse='Author',complete='predictor=author',order=keep,group='Filters/3'"                                                                                                                                   placeholder:"<user>"`
-	Commenter       CSVFlag  `help:"Filter by commenter"                                                    clib:"terse='Commenter',complete='predictor=author',group='Filters/3'"                                                                                                                                           placeholder:"<user>"`
+	Match           string   `help:"Restrict text search to field"                                          clib:"terse='Search field',complete='values=title body comments',group='Filters/2',enum='title,body,comments',highlight='t,b,c',default='title'"                                                                                               placeholder:"<field>"`
+	Author          *CSVFlag `help:"Filter by author"                                             short:"a" clib:"terse='Author',complete='predictor=author',order=keep,group='Filters/3'"                                                                                                                                                                 placeholder:"<user>"`
+	Commenter       CSVFlag  `help:"Filter by commenter"                                                    clib:"terse='Commenter',complete='predictor=author',group='Filters/3'"                                                                                                                                                                         placeholder:"<user>"`
 	NoBot           bool     "help:\"Exclude bot authors (may return fewer than `--limit`)\"      short:\"B\"                                                                                      clib:\"terse='Exclude bots',group='Filters/3'\""
-	Team            CSVFlag  `help:"Filter by team authors"                                       short:"t" clib:"terse='Team',complete='predictor=team',group='Filters/3'"                                                                                                                                                  placeholder:"<slug>"`
-	Involves        CSVFlag  `help:"Filter by involvement (author, assignee, mentions, comments)" short:"I" clib:"terse='Involvement',complete='predictor=author',group='Filters/3'"                                                                                                                                         placeholder:"<user>"`
-	ReviewRequested CSVFlag  `help:"Filter by requested reviewer"                                           clib:"terse='Requested reviewer',complete='predictor=author',group='Filters/3'"                                                                                               aliases:"review-requested,request" placeholder:"<user>"     name:"requested"`
-	ClosedBy        CSVFlag  `help:"Filter by who closed the PR (post-fetch)"                               clib:"terse='Closed by',complete='predictor=author',group='Filters/3'"                                                                                                                                           placeholder:"<user>"`
-	MergedBy        CSVFlag  `help:"Filter by who merged the PR (post-fetch)"                               clib:"terse='Merged by',complete='predictor=author',group='Filters/3'"                                                                                                                                           placeholder:"<user>"`
-	ReviewedBy      CSVFlag  `help:"Filter by reviewer"                                                     clib:"terse='Reviewed by',complete='predictor=author',group='Filters/3'"                                                                                                                                         placeholder:"<user>"`
-	CI              string   `help:"Filter by CI status"                                                    clib:"terse='CI status',complete='values=success failure pending',group='Filters/4',enum='success,failure,pending',highlight='s,f,p'"                                                                            placeholder:"<status>"`
-	Comments        string   `help:"Filter by comment count (>5, 10..20)"                                   clib:"terse='Comment count',group='Filters/4'"                                                                                                                                                                   placeholder:"<range>"`
-	Language        string   `help:"Filter by language"                                           short:"l" clib:"terse='Language',group='Filters/4'"                                                                                                                                                                        placeholder:"<lang>"`
-	Review          string   `help:"Filter by review status"                                      short:"r" clib:"terse='Review status',complete='values=none required approved changes_requested',group='Filters/4',enum='none,required,approved,changes_requested',highlight='n,r,a,c'"                                    placeholder:"<status>"`
+	Team            CSVFlag  `help:"Filter by team authors"                                       short:"t" clib:"terse='Team',complete='predictor=team',group='Filters/3'"                                                                                                                                                                                placeholder:"<slug>"`
+	Involves        CSVFlag  `help:"Filter by involvement (author, assignee, mentions, comments)" short:"I" clib:"terse='Involvement',complete='predictor=author',group='Filters/3'"                                                                                                                                                                       placeholder:"<user>"`
+	ReviewRequested CSVFlag  `help:"Filter by requested reviewer"                                           clib:"terse='Requested reviewer',complete='predictor=author',group='Filters/3'"                                                                                                                             aliases:"review-requested,request" placeholder:"<user>"     name:"requested"`
+	ClosedBy        CSVFlag  `help:"Filter by who closed the PR (post-fetch)"                               clib:"terse='Closed by',complete='predictor=author',group='Filters/3'"                                                                                                                                                                         placeholder:"<user>"`
+	MergedBy        CSVFlag  `help:"Filter by who merged the PR (post-fetch)"                               clib:"terse='Merged by',complete='predictor=author',group='Filters/3'"                                                                                                                                                                         placeholder:"<user>"`
+	ReviewedBy      CSVFlag  `help:"Filter by reviewer"                                                     clib:"terse='Reviewed by',complete='predictor=author',group='Filters/3'"                                                                                                                                                                       placeholder:"<user>"`
+	CI              string   `help:"Filter by CI status"                                                    clib:"terse='CI status',complete='values=success failure pending',group='Filters/4',enum='success,failure,pending',highlight='s,f,p'"                                                                                                          placeholder:"<status>"`
+	Comments        string   `help:"Filter by comment count (>5, 10..20)"                                   clib:"terse='Comment count',group='Filters/4'"                                                                                                                                                                                                 placeholder:"<range>"`
+	Language        string   `help:"Filter by language"                                           short:"l" clib:"terse='Language',group='Filters/4'"                                                                                                                                                                                                      placeholder:"<lang>"`
+	Review          string   `help:"Filter by review status"                                      short:"r" clib:"terse='Review status',complete='values=none required self-required approved changes-requested',group='Filters/4',enum='none,required,self-required,approved,changes-requested',highlight='n,r,s,a,c'"                                    placeholder:"<status>"`
 	State           string   `help:"Filter by state"                                              short:"s" clib:"terse='State',complete='values=open closed ready merged all',group='Filters/4',enum='open,closed,ready,merged,all',highlight='o,c,r,m,a',default='open'"`
 	Topic           string   `help:"Filter by repo topic"                                         short:"T" clib:"terse='Topic',complete='predictor=topic',group='Filters/4'"`
-	Created         string   `help:"Filter by creation date"                                      short:"c" clib:"terse='Creation date',group='Filters/5'"                                                                                                                                aliases:"since"                    placeholder:"<duration>"`
-	Drift           string   `help:"Filter by duration between created/updated"                   short:"d" clib:"terse='Created/updated gap',group='Filters/5'"                                                                                                                                                             placeholder:"<duration>"`
-	Updated         string   `help:"Filter by last updated date"                                  short:"u" clib:"terse='Updated date',group='Filters/5'"                                                                                                                                                                    placeholder:"<duration>"`
-	Merged          string   `help:"Filter by merged date"                                        short:"m" clib:"terse='Merged date',group='Filters/5'"                                                                                                                                  aliases:"merged-at"                placeholder:"<duration>"`
+	Created         string   `help:"Filter by creation date"                                      short:"c" clib:"terse='Creation date',group='Filters/5'"                                                                                                                                                              aliases:"since"                    placeholder:"<duration>"`
+	Drift           string   `help:"Filter by duration between created/updated"                   short:"d" clib:"terse='Created/updated gap',group='Filters/5'"                                                                                                                                                                                           placeholder:"<duration>"`
+	Updated         string   `help:"Filter by last updated date"                                  short:"u" clib:"terse='Updated date',group='Filters/5'"                                                                                                                                                                                                  placeholder:"<duration>"`
+	Merged          string   `help:"Filter by merged date"                                        short:"m" clib:"terse='Merged date',group='Filters/5'"                                                                                                                                                                aliases:"merged-at"                placeholder:"<duration>"`
 	Archived        bool     `help:"Include archived repos"                                                 clib:"terse='Include archived',group='Filters/6'"`
-	Draft           *bool    `help:"Show only draft PRs"                                                    clib:"terse='Draft filter',group='Filters/6'"                                                                                                                                                                                                              negatable:""`
+	Draft           *bool    `help:"Show only draft PRs"                                                    clib:"terse='Draft filter',group='Filters/6'"                                                                                                                                                                                                                                            negatable:""`
 
 	// Interactive flags
 	Interactive bool           `help:"Launch interactive TUI browser" short:"i" clib:"terse='TUI browser',group='Interactive/0'"`
@@ -110,6 +114,8 @@ type CLI struct {
 
 // Validate checks for mutually exclusive options.
 func (c *CLI) Validate() error {
+	c.Review = normalizeReviewFilterValue(c.Review)
+
 	// Resolve filesystem paths to their GitHub remote owner/repo.
 	for i, v := range c.Repo.Values {
 		if !isPathLike(v) {
@@ -292,12 +298,13 @@ func (c *CLI) Validate() error {
 		switch c.Review {
 		case valueReviewFilterNone,
 			valueReviewFilterRequired,
+			valueReviewFilterSelfRequired,
 			valueReviewFilterApproved,
 			valueReviewFilterChanges:
 			// valid
 		default:
 			return fmt.Errorf(
-				"invalid --review value %q (valid: none, required, approved, changes_requested)",
+				"invalid --review value %q (valid: none, required, self-required, approved, changes-requested)",
 				c.Review,
 			)
 		}
@@ -525,6 +532,10 @@ func (c *CLI) CIStatus() CIStatus {
 		return CINone
 	}
 	return s
+}
+
+func (c *CLI) ReviewSelfRequired() bool {
+	return c.Review == valueReviewFilterSelfRequired
 }
 
 // LimitValue returns the effective limit value.

@@ -302,9 +302,11 @@ func loadConfig() (*Config, error) {
 		}
 	}
 	if cfg.TUI.Filters.Review != "" {
+		cfg.TUI.Filters.Review = normalizeReviewFilterValue(cfg.TUI.Filters.Review)
 		switch cfg.TUI.Filters.Review {
 		case valueReviewFilterNone,
 			valueReviewFilterRequired,
+			valueReviewFilterSelfRequired,
 			valueReviewFilterApproved,
 			valueReviewFilterChanges:
 		default:

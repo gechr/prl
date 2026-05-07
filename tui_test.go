@@ -1730,7 +1730,7 @@ func TestCurrentFilterValuesDefaultCLI(t *testing.T) {
 	// testCLI() Normalize sets NoBot=true (from Default.Bots=false),
 	// so Bots is "hide" (index 1). Draft defaults to "show" (index 0), CI/Review default to "all",
 	// and Archived defaults to "hide" (index 1).
-	require.Equal(t, []int{0, 0, 1, 1, 3, 4}, vals)
+	require.Equal(t, []int{0, 0, 1, 1, 3, 5}, vals)
 }
 
 func TestCurrentFilterValuesMapsStateCorrectly(t *testing.T) {

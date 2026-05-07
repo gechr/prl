@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
@@ -122,6 +124,7 @@ var filterOptionDefs = [...]filterOptionDef{
 	},
 	{"Review", []filterChoice{
 		{valueReviewFilterRequired, valueReviewFilterRequired},
+		{"self req", valueReviewFilterSelfRequired},
 		{valueReviewFilterApproved, valueReviewFilterApproved},
 		{"changes", valueReviewFilterChanges},
 		{valueReviewFilterNone, valueReviewFilterNone},
@@ -465,7 +468,7 @@ func (m tuiModel) activeFilterTags() []string {
 		}
 	}
 	if m.cli.Review != "" {
-		tags = append(tags, "review:"+m.cli.Review)
+		tags = append(tags, "review:"+strings.ReplaceAll(m.cli.Review, "_", "-"))
 	}
 	return tags
 }

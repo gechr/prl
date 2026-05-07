@@ -72,6 +72,25 @@ func TestValidate_AllowsWatchInterval(t *testing.T) {
 	require.NoError(t, cli.Validate())
 }
 
+func TestValidate_NormalizesReviewFilterHyphens(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"changes-requested", valueReviewFilterChanges},
+		{"changes_requested", valueReviewFilterChanges},
+		{"self-required", valueReviewFilterSelfRequired},
+		{"self_required", valueReviewFilterSelfRequired},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			cli := &CLI{Review: tt.input}
+			require.NoError(t, cli.Validate())
+			require.Equal(t, tt.want, cli.Review)
+		})
+	}
+}
+
 func TestNormalizeSendToRecipient(t *testing.T) {
 	tests := []struct {
 		name      string

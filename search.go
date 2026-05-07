@@ -93,8 +93,12 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// "review required but not yet given"). For closed/merged PRs it filters
 	// almost everything out, so skip it for non-open states.
 	if cli.Review != "" {
-		if cli.Review != valueReviewFilterRequired || state == StateOpen || state == StateReady {
-			qualifiers = append(qualifiers, "review:"+cli.Review)
+		review := cli.Review
+		if review == valueReviewFilterSelfRequired {
+			review = valueReviewFilterRequired
+		}
+		if review != valueReviewFilterRequired || state == StateOpen || state == StateReady {
+			qualifiers = append(qualifiers, "review:"+review)
 		}
 	}
 
