@@ -13,11 +13,26 @@ import (
 
 func TestCurrentAIReviewLauncher(t *testing.T) {
 	if !isDarwin() {
-		t.Setenv("TERM_PROGRAM", "ghostty")
-		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+		t.Run("non-darwin always returns none", func(t *testing.T) {
+			t.Setenv("KITTY_WINDOW_ID", "1")
+			t.Setenv("TERM_PROGRAM", "ghostty")
+			require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+		})
 		return
 	}
 
+	t.Run("kitty via KITTY_WINDOW_ID", func(t *testing.T) {
+		t.Setenv("KITTY_WINDOW_ID", "1")
+		t.Setenv("TERM_PROGRAM", "")
+		require.Equal(t, aiReviewLauncherKitty, currentAIReviewLauncher())
+	})
+	t.Run("kitty takes precedence over TERM_PROGRAM", func(t *testing.T) {
+		t.Setenv("KITTY_WINDOW_ID", "2")
+		t.Setenv("TERM_PROGRAM", "ghostty")
+		require.Equal(t, aiReviewLauncherKitty, currentAIReviewLauncher())
+	})
+
+	t.Setenv("KITTY_WINDOW_ID", "") // ensure kitty not detected for remaining cases
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	require.Equal(t, aiReviewLauncherGhostty, currentAIReviewLauncher())
 

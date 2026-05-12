@@ -21,11 +21,17 @@ const (
 	aiReviewLauncherNone    aiReviewLauncher = ""
 	aiReviewLauncherGhostty aiReviewLauncher = "ghostty"
 	aiReviewLauncherITerm2  aiReviewLauncher = "iterm2"
+	aiReviewLauncherKitty   aiReviewLauncher = "kitty"
 )
 
 func currentAIReviewLauncher() aiReviewLauncher {
 	if !isDarwin() {
 		return aiReviewLauncherNone
+	}
+	if os.Getenv("KITTY_WINDOW_ID") != "" {
+		if _, err := exec.LookPath("kitty"); err == nil {
+			return aiReviewLauncherKitty
+		}
 	}
 	switch os.Getenv("TERM_PROGRAM") {
 	case "ghostty":
@@ -555,6 +561,7 @@ func launchAIReview(
 	model string,
 	effort string,
 ) error {
+	ctx := context.Background()
 	launcher := currentAIReviewLauncher()
 	if launcher == aiReviewLauncherNone {
 		return fmt.Errorf("unsupported terminal %q", os.Getenv("TERM_PROGRAM"))
@@ -565,20 +572,19 @@ func launchAIReview(
 		return err
 	}
 
-	script, err := buildAIReviewAppleScript(
-		launcher,
-		buildAIReviewCommand(pr, promptFile, cfg, provider, model, effort),
-	)
+	shellCmd := buildAIReviewCommand(pr, promptFile, cfg, provider, model, effort)
+
+	if launcher == aiReviewLauncherKitty {
+		tabTitle := fmt.Sprintf("%s#%d", pr.Repository.Name, pr.Number)
+		return launchAIReviewKitty(ctx, shellCmd, tabTitle)
+	}
+
+	script, err := buildAIReviewAppleScript(launcher, shellCmd)
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.CommandContext(
-		context.Background(),
-		"osascript",
-		"-e",
-		script,
-	)
+	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
 	if output, asErr := cmd.CombinedOutput(); asErr != nil {
 		return fmt.Errorf("osascript: %w: %s", asErr, strings.TrimSpace(string(output)))
 	}
@@ -610,6 +616,37 @@ func writeReviewPromptFile(prompt string) (string, error) {
 func promptArg(promptFile string) (string, string) {
 	q := shell.Quote(promptFile)
 	return fmt.Sprintf(`"$(cat %s)"`, q), fmt.Sprintf("; rm -f %s", q)
+}
+
+// launchAIReviewKitty opens a new Kitty tab using Kitty's remote control
+// protocol. Requires `allow_remote_control yes` in kitty.conf.
+func launchAIReviewKitty(ctx context.Context, shellCmd, tabTitle string) error {
+	// Open a new tab without specifying a command so Kitty starts the user's
+	// configured shell, giving the full login environment (API keys, direnv, etc.).
+	// The window ID printed to stdout lets us target send-text precisely.
+	launchCmd := exec.CommandContext( //nolint:gosec // tabTitle is built from PR metadata
+		ctx, "kitty", "@", "launch", "--type=tab", "--tab-title="+tabTitle,
+	)
+	out, err := launchCmd.Output()
+	if err != nil {
+		return fmt.Errorf("kitty remote control: %w", err)
+	}
+	windowID := strings.TrimSpace(string(out))
+
+	// Send the command into that specific window.
+	cmd := exec.CommandContext( //nolint:gosec // shellCmd is built internally
+		ctx,
+		"kitty",
+		"@",
+		"send-text",
+		"--match",
+		"id:"+windowID,
+		shellCmd+"\n",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("kitty send-text: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func buildAIReviewCommand(
@@ -771,6 +808,9 @@ end tell`, shellCmd), nil
 		end tell
 	end tell
 end tell`, shellCmd), nil
+	case aiReviewLauncherKitty:
+		// unreachable: Kitty is dispatched before AppleScript in launchAIReview.
+		return "", fmt.Errorf("kitty does not use AppleScript")
 	}
 	return "", fmt.Errorf("unsupported terminal %q", launcher)
 }
