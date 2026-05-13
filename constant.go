@@ -114,6 +114,7 @@ const (
 	valueCIQueued        = "QUEUED"
 	valueCISuccess       = "SUCCESS"
 	valueCIUnknown       = "UNKNOWN"
+	valueMergeStateClean = "CLEAN"
 	valueMergeStateDirty = "DIRTY"
 	valueReviewApproved  = "APPROVED"
 	valueReviewChanges   = "CHANGES_REQUESTED"

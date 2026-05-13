@@ -14,7 +14,7 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/gechr/clib v0.4.4
-	github.com/gechr/clog v0.9.6
+	github.com/gechr/clog v0.9.8
 	github.com/gechr/primer v0.0.14
 	github.com/gechr/x v0.0.7
 	github.com/goccy/go-yaml v1.19.2

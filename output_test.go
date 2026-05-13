@@ -675,3 +675,44 @@ func TestRenderBullets(t *testing.T) {
 	want := "* https://github.com/owner/repo1/pull/1"
 	require.Equal(t, want, got)
 }
+
+func TestResolveMergeStatus(t *testing.T) {
+	approved := valueReviewApproved
+
+	tests := []struct {
+		name             string
+		ciState          string
+		reviewDecision   *string
+		mergeStateStatus string
+		want             MergeStatus
+	}{
+		{"ci failed", valueCIFailure, &approved, "", MergeStatusCIFailed},
+		{"ci pending", valueCIPending, &approved, "", MergeStatusCIPending},
+		{"ci success + approved", valueCISuccess, &approved, "", MergeStatusReady},
+		// CODEOWNERS-only repos: required_reviewers=0 leaves reviewDecision empty but mergeStateStatus=CLEAN
+		{
+			"clean + ci success + empty reviewDecision",
+			valueCISuccess,
+			nil,
+			valueMergeStateClean,
+			MergeStatusReady,
+		},
+		// repos with no CI checks: ciState="" but mergeStateStatus=CLEAN
+		{"clean + no ci + empty reviewDecision", "", nil, valueMergeStateClean, MergeStatusReady},
+		{"ci success + no approval + not clean", valueCISuccess, nil, "", MergeStatusBlocked},
+		{
+			"ci success + no approval + dirty",
+			valueCISuccess,
+			nil,
+			valueMergeStateDirty,
+			MergeStatusBlocked,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveMergeStatus(tt.ciState, tt.reviewDecision, tt.mergeStateStatus)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}

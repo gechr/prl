@@ -665,7 +665,14 @@ func collectMergeStatusNodeIDs(prs []PullRequest) []string {
 	return openIDs[len(openIDs)-maxEnrichCount:]
 }
 
-func resolveMergeStatus(ciState string, reviewDecision *string) MergeStatus {
+func resolveMergeStatus(
+	ciState string,
+	reviewDecision *string,
+	mergeStateStatus string,
+) MergeStatus {
+	if mergeStateStatus == valueMergeStateClean {
+		return MergeStatusReady
+	}
 	switch {
 	case ciState == valueCIFailure || ciState == valueCIError:
 		return MergeStatusCIFailed
@@ -687,6 +694,7 @@ func applyMergeStatusResult(
 	headSHA string,
 	ciState string,
 	reviewDecision *string,
+	mergeStateStatus string,
 	automergeLoaded bool,
 	automergeEnabled bool,
 ) {
@@ -699,7 +707,7 @@ func applyMergeStatusResult(
 	if reviewDecision != nil {
 		review = *reviewDecision
 	}
-	status := resolveMergeStatus(ciState, reviewDecision)
+	status := resolveMergeStatus(ciState, reviewDecision, mergeStateStatus)
 	for _, idx := range indices {
 		prs[idx].HeadSHA = headSHA
 		prs[idx].MergeStatus = status
@@ -780,6 +788,7 @@ func applyListMergeStatusNodes(
 			node.HeadRefOID,
 			ciState,
 			node.ReviewDecision,
+			node.MergeStateStatus,
 			includeAutomerge,
 			node.AutomergeRequest != nil,
 		)

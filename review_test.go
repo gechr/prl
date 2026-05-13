@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -22,11 +23,17 @@ func TestCurrentAIReviewLauncher(t *testing.T) {
 	}
 
 	t.Run("kitty via KITTY_WINDOW_ID", func(t *testing.T) {
+		if _, err := exec.LookPath("kitty"); err != nil {
+			t.Skip("kitty not in PATH")
+		}
 		t.Setenv("KITTY_WINDOW_ID", "1")
 		t.Setenv("TERM_PROGRAM", "")
 		require.Equal(t, aiReviewLauncherKitty, currentAIReviewLauncher())
 	})
 	t.Run("kitty takes precedence over TERM_PROGRAM", func(t *testing.T) {
+		if _, err := exec.LookPath("kitty"); err != nil {
+			t.Skip("kitty not in PATH")
+		}
 		t.Setenv("KITTY_WINDOW_ID", "2")
 		t.Setenv("TERM_PROGRAM", "ghostty")
 		require.Equal(t, aiReviewLauncherKitty, currentAIReviewLauncher())
