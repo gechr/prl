@@ -399,7 +399,9 @@ func (c *CLI) Normalize(cfg *Config) {
 		len(c.Commenter.Values) > 0 ||
 		len(c.ReviewedBy.Values) > 0 ||
 		len(c.ClosedBy.Values) > 0 ||
-		len(c.MergedBy.Values) > 0
+		len(c.MergedBy.Values) > 0 ||
+		c.Unsubscribe ||
+		c.Approve
 	if c.Author == nil && hasUserFilter {
 		c.Author = &CSVFlag{Values: []string{valueAll}}
 		clog.Debug().Msg("user-oriented filter implied --author=any")
