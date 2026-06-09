@@ -406,6 +406,12 @@ func (c *CLI) Normalize(cfg *Config) {
 		c.Author = &CSVFlag{Values: []string{valueAll}}
 		clog.Debug().Msg("user-oriented filter implied --author=any")
 	}
+	// --send is restricted to your own PRs, so default to @me rather than the
+	// configured default authors when --author wasn't given explicitly.
+	if c.Author == nil && (c.Send || c.SendTo != "") {
+		c.Author = &CSVFlag{Values: []string{valueAtMe}}
+		clog.Debug().Msg("--send implied --author=@me")
+	}
 	if c.Author == nil {
 		c.Author = &CSVFlag{Values: cfg.Default.Authors}
 	}

@@ -65,34 +65,6 @@ func getCurrentLogin(rest *api.RESTClient) (string, error) {
 	return u.Login, nil
 }
 
-// requireOwnAuthor returns an error if any value in authors is not the
-// authenticated user (i.e. not valueAtMe and not their actual GitHub login).
-// The API call to resolve the login is skipped when all values are valueAtMe.
-func requireOwnAuthor(rest *api.RESTClient, authors []string) error {
-	allMe := true
-	for _, a := range authors {
-		if a != valueAtMe {
-			allMe = false
-			break
-		}
-	}
-	if allMe {
-		return nil
-	}
-
-	login, err := getCurrentLogin(rest)
-	if err != nil {
-		return fmt.Errorf("resolving current user: %w", err)
-	}
-
-	for _, a := range authors {
-		if a != valueAtMe && a != login {
-			return fmt.Errorf("--send is only allowed for your own PRs (got author %q)", a)
-		}
-	}
-	return nil
-}
-
 // newActionRunner creates an ActionRunner, initializing a GraphQL client
 // only when the CLI flags require one.
 func newActionRunner(cli *CLI, rest *api.RESTClient) (*ActionRunner, error) {

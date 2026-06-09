@@ -166,16 +166,6 @@ func run() error {
 		return fmt.Errorf("creating REST client: %w", err)
 	}
 
-	// --send is restricted to the authenticated user's own PRs
-	if cli.Send {
-		if len(cli.Team.Values) > 0 {
-			return fmt.Errorf("--send is only allowed for your own PRs (cannot use --team)")
-		}
-		if sendErr := requireOwnAuthor(rest, cli.Author.Values); sendErr != nil {
-			return sendErr
-		}
-	}
-
 	// Count mode: use API total_count (single lightweight request)
 	if cli.Count {
 		count, cErr := executeCount(rest, params)
