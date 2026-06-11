@@ -669,14 +669,14 @@ tui:
       # Default AI review provider and model.
       # Providers: claude, codex, gemini
       provider: claude
-      model: sonnet
-      effort: medium
+      model: opus
+      effort: high
 
     providers:
       claude:
         # Optional overrides for the available model/effort choices.
         # If omitted, prl uses the built-in Claude review options.
-        # models: [sonnet, opus]
+        # models: [sonnet, opus, fable]
         # efforts: [low, medium, high, xhigh, max, auto]
         # Default prompt for Claude AI review.
         # Available placeholders:

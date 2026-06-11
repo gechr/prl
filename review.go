@@ -56,6 +56,7 @@ const (
 
 	claudeReviewModelSonnet = "sonnet"
 	claudeReviewModelOpus   = "opus"
+	claudeReviewModelFable  = "fable"
 	codexReviewModel55      = "gpt-5.5"
 	codexReviewModel54      = "gpt-5.4"
 	codexReviewModel54Mini  = "gpt-5.4-mini"
@@ -107,8 +108,9 @@ var claudeReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
 		{label: claudeReviewModelSonnet, value: claudeReviewModelSonnet},
 		{label: claudeReviewModelOpus, value: claudeReviewModelOpus},
+		{label: claudeReviewModelFable, value: claudeReviewModelFable},
 	},
-	defaultModel: claudeReviewModelSonnet,
+	defaultModel: claudeReviewModelOpus,
 }
 
 var codexReviewConfig = reviewProviderConfig{
@@ -262,6 +264,18 @@ type reviewEffortRule struct {
 }
 
 var claudeEffortRules = []reviewEffortRule{
+	{
+		pattern: claudeReviewModelOpus,
+		choices: []filterChoice{
+			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
+			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
+			{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+			{label: claudeReviewEffortXHigh, value: claudeReviewEffortXHigh},
+			{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
+			{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
+		},
+		def: claudeReviewEffortHigh,
+	},
 	{
 		pattern: "*",
 		choices: []filterChoice{

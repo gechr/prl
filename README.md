@@ -250,12 +250,12 @@ tui:
     # enabled: [claude, codex, gemini]
     default:
       provider: claude
-      model: sonnet
-      effort: medium
+      model: opus
+      effort: high
     providers:
       claude:
         # Optional: override the available model/effort choices.
-        # models: [sonnet, opus]
+        # models: [sonnet, opus, fable]
         # efforts: [low, medium, high, max, auto]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.

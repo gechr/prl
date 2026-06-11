@@ -74,14 +74,14 @@ func TestLoadConfigRejectsInvalidReviewDefaultModelForProvider(t *testing.T) {
   review:
     default:
       provider: codex
-      model: opus
+      model: banana
 `),
 			0o600,
 		),
 	)
 
 	_, err = loadConfig()
-	require.ErrorContains(t, err, `invalid tui.review.default.model "opus" for provider "codex"`)
+	require.ErrorContains(t, err, `invalid tui.review.default.model "banana" for provider "codex"`)
 }
 
 func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testing.T) {

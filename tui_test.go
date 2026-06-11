@@ -41,7 +41,7 @@ func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
 claude  codex  gemini
 
 Model
-sonnet  opus
+sonnet  opus  fable
 
 Effort
 low  medium  high  xhigh  max  auto
@@ -50,8 +50,8 @@ low  medium  high  xhigh  max  auto
 		stripped,
 	)
 	require.Equal(t, 0, strings.Count(rendered, cursorLineBG))
-	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewModelSonnet))
-	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewEffortMedium))
+	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewModelOpus))
+	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewEffortHigh))
 }
 
 func TestShellSingleQuoteEscapesSingleQuotes(t *testing.T) {
@@ -290,8 +290,9 @@ func TestRenderConfirmOptionsHighlightsActiveRowInGreen(t *testing.T) {
 
 	require.NotContains(t, rendered, cursorLineBG)
 	require.Contains(t, rendered, m.styles.helpKey.Render("Model"))
-	require.Contains(t, rendered, styleHighlight.Bold(true).Render(claudeReviewModelSonnet))
-	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelOpus))
+	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelSonnet))
+	require.Contains(t, rendered, styleHighlight.Bold(true).Render(claudeReviewModelOpus))
+	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelFable))
 }
 
 func TestUpdateConfirmOverlayTabLoopsAcrossOptions(t *testing.T) {

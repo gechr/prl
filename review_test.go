@@ -155,6 +155,24 @@ func TestUpdateConfirmOverlaySwitchesFocusBetweenPromptAndModel(t *testing.T) {
 	require.Equal(t, 0, bm.confirmState.OptCursor)
 }
 
+func TestClaudeReviewDefaultsUseOpusHighAndIncludeFable(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: claudeReviewModelSonnet, value: claudeReviewModelSonnet},
+			{label: claudeReviewModelOpus, value: claudeReviewModelOpus},
+			{label: claudeReviewModelFable, value: claudeReviewModelFable},
+		},
+		reviewModelChoices(nil, reviewProviderClaude),
+	)
+	require.Equal(t, claudeReviewModelOpus, defaultReviewModel(nil, reviewProviderClaude))
+	require.Equal(
+		t,
+		claudeReviewEffortHigh,
+		defaultReviewEffort(nil, reviewProviderClaude, claudeReviewModelOpus),
+	)
+}
+
 func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	pr := testReviewPullRequest()
 	const promptFile = "/tmp/prl-prompt.txt"
@@ -174,13 +192,13 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	require.Contains(t, cmd, promptExpr)
 
 	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewProviderClaude, "", "")
-	require.Equal(t, 1, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelSonnet)))
+	require.Equal(t, 1, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelOpus)))
 	require.Equal(
 		t,
 		1,
 		strings.Count(
 			cmd,
-			"--effort="+shell.Quote(claudeReviewEffortMedium),
+			"--effort="+shell.Quote(claudeReviewEffortHigh),
 		),
 	)
 
