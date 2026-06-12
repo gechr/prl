@@ -15,6 +15,7 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
+	cfx "github.com/gechr/clog/fx"
 )
 
 // HintError wraps an error with a command suggestion for the user.
@@ -139,10 +140,10 @@ func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
 
 	group := clog.Group(
 		context.Background(),
-		clog.WithParallelism(maxConcurrency),
-		clog.WithHideDone(),
-		clog.WithMaxHeightPercent(0.5), //nolint:mnd // half the terminal window
-		clog.WithFooter(
+		cfx.WithParallelism(maxConcurrency),
+		cfx.WithHideDone(),
+		cfx.WithMaxHeightPercent(0.5), //nolint:mnd // half the terminal window
+		cfx.WithFooter(
 			clog.Spinner("Force-merging"),
 			func(done, total int, u *clog.Update) {
 				msg := "Force-merging"

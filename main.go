@@ -177,7 +177,7 @@ func run() error {
 	}
 
 	s := buildSpinner(cfg.Spinner)
-	clog.SetSpinnerStyle(cspinner.Style{Frames: s.frames, Interval: s.interval})
+	clog.SetSpinnerDefaults(cspinner.WithFrames(s.frames...), cspinner.WithInterval(s.interval))
 
 	// Watch mode: loop search+render with screen clear
 	if cli.Watch {
