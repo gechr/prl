@@ -678,7 +678,7 @@ func buildAIReviewCommand(
 	// works for open, closed, and fork PRs alike.
 	remote := "git@github.com:" + nwo
 	// Use a fixed review directory so the user only has to trust it once.
-	cacheHome, err := shell.XDGCacheHome()
+	cacheHome, err := shell.CacheDir()
 	if err != nil {
 		cacheHome = filepath.Join(os.TempDir(), ".cache")
 	}

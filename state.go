@@ -37,7 +37,7 @@ type stateDocument struct {
 
 // statePath returns the path to the TUI state file, honouring XDG_STATE_HOME.
 func statePath() (string, error) {
-	dir, err := shell.XDGStateHome()
+	dir, err := shell.StateDir()
 	if err != nil {
 		return "", err
 	}
