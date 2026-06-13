@@ -4,10 +4,17 @@ A Swiss Army knife for GitHub pull requests.
 
 ## Install
 
-### Homebrew
+### macOS
 
 ```sh
 brew install gechr/tap/prl
+```
+
+### Windows
+
+```sh
+scoop bucket add gechr https://github.com/gechr/scoop-bucket
+scoop install gechr/prl
 ```
 
 ### Go

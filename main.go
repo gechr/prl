@@ -393,9 +393,10 @@ func runWatch(
 		os.Exit(0)
 	}()
 
-	// Re-render cached PRs on terminal resize (SIGWINCH).
+	// Re-render cached PRs on terminal resize (SIGWINCH on Unix; a no-op on
+	// platforms without an equivalent, such as Windows).
 	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
+	notifyResize(winch)
 
 	results := make(chan fetchResult, 1)
 	validations := make(chan validationResult, 1)
