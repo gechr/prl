@@ -87,23 +87,25 @@ type SpinnerConfig struct {
 
 // TUIAutoRefreshConfig holds auto-refresh settings.
 type TUIAutoRefreshConfig struct {
-	Enabled bool `koanf:"enabled"`
+	Enabled bool `koanf:"enabled" yaml:"enabled"`
 }
 
 // TUISortConfig holds sort settings persisted between TUI runs.
 type TUISortConfig struct {
-	Key   string `koanf:"key"`
-	Order string `koanf:"order"`
+	Key   string `koanf:"key"   yaml:"key"`
+	Order string `koanf:"order" yaml:"order"`
 }
 
-// TUIFiltersConfig holds persisted filter overrides for TUI mode.
+// TUIFiltersConfig holds persisted filter overrides for TUI mode. The yaml tags
+// allow the same type to be marshalled into the state file as a mirror of the
+// config's tui.filters subtree (booleans as bools, "no filter" as null).
 type TUIFiltersConfig struct {
-	State    string `koanf:"state"`
-	Draft    *bool  `koanf:"draft"`
-	Bots     *bool  `koanf:"bots"`
-	Archived *bool  `koanf:"archived"`
-	CI       string `koanf:"ci"`
-	Review   string `koanf:"review"`
+	State    string `koanf:"state"    yaml:"state"`
+	Draft    *bool  `koanf:"draft"    yaml:"draft"`
+	Bots     *bool  `koanf:"bots"     yaml:"bots"`
+	Archived *bool  `koanf:"archived" yaml:"archived"`
+	CI       string `koanf:"ci"       yaml:"ci"`
+	Review   string `koanf:"review"   yaml:"review"`
 }
 
 type TUIReviewProviderConfig struct {
@@ -657,6 +659,13 @@ default:
   state: %[5]s
 
 # TUI (interactive browse) settings.
+#
+# Note: these are starting defaults that you manage. Interactive changes made
+# in the TUI (toggling auto-refresh, sorting columns, applying filters) are not
+# written back here - they're persisted to the state file under
+# $XDG_STATE_HOME/prl/state.yaml (default ~/.local/state/prl/state.yaml), which
+# mirrors this tui: subtree and takes precedence over it. This keeps your
+# version-controlled config stable while remembering your last session.
 tui:
   refresh:
     # Automatically refresh results in the background.
@@ -708,16 +717,17 @@ tui:
         prompt: |
 %[12]s
 
-  # Persisted filter overrides for TUI mode.
-  # Set via the filter menu (alt+f) in the TUI.
+  # Default filter overrides for TUI mode. The filter menu (alt+f) writes the
+  # active filters to the state file; values here seed the first session.
   # filters:
   #   state: merged
   #   draft: false
   #   bots: false
 
   sort:
-    # Persisted sort column and direction.
-    # Set by clicking column headers in the TUI.
+    # Default sort column and direction. Clicking column headers in the TUI
+    # writes the active sort to the state file; values here seed the first
+    # session.
     # key: title
     # order: asc
 

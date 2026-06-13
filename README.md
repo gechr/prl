@@ -301,6 +301,7 @@ authors:
 
 - `plugin`: if empty, auto-discovers `prl-plugin-*` on `PATH`
 - `vcs`: controls whether `--clone` uses `git` or `jj`
+- `tui.refresh`, `tui.sort`, `tui.filters`: starting defaults you manage. Interactive changes in the TUI (toggling auto-refresh, sorting columns, applying filters) are **not** written back to `config.yaml`. They're saved to a separate state file at `$XDG_STATE_HOME/prl/state.yaml` (default `~/.local/state/prl/state.yaml`), which mirrors the `tui:` subtree and takes precedence over config. This keeps your version-controlled config stable while remembering your last session.
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
 - Gemini review effort uses provider-specific semantics:
   `Gemini 3` maps effort to `thinkingLevel`, while `gemini-2.5-flash` maps effort to `thinkingBudget`

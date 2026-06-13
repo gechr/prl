@@ -252,7 +252,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// descending order so that the most recent/relevant results are returned
 	// first, which matters when results are truncated by the limit.
 	sortField := ""
-	order := "desc"
+	order := valueDesc
 	switch cli.SortField() {
 	case SortCreated:
 		sortField = valueCreated

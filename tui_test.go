@@ -1888,6 +1888,11 @@ func TestUpdateOptionsOverlayEscCancels(t *testing.T) {
 }
 
 func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
+	// Applying filters persists TUI state; isolate HOME so it writes to a
+	// temp state dir rather than the developer's real ~/.local/state.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+
 	cfg := &Config{
 		Default: Defaults{
 			Limit:  defaultLimit,
@@ -2427,8 +2432,24 @@ func TestApplyFilterOptionsResetClearsOverridesAndRestoresDefaults(t *testing.T)
 	require.True(t, bm.cli.NoBot)
 	require.False(t, bm.cli.Archived)
 
+	// Reset filters are persisted to the state file (not config): state cleared
+	// to empty, and the boolean filters cleared to nil (rendered as null).
+	st, err := loadTUIState()
+	require.NoError(t, err)
+	require.NotNil(t, st)
+	require.Empty(t, st.Filters.State)
+	require.Nil(t, st.Filters.Bots)
+	require.Nil(t, st.Filters.Archived)
+
+	// Config is left untouched - the user manages config; the TUI writes state.
 	loaded, err := loadConfig()
 	require.NoError(t, err)
+	require.Empty(t, loaded.TUI.Filters.State)
+	require.Nil(t, loaded.TUI.Filters.Bots)
+	require.Nil(t, loaded.TUI.Filters.Archived)
+
+	// State takes precedence: overlaying it clears the merged-state config default.
+	applyTUIState(loaded, st)
 	require.Empty(t, loaded.TUI.Filters.State)
 	require.Nil(t, loaded.TUI.Filters.Bots)
 	require.Nil(t, loaded.TUI.Filters.Archived)

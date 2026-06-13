@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	"github.com/gechr/clog"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/picker"
 )
@@ -372,32 +371,46 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	}
 	m.params = params
 
-	// Persist non-explicit values to config.
-	type persistItem struct {
-		explicit bool
-		key      string
-		value    any
-	}
-	for _, p := range []persistItem{
-		{m.cli.stateExplicit, keyTUIFilterState, m.persistedFilterValue(filterRowState)},
-		{m.cli.ciExplicit, keyTUIFilterCI, m.persistedFilterValue(filterRowCI)},
-		{m.cli.reviewExplicit, keyTUIFilterReview, m.persistedFilterValue(filterRowReview)},
-		{m.cli.draftExplicit, keyTUIFilterDraft, m.persistedFilterValue(filterRowDraft)},
-		{m.cli.noBotExplicit, keyTUIFilterBots, m.persistedFilterValue(filterRowBots)},
-		{m.cli.archivedExplicit, keyTUIFilterArchived, m.persistedFilterValue(filterRowArchived)},
-	} {
-		if !p.explicit {
-			if err := saveConfigKey(p.key, p.value); err != nil {
-				clog.Warn().Err(err).Str("key", p.key).Msg("Failed to persist filter setting")
-			}
-		}
-	}
+	m.persistFilterState()
 
 	// Recompute cursor/offset since viewport may change (filter indicator line).
 	m.resyncCursorAndOffset()
 
 	m.invalidateRefresh()
 	return m, m.startRefresh(true)
+}
+
+// persistFilterState mirrors the current non-explicit filter values into config
+// and writes a state snapshot to disk. CLI-explicit rows are session-only, so
+// they're left untouched, preserving the user's persisted choice. If every row
+// is CLI-locked there's nothing to persist.
+func (m tuiModel) persistFilterState() {
+	if m.cli.stateExplicit && m.cli.ciExplicit && m.cli.reviewExplicit &&
+		m.cli.draftExplicit && m.cli.noBotExplicit && m.cli.archivedExplicit {
+		return
+	}
+	f := &m.cfg.TUI.Filters
+	if !m.cli.stateExplicit {
+		f.State, _ = m.persistedFilterValue(filterRowState).(string)
+	}
+	if !m.cli.ciExplicit {
+		f.CI, _ = m.persistedFilterValue(filterRowCI).(string)
+	}
+	if !m.cli.reviewExplicit {
+		f.Review, _ = m.persistedFilterValue(filterRowReview).(string)
+	}
+	if !m.cli.draftExplicit {
+		f.Draft, _ = m.persistedFilterValue(filterRowDraft).(*bool)
+	}
+	if !m.cli.noBotExplicit {
+		f.Bots, _ = m.persistedFilterValue(filterRowBots).(*bool)
+	}
+	if !m.cli.archivedExplicit {
+		f.Archived, _ = m.persistedFilterValue(filterRowArchived).(*bool)
+	}
+	if err := saveTUIState(m.cfg); err != nil {
+		warnStateSaveErr(err, "filter settings")
+	}
 }
 
 func (m tuiModel) renderOptionsOverlay() string {

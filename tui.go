@@ -1544,10 +1544,10 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tuiKeybindToggleRefresh:
 		m.autoRefresh = !m.autoRefresh
-		// Persist to config file in the background.
-		enabled := m.autoRefresh
-		if err := saveConfigKey(keyTUIAutoRefresh, enabled); err != nil {
-			clog.Warn().Err(err).Msg("Failed to persist auto-refresh setting")
+		// Mirror into config and persist the snapshot to the state file.
+		m.cfg.TUI.AutoRefresh.Enabled = m.autoRefresh
+		if err := saveTUIState(m.cfg); err != nil {
+			warnStateSaveErr(err, "auto-refresh setting")
 		}
 		if m.autoRefresh {
 			return m, m.rescheduleRefresh()
@@ -2914,19 +2914,18 @@ func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
 	m.rows = newRows
 	m.colWidths = colWidths
 
-	// Persist sort settings to config file in the background.
-	if err := saveConfigKey(keyTUISortKey, m.sortColumn); err != nil {
-		clog.Warn().Err(err).Msg("Failed to persist sort key")
-	}
+	// Mirror sort settings into config and persist the snapshot to state.
 	order := ""
 	if m.sortColumn != "" {
-		order = "desc"
+		order = valueDesc
 		if m.sortAsc {
-			order = "asc"
+			order = valueAsc
 		}
 	}
-	if err := saveConfigKey(keyTUISortOrder, order); err != nil {
-		clog.Warn().Err(err).Msg("Failed to persist sort order")
+	m.cfg.TUI.Sort.Key = m.sortColumn
+	m.cfg.TUI.Sort.Order = order
+	if err := saveTUIState(m.cfg); err != nil {
+		warnStateSaveErr(err, "sort settings")
 	}
 
 	return m, nil
@@ -2965,6 +2964,14 @@ func runTui(
 	params *SearchParams,
 	s spinner,
 ) error {
+	// Overlay persisted TUI state (sort, filters, auto-refresh) onto config so
+	// the user's last interactive choices take precedence over config defaults.
+	if st, err := loadTUIState(); err != nil {
+		clog.Warn().Err(err).Msg("Failed to load TUI state")
+	} else {
+		applyTUIState(cfg, st)
+	}
+
 	// Apply persisted TUI filter defaults before the initial fetch.
 	if applyTUIFilterDefaults(cli, cfg) {
 		var err error
@@ -3065,7 +3072,7 @@ func runTui(
 	// Apply persisted sort settings.
 	if cfg.TUI.Sort.Key != "" {
 		model.sortColumn = cfg.TUI.Sort.Key
-		model.sortAsc = cfg.TUI.Sort.Order == "asc"
+		model.sortAsc = cfg.TUI.Sort.Order == valueAsc
 		model.header, model.rows, model.colWidths = model.rerender()
 	}
 
