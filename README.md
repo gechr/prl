@@ -4,7 +4,7 @@ A Swiss Army knife for GitHub pull requests.
 
 ## Install
 
-### macOS
+### macOS / Linux
 
 ```sh
 brew install gechr/tap/prl
