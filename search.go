@@ -443,6 +443,222 @@ func executeSearch(rest *api.RESTClient, params *SearchParams) ([]PullRequest, e
 	return allPRs, nil
 }
 
+func executeListSearch(
+	rest *api.RESTClient,
+	getGQL func() (*api.GraphQLClient, error),
+	params *SearchParams,
+	preferGraphQL bool,
+) ([]PullRequest, bool, error) {
+	if preferGraphQL && getGQL != nil {
+		gql, err := getGQL()
+		if err == nil {
+			prs, searchErr := executeSearchGraphQL(gql, params)
+			if searchErr == nil {
+				return prs, true, nil
+			}
+			clog.Debug().Err(searchErr).Msg("GraphQL search failed")
+		} else {
+			clog.Debug().Err(err).Msg("GraphQL search unavailable")
+		}
+	}
+	prs, err := executeSearch(rest, params)
+	return prs, false, err
+}
+
+type graphQLSearchResponse struct {
+	Search graphQLSearchConnection `json:"search"`
+}
+
+type graphQLSearchConnection struct {
+	Nodes    []graphQLSearchPRNode `json:"nodes"`
+	PageInfo graphQLPageInfo       `json:"pageInfo"`
+}
+
+type graphQLPageInfo struct {
+	EndCursor   string `json:"endCursor"`
+	HasNextPage bool   `json:"hasNextPage"`
+}
+
+type graphQLSearchPRNode struct {
+	Author *struct {
+		Login string `json:"login"`
+	} `json:"author"`
+	AutoMergeRequest *struct {
+		EnabledAt string `json:"enabledAt"`
+	} `json:"autoMergeRequest"`
+	Commits struct {
+		Nodes []struct {
+			Commit struct {
+				StatusCheckRollup *struct {
+					State string `json:"state"`
+				} `json:"statusCheckRollup"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"commits"`
+	CreatedAt  time.Time `json:"createdAt"`
+	HeadRefOID string    `json:"headRefOid"`
+	ID         string    `json:"id"`
+	IsDraft    bool      `json:"isDraft"`
+	Labels     struct {
+		Nodes []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+	} `json:"labels"`
+	MergedAt         *time.Time `json:"mergedAt"`
+	MergeStateStatus string     `json:"mergeStateStatus"`
+	Number           int        `json:"number"`
+	Repository       Repository `json:"repository"`
+	ReviewDecision   *string    `json:"reviewDecision"`
+	State            string     `json:"state"`
+	Title            string     `json:"title"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+	URL              string     `json:"url"`
+}
+
+const graphQLVarFirst = "first"
+
+// executeSearchGraphQL queries GitHub's GraphQL search endpoint and returns
+// parsed PRs. It also hydrates the list-view merge status fields that the REST
+// search path has to fetch in a second GraphQL query.
+func executeSearchGraphQL(gql *api.GraphQLClient, params *SearchParams) ([]PullRequest, error) {
+	var allPRs []PullRequest
+	var cursor *string
+	query := graphQLSearchQuery(params)
+
+	for len(allPRs) < params.TotalLimit {
+		first := min(params.PerPage, params.TotalLimit-len(allPRs))
+		var resp graphQLSearchResponse
+		if err := gql.Do(
+			`query SearchPullRequests($query: String!, $first: Int!, $after: String) {
+				search(type: ISSUE, query: $query, first: $first, after: $after) {
+					nodes {
+						... on PullRequest {
+							id
+							number
+							title
+							url
+							state
+							isDraft
+							createdAt
+							updatedAt
+							mergedAt
+							headRefOid
+							mergeStateStatus
+							reviewDecision
+							autoMergeRequest { enabledAt }
+							author { login }
+							repository { name nameWithOwner }
+							labels(first: 100) { nodes { name } }
+							commits(last: 1) {
+								nodes {
+									commit {
+										statusCheckRollup { state }
+									}
+								}
+							}
+						}
+					}
+					pageInfo { hasNextPage endCursor }
+				}
+			}`,
+			map[string]any{
+				"query":         query,
+				graphQLVarFirst: first,
+				"after":         cursor,
+			},
+			&resp,
+		); err != nil {
+			return nil, fmt.Errorf("search failed: %w", err)
+		}
+
+		if len(resp.Search.Nodes) == 0 {
+			break
+		}
+		for _, node := range resp.Search.Nodes {
+			if len(allPRs) >= params.TotalLimit {
+				break
+			}
+			allPRs = append(allPRs, toPullRequestGraphQL(node))
+		}
+		if !resp.Search.PageInfo.HasNextPage {
+			break
+		}
+		cursor = &resp.Search.PageInfo.EndCursor
+	}
+
+	clog.Debug().Int("results", len(allPRs)).Msg("GraphQL search complete")
+
+	return allPRs, nil
+}
+
+func graphQLSearchQuery(params *SearchParams) string {
+	query := params.Query
+	if params.Sort != "" {
+		query += " sort:" + params.Sort + "-" + params.Order
+	}
+	return query
+}
+
+func toPullRequestGraphQL(node graphQLSearchPRNode) PullRequest {
+	state := strings.ToLower(node.State)
+	if state == valueMerged || (state == valueClosed && node.MergedAt != nil) {
+		state = valueMerged
+	}
+
+	labels := make([]Label, len(node.Labels.Nodes))
+	for i, l := range node.Labels.Nodes {
+		labels[i] = Label{Name: l.Name}
+	}
+
+	author := ""
+	if node.Author != nil {
+		author = node.Author.Login
+	}
+	reviewDecision := ""
+	if node.ReviewDecision != nil {
+		reviewDecision = *node.ReviewDecision
+	}
+
+	pr := PullRequest{
+		Automerge:      node.AutoMergeRequest != nil,
+		Author:         Author{Login: author},
+		CreatedAt:      node.CreatedAt,
+		HeadSHA:        node.HeadRefOID,
+		IsDraft:        node.IsDraft,
+		Labels:         labels,
+		NodeID:         node.ID,
+		Number:         node.Number,
+		Repository:     node.Repository,
+		ReviewDecision: reviewDecision,
+		State:          state,
+		Title:          strings.TrimSpace(node.Title),
+		TitleRaw:       node.Title,
+		UpdatedAt:      node.UpdatedAt,
+		URL:            node.URL,
+
+		automergeLoaded:      true,
+		reviewDecisionLoaded: true,
+	}
+
+	if state == valueOpen {
+		pr.MergeStatus = graphQLMergeStatus(node)
+	}
+	return pr
+}
+
+func graphQLMergeStatus(node graphQLSearchPRNode) MergeStatus {
+	if node.MergeStateStatus == valueMergeStateDirty {
+		return MergeStatusConflict
+	}
+	var ciState string
+	if len(node.Commits.Nodes) > 0 {
+		if rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+			ciState = rollup.State
+		}
+	}
+	return resolveMergeStatus(ciState, node.ReviewDecision, node.MergeStateStatus)
+}
+
 // executeCount queries the GitHub Search Issues API and returns the total result count.
 // It fetches a single item to minimise data transfer.
 func executeCount(rest *api.RESTClient, params *SearchParams) (int, error) {

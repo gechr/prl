@@ -602,7 +602,18 @@ func newRefreshSnapshot(m tuiModel) refreshSnapshot {
 // fetchAndBuild runs the search, filter, enrich, and build pipeline.
 // It returns the built row models, or an error.
 func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
-	prs, err := executeSearch(r.rest, r.params)
+	needMergeStatus := true
+	prs, searchHydrated, err := executeListSearch(
+		r.rest,
+		func() (*api.GraphQLClient, error) {
+			if r.gql == nil {
+				return nil, fmt.Errorf("GraphQL client unavailable")
+			}
+			return r.gql, nil
+		},
+		r.params,
+		needMergeStatus,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -622,13 +633,12 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 		mergedAllowed = map[string]bool{}
 	}
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
-	needMergeStatus := len(prs) > 0
 	needViewerApproval := r.cli.ReviewSelfRequired()
-	needMetadata := needMergeStatus || needTimeline || needViewerApproval
+	needMetadata := (needMergeStatus && !searchHydrated) || needTimeline || needViewerApproval
 
 	if needMetadata && r.gql != nil {
 		actors, hydrateErr := hydrateListMetadataCached(r.gql, prs, listMetadataRequest{
-			mergeStatus:    needMergeStatus,
+			mergeStatus:    needMergeStatus && !searchHydrated,
 			timelineClosed: len(closedAllowed) > 0,
 			timelineMerged: len(mergedAllowed) > 0,
 			viewerApproval: needViewerApproval,

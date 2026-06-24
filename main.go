@@ -612,21 +612,6 @@ func buildOutput(
 	params *SearchParams,
 	cache *listMetadataCache,
 ) (string, []PullRequest, error) {
-	// Execute search
-	prs, err := executeSearch(rest, params)
-	if err != nil {
-		return "", nil, err
-	}
-
-	// Apply filters
-	prs, err = applyFilters(cli, prs)
-	if err != nil {
-		return "", nil, err
-	}
-	if len(prs) == 0 {
-		return "", nil, nil
-	}
-
 	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
 	var gql *api.GraphQLClient
 	getGQL := func() (*api.GraphQLClient, error) {
@@ -640,6 +625,25 @@ func buildOutput(
 		return gql, nil
 	}
 
+	ready := cli.PRState() == StateReady
+	ciFilter := cli.CIStatus()
+	needsEnrich := ready || ciFilter != CINone
+	needMergeStatus := (!cli.Quick || needsEnrich) &&
+		(cli.OutputFormat() == OutputTable || needsEnrich)
+	prs, searchHydrated, err := executeListSearch(rest, getGQL, params, needMergeStatus)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Apply filters
+	prs, err = applyFilters(cli, prs)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(prs) == 0 {
+		return "", nil, nil
+	}
+
 	// Resolve timeline filter logins before the shared metadata pass.
 	closedAllowed, err := resolveTimelineLogins(rest, cli.ClosedBy.Values)
 	if err != nil {
@@ -650,18 +654,13 @@ func buildOutput(
 		return "", nil, err
 	}
 
-	ready := cli.PRState() == StateReady
-	ciFilter := cli.CIStatus()
-	needsEnrich := ready || ciFilter != CINone
-	needMergeStatus := (!cli.Quick || needsEnrich) &&
-		(cli.OutputFormat() == OutputTable || needsEnrich)
 	needAutomerge := cli.Merge != nil || (!cli.Quick && cli.Send)
 	prs, err = applyListMetadata(
 		cli,
 		getGQL,
 		prs,
-		needAutomerge,
-		needMergeStatus,
+		needAutomerge && !allAutomergeLoaded(prs),
+		needMergeStatus && !searchHydrated,
 		closedAllowed,
 		mergedAllowed,
 		cache,
@@ -744,8 +743,25 @@ func runOnce(
 	params *SearchParams,
 	stopSpinner func(),
 ) (string, error) {
-	// Execute search
-	prs, err := executeSearch(rest, params)
+	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
+	var gql *api.GraphQLClient
+	getGQL := func() (*api.GraphQLClient, error) {
+		if gql == nil {
+			var gqlErr error
+			gql, gqlErr = newGraphQLClient(withDebug(cli.Debug))
+			if gqlErr != nil {
+				return nil, fmt.Errorf("creating GraphQL client: %w", gqlErr)
+			}
+		}
+		return gql, nil
+	}
+
+	ready := cli.PRState() == StateReady
+	ciFilter := cli.CIStatus()
+	needsEnrich := ready || ciFilter != CINone
+	needMergeStatus := (!cli.Quick || needsEnrich) &&
+		(cli.OutputFormat() == OutputTable || needsEnrich)
+	prs, searchHydrated, err := executeListSearch(rest, getGQL, params, needMergeStatus)
 	if err != nil {
 		return "", err
 	}
@@ -762,19 +778,6 @@ func runOnce(
 		return "", nil
 	}
 
-	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
-	var gql *api.GraphQLClient
-	getGQL := func() (*api.GraphQLClient, error) {
-		if gql == nil {
-			var gqlErr error
-			gql, gqlErr = newGraphQLClient(withDebug(cli.Debug))
-			if gqlErr != nil {
-				return nil, fmt.Errorf("creating GraphQL client: %w", gqlErr)
-			}
-		}
-		return gql, nil
-	}
-
 	// Resolve timeline filter logins before the shared metadata pass.
 	closedAllowed, err := resolveTimelineLogins(rest, cli.ClosedBy.Values)
 	if err != nil {
@@ -785,19 +788,14 @@ func runOnce(
 		return "", err
 	}
 
-	ready := cli.PRState() == StateReady
-	ciFilter := cli.CIStatus()
-	needsEnrich := ready || ciFilter != CINone
-	needMergeStatus := (!cli.Quick || needsEnrich) &&
-		(cli.OutputFormat() == OutputTable || needsEnrich)
 	needAutomerge := cli.Merge != nil || (!cli.Quick && cli.Send)
 
 	prs, err = applyListMetadata(
 		cli,
 		getGQL,
 		prs,
-		needAutomerge,
-		needMergeStatus,
+		needAutomerge && !allAutomergeLoaded(prs),
+		needMergeStatus && !searchHydrated,
 		closedAllowed,
 		mergedAllowed,
 		nil,
