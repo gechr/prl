@@ -368,15 +368,30 @@ func runWatch(
 		initialCLI = cloneCLI(cli)
 		initialCLI.Quick = true
 	}
-	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
-		out, prs, fErr := buildOutput(p, rest, initialCLI, cfg, tty, params, cache)
-		return fetchResult{out, prs, fErr}
-	})
+	cachedPRs, cachedOK, cachedErr := loadListResultCache(cli, params)
+	if cachedErr != nil {
+		clog.Debug().Err(cachedErr).Msg("list cache load failed")
+	}
 
+	var r fetchResult
+	if cachedOK {
+		out, renderErr := renderOutput(p, cli, cfg, tty, cachedPRs)
+		r = fetchResult{output: out, prs: cachedPRs, err: renderErr}
+	} else {
+		r = withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
+			out, prs, fErr := buildOutput(p, rest, initialCLI, cfg, tty, params, cache)
+			return fetchResult{out, prs, fErr}
+		})
+		if r.err == nil && !initialFetchDeferred {
+			if err := saveListResultCache(cli, params, r.prs); err != nil {
+				clog.Debug().Err(err).Msg("list cache save failed")
+			}
+		}
+	}
 	if r.err != nil {
 		return r.err
 	}
-	if r.output == "" && cli.ExitZero {
+	if !cachedOK && r.output == "" && cli.ExitZero {
 		return errFatal
 	}
 
@@ -403,6 +418,11 @@ func runWatch(
 	fetch := func() {
 		go func() {
 			out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params, cache)
+			if fErr == nil {
+				if err := saveListResultCache(cli, params, prs); err != nil {
+					clog.Debug().Err(err).Msg("list cache save failed")
+				}
+			}
 			results <- fetchResult{out, prs, fErr}
 		}()
 	}
@@ -436,7 +456,7 @@ func runWatch(
 	}
 	interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
 	nextFetchAt = time.Now().Add(interval)
-	if initialFetchDeferred {
+	if initialFetchDeferred || cachedOK {
 		fetching = true
 		nextFetchAt = time.Time{}
 		fetch()

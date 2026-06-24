@@ -498,6 +498,7 @@ type tuiModel struct {
 	rest          *api.RESTClient
 	params        *SearchParams
 	metadataCache *listMetadataCache
+	initCmd       tea.Cmd
 }
 
 // isCurrentUserPR reports whether the given PR was authored by the authenticated user.
@@ -660,6 +661,9 @@ func (r refreshSnapshot) run() refreshResultMsg {
 	if err != nil {
 		return refreshResultMsg{err: err}
 	}
+	if err := saveListResultCache(r.cli, r.params, prItems(items)); err != nil {
+		clog.Debug().Err(err).Msg("list cache save failed")
+	}
 	termWidth := max(0, r.width-tuiListPrefixWidth(len(items)))
 	renderer := r.p.newTableRenderer(r.cli, r.tty, termWidth, table.WithShowIndex(false))
 	_, rows, _ := renderTUITable(renderer, items, "", false, termWidth)
@@ -709,6 +713,9 @@ func (m tuiModel) buildConfirmSubmission() confirmSubmission {
 
 func (m tuiModel) Init() tea.Cmd {
 	var cmds []tea.Cmd
+	if m.initCmd != nil {
+		cmds = append(cmds, m.initCmd)
+	}
 	if m.cfg != nil && m.cfg.TUI.ScreenRepair {
 		cmds = append(cmds, m.scheduleScreenCheck())
 	}
@@ -2995,31 +3002,55 @@ func runTui(
 		cache     *listMetadataCache
 		err       error
 	}
-	r := withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
-		cache := newListMetadataCache()
-		snapshot := refreshSnapshot{
-			cli:      cli,
-			cfg:      cfg,
-			p:        p,
-			tty:      tty,
-			gql:      gql,
-			resolver: resolver,
-			rest:     rest,
-			params:   params,
-			width:    term.Width(os.Stdout),
-			cache:    cache,
-		}
-		items, searchErr := snapshot.fetchAndBuild()
-		if searchErr != nil {
-			return fetchResult{err: searchErr, cache: cache}
-		}
-		initWidth := max(0, snapshot.width-tuiListPrefixWidth(len(items)))
+
+	buildInitialResult := func(prs []PullRequest, cache *listMetadataCache) fetchResult {
+		items := buildPRRowModels(prs, singleOwner(cli.Owner.Values), resolver)
+		initWidth := max(0, term.Width(os.Stdout)-tuiListPrefixWidth(len(items)))
 		renderer := p.newTableRenderer(cli, tty, initWidth, table.WithShowIndex(false))
 		header, rows, colWidths := renderTUITable(renderer, items, "", false, initWidth)
 		return fetchResult{
 			rows: rows, items: items, header: header, colWidths: colWidths, cache: cache,
 		}
-	})
+	}
+
+	cache := newListMetadataCache()
+	cachedPRs, cachedOK, cachedErr := loadListResultCache(cli, params)
+	if cachedErr != nil {
+		clog.Debug().Err(cachedErr).Msg("list cache load failed")
+	}
+
+	var r fetchResult
+	if cachedOK {
+		r = buildInitialResult(cachedPRs, cache)
+	} else {
+		r = withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
+			snapshot := refreshSnapshot{
+				cli:      cli,
+				cfg:      cfg,
+				p:        p,
+				tty:      tty,
+				gql:      gql,
+				resolver: resolver,
+				rest:     rest,
+				params:   params,
+				width:    term.Width(os.Stdout),
+				cache:    cache,
+			}
+			items, searchErr := snapshot.fetchAndBuild()
+			if searchErr != nil {
+				return fetchResult{err: searchErr, cache: cache}
+			}
+			if saveErr := saveListResultCache(cli, params, prItems(items)); saveErr != nil {
+				clog.Debug().Err(saveErr).Msg("list cache save failed")
+			}
+			initWidth := max(0, snapshot.width-tuiListPrefixWidth(len(items)))
+			renderer := p.newTableRenderer(cli, tty, initWidth, table.WithShowIndex(false))
+			header, rows, colWidths := renderTUITable(renderer, items, "", false, initWidth)
+			return fetchResult{
+				rows: rows, items: items, header: header, colWidths: colWidths, cache: cache,
+			}
+		})
+	}
 
 	if r.err != nil {
 		return r.err
@@ -3074,6 +3105,9 @@ func runTui(
 		model.sortColumn = cfg.TUI.Sort.Key
 		model.sortAsc = cfg.TUI.Sort.Order == valueAsc
 		model.header, model.rows, model.colWidths = model.rerender()
+	}
+	if cachedOK {
+		model.initCmd = model.startRefresh(false)
 	}
 
 	var program *tea.Program
