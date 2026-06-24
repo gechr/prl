@@ -566,7 +566,7 @@ func buildMergeStatusRoot(includeAutomerge bool) string {
 		"headRefOid",
 		"mergeStateStatus",
 		"reviewDecision",
-		"commits(last:1){nodes{commit{statusCheckRollup{state}}}}",
+		"commits(last:1){nodes{commit{statusCheckRollup{state} checkSuites(first:50){totalCount nodes{conclusion checkRuns(first:1){totalCount}}}}}}",
 	}
 	if includeAutomerge {
 		fields = append(fields, "autoMergeRequest{enabledAt}")
@@ -614,6 +614,7 @@ type listMergeStatusNode struct {
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
+				CheckSuites       listCheckSuites `json:"checkSuites"`
 				StatusCheckRollup *struct {
 					State string `json:"state"`
 				} `json:"statusCheckRollup"`
@@ -632,6 +633,18 @@ type listViewerReviewNode struct {
 			State string `json:"state"`
 		} `json:"nodes"`
 	} `json:"latestOpinionatedReviews"`
+}
+
+type listCheckSuites struct {
+	TotalCount int              `json:"totalCount"`
+	Nodes      []listCheckSuite `json:"nodes"`
+}
+
+type listCheckSuite struct {
+	CheckRuns *struct {
+		TotalCount int `json:"totalCount"`
+	} `json:"checkRuns"`
+	Conclusion *string `json:"conclusion"`
 }
 
 func collectPRNodeIDs(prs []PullRequest) []string {
@@ -685,6 +698,59 @@ func resolveMergeStatus(
 	default:
 		return MergeStatusBlocked
 	}
+}
+
+func checkSuitesCIState(suites listCheckSuites) (string, bool) {
+	if suites.TotalCount == 0 && len(suites.Nodes) == 0 {
+		return "", false
+	}
+
+	ran := false
+	for _, suite := range suites.Nodes {
+		conclusion := ""
+		if suite.Conclusion != nil {
+			conclusion = *suite.Conclusion
+		}
+		if isFailingCheckSuiteConclusion(conclusion) &&
+			(checkSuiteRan(suite) || isTerminalFailCheckSuiteConclusion(conclusion)) {
+			return valueCIFailure, true
+		}
+		if checkSuiteRan(suite) {
+			ran = true
+			if suite.Conclusion == nil {
+				return valueCIPending, true
+			}
+		}
+	}
+
+	if !ran {
+		return "", true
+	}
+	if suites.TotalCount > len(suites.Nodes) {
+		return valueCIPending, true
+	}
+	return valueCISuccess, true
+}
+
+func checkSuiteRan(suite listCheckSuite) bool {
+	return suite.CheckRuns != nil && suite.CheckRuns.TotalCount > 0
+}
+
+func isFailingCheckSuiteConclusion(conclusion string) bool {
+	switch conclusion {
+	case valueCIFailure,
+		valueCIStartupFailed,
+		valueCICancelled,
+		valueCITimedOut,
+		valueCIActionNeeded:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalFailCheckSuiteConclusion(conclusion string) bool {
+	return conclusion == valueCIStartupFailed
 }
 
 func applyMergeStatusResult(
@@ -777,7 +843,10 @@ func applyListMergeStatusNodes(
 		}
 		var ciState string
 		if len(node.Commits.Nodes) > 0 {
-			if rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+			commit := node.Commits.Nodes[0].Commit
+			if checkState, ok := checkSuitesCIState(commit.CheckSuites); ok {
+				ciState = checkState
+			} else if rollup := commit.StatusCheckRollup; rollup != nil {
 				ciState = rollup.State
 			}
 		}

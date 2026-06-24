@@ -489,6 +489,7 @@ type graphQLSearchPRNode struct {
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
+				CheckSuites       listCheckSuites `json:"checkSuites"`
 				StatusCheckRollup *struct {
 					State string `json:"state"`
 				} `json:"statusCheckRollup"`
@@ -552,6 +553,13 @@ func executeSearchGraphQL(gql *api.GraphQLClient, params *SearchParams) ([]PullR
 							commits(last: 1) {
 								nodes {
 									commit {
+										checkSuites(first: 50) {
+											totalCount
+											nodes {
+												conclusion
+												checkRuns(first: 1) { totalCount }
+											}
+										}
 										statusCheckRollup { state }
 									}
 								}
@@ -652,7 +660,10 @@ func graphQLMergeStatus(node graphQLSearchPRNode) MergeStatus {
 	}
 	var ciState string
 	if len(node.Commits.Nodes) > 0 {
-		if rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+		commit := node.Commits.Nodes[0].Commit
+		if checkState, ok := checkSuitesCIState(commit.CheckSuites); ok {
+			ciState = checkState
+		} else if rollup := commit.StatusCheckRollup; rollup != nil {
 			ciState = rollup.State
 		}
 	}

@@ -109,12 +109,16 @@ const (
 // GitHub API status values.
 const (
 	valueCIError         = "ERROR"
+	valueCIActionNeeded  = "ACTION_REQUIRED"
+	valueCICancelled     = "CANCELLED"
 	valueCIExpected      = "EXPECTED"
 	valueCIFailure       = "FAILURE"
 	valueCIInProgress    = "IN_PROGRESS"
 	valueCIPending       = "PENDING"
 	valueCIQueued        = "QUEUED"
+	valueCIStartupFailed = "STARTUP_FAILURE"
 	valueCISuccess       = "SUCCESS"
+	valueCITimedOut      = "TIMED_OUT"
 	valueCIUnknown       = "UNKNOWN"
 	valueMergeStateClean = "CLEAN"
 	valueMergeStateDirty = "DIRTY"

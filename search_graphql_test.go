@@ -49,6 +49,7 @@ func TestToPullRequestGraphQLHydratesMergeStatus(t *testing.T) {
 	}{{Name: "enhancement"}}
 	node.Commits.Nodes = []struct {
 		Commit struct {
+			CheckSuites       listCheckSuites `json:"checkSuites"`
 			StatusCheckRollup *struct {
 				State string `json:"state"`
 			} `json:"statusCheckRollup"`

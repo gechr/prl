@@ -263,7 +263,7 @@ func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(
 			t,
-			`query ListMetadata($timelineIDs: [ID!]!, $automergeIDs: [ID!]!, $mergeIDs: [ID!]!){timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}} merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}}} automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}} mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}} autoMergeRequest{enabledAt}}}}`,
+			`query ListMetadata($timelineIDs: [ID!]!, $automergeIDs: [ID!]!, $mergeIDs: [ID!]!){timelineNodes:nodes(ids:$timelineIDs){... on PullRequest{id closed:timelineItems(itemTypes:[CLOSED_EVENT],last:1){nodes{... on ClosedEvent{actor{login}}}} merged:timelineItems(itemTypes:[MERGED_EVENT],last:1){nodes{... on MergedEvent{actor{login}}}}}} automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}} mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state} checkSuites(first:50){totalCount nodes{conclusion checkRuns(first:1){totalCount}}}}}} autoMergeRequest{enabledAt}}}}`,
 			got.Query,
 		)
 		require.Equal(
@@ -342,7 +342,7 @@ func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(
 			t,
-			`query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}`,
+			`query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{id headRefOid mergeStateStatus reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state} checkSuites(first:50){totalCount nodes{conclusion checkRuns(first:1){totalCount}}}}}}}}}`,
 			got.Query,
 		)
 		require.Equal(t, map[string][]string{"mergeIDs": {"PR_1"}}, got.Variables)
@@ -714,5 +714,61 @@ func TestResolveMergeStatus(t *testing.T) {
 			got := resolveMergeStatus(tt.ciState, tt.reviewDecision, tt.mergeStateStatus)
 			require.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestCheckSuitesCIStateIgnoresPhantomSuites(t *testing.T) {
+	suites := listCheckSuites{
+		TotalCount: 2,
+		Nodes: []listCheckSuite{
+			testCheckSuite(new(valueCIFailure), 0),
+			testCheckSuite(nil, 0),
+		},
+	}
+
+	got, ok := checkSuitesCIState(suites)
+	require.True(t, ok)
+	require.Empty(t, got)
+}
+
+func TestCheckSuitesCIStateCountsStartupFailuresWithoutRuns(t *testing.T) {
+	suites := listCheckSuites{
+		TotalCount: 1,
+		Nodes:      []listCheckSuite{testCheckSuite(new(valueCIStartupFailed), 0)},
+	}
+
+	got, ok := checkSuitesCIState(suites)
+	require.True(t, ok)
+	require.Equal(t, valueCIFailure, got)
+}
+
+func TestCheckSuitesCIStateDegradesTruncatedPassToPending(t *testing.T) {
+	suites := listCheckSuites{
+		TotalCount: 2,
+		Nodes:      []listCheckSuite{testCheckSuite(new(valueCISuccess), 1)},
+	}
+
+	got, ok := checkSuitesCIState(suites)
+	require.True(t, ok)
+	require.Equal(t, valueCIPending, got)
+}
+
+func TestCheckSuitesCIStatePassesWhenAllVisibleSuitesPass(t *testing.T) {
+	suites := listCheckSuites{
+		TotalCount: 1,
+		Nodes:      []listCheckSuite{testCheckSuite(new(valueCISuccess), 1)},
+	}
+
+	got, ok := checkSuitesCIState(suites)
+	require.True(t, ok)
+	require.Equal(t, valueCISuccess, got)
+}
+
+func testCheckSuite(conclusion *string, runs int) listCheckSuite {
+	return listCheckSuite{
+		CheckRuns: new(struct {
+			TotalCount int `json:"totalCount"`
+		}{TotalCount: runs}),
+		Conclusion: conclusion,
 	}
 }
