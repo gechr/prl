@@ -369,7 +369,7 @@ func TestBuildSearchQuery_UsesOwnerQualifier(t *testing.T) {
 		Owner: CSVFlag{Values: []string{"acme"}},
 	}, &Config{})
 	require.NoError(t, err)
-	require.Equal(t, "type:pr archived:false state:open user:acme", params.Query)
+	require.Equal(t, "is:pr archived:false state:open user:acme", params.Query)
 }
 
 func TestBuildSearchQuery_SelfRequiredUsesGitHubRequiredQualifier(t *testing.T) {

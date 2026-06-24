@@ -245,7 +245,7 @@ func (c *CLI) Validate() error {
 	for _, f := range c.Filter {
 		lower := strings.ToLower(f)
 		if strings.HasPrefix(lower, "type:") || strings.HasPrefix(lower, "-type:") {
-			return fmt.Errorf("--filter %q conflicts with the implicit type:pr qualifier", f)
+			return fmt.Errorf("--filter %q conflicts with the implicit pull request qualifier", f)
 		}
 	}
 

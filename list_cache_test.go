@@ -24,7 +24,7 @@ func testCacheCLI() *CLI {
 
 func testCacheParams() *SearchParams {
 	return &SearchParams{
-		Query:      "type:pr archived:false author:@me",
+		Query:      "is:pr archived:false author:@me",
 		Sort:       valueUpdated,
 		Order:      valueDesc,
 		PerPage:    30,

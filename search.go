@@ -23,7 +23,7 @@ type SearchParams struct {
 // buildSearchQuery constructs a GitHub search query and parameters.
 func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	var qualifiers []string
-	qualifiers = append(qualifiers, "type:pr")
+	qualifiers = append(qualifiers, "is:pr")
 	if !cli.Archived {
 		qualifiers = append(qualifiers, "archived:false")
 	}
@@ -449,20 +449,39 @@ func executeListSearch(
 	params *SearchParams,
 	preferGraphQL bool,
 ) ([]PullRequest, bool, error) {
-	if preferGraphQL && getGQL != nil {
-		gql, err := getGQL()
-		if err == nil {
-			prs, searchErr := executeSearchGraphQL(gql, params)
-			if searchErr == nil {
-				return prs, true, nil
-			}
-			clog.Debug().Err(searchErr).Msg("GraphQL search failed")
-		} else {
-			clog.Debug().Err(err).Msg("GraphQL search unavailable")
+	if preferGraphQL {
+		if prs, ok := tryExecuteListSearchGraphQL(getGQL, params); ok {
+			return prs, true, nil
 		}
 	}
 	prs, err := executeSearch(rest, params)
 	return prs, false, err
+}
+
+func tryExecuteListSearchGraphQL(
+	getGQL func() (*api.GraphQLClient, error),
+	params *SearchParams,
+) ([]PullRequest, bool) {
+	if getGQL == nil {
+		return nil, false
+	}
+	gql, err := getGQL()
+	if err != nil {
+		clog.Debug().Err(err).Msg("GraphQL search unavailable")
+		return nil, false
+	}
+	prs, err := executeSearchGraphQL(gql, params)
+	if err != nil {
+		clog.Debug().Err(err).Msg("GraphQL search failed")
+		return nil, false
+	}
+	if len(prs) == 0 {
+		// REST search is authoritative for list membership; the GraphQL path
+		// is an enrichment fast path for non-empty result sets.
+		clog.Debug().Msg("GraphQL search returned no results")
+		return nil, false
+	}
+	return prs, true
 }
 
 type graphQLSearchResponse struct {
