@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 )
@@ -34,26 +35,30 @@ func gitRemoteOwnerRepo(dir string) (string, string, error) {
 
 // parseGitHubRemote parses owner/repo from HTTPS or SSH GitHub remote URLs.
 func parseGitHubRemote(remote string) (string, string, error) {
-	// SSH: git@github.com:owner/repo.git
-	if after, ok := strings.CutPrefix(remote, "git@github.com:"); ok {
-		path := strings.TrimSuffix(after, ".git")
-		return splitOwnerRepo(path)
+	remote = strings.TrimSuffix(strings.TrimSpace(remote), ".git")
+
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		if !strings.EqualFold(u.Hostname(), "github.com") {
+			return "", "", fmt.Errorf("remote %q is not a GitHub URL", remote)
+		}
+		return splitOwnerRepo(strings.TrimPrefix(u.Path, "/"))
 	}
-	// HTTPS: https://github.com/owner/repo.git  or  https://github.com/owner/repo
-	if strings.Contains(remote, "github.com/") {
-		_, after, _ := strings.Cut(remote, "github.com/")
-		path := strings.TrimSuffix(after, ".git")
-		return splitOwnerRepo(path)
+
+	if userHost, path, ok := strings.Cut(remote, ":"); ok {
+		if _, host, ok := strings.Cut(userHost, "@"); ok && strings.EqualFold(host, "github.com") {
+			return splitOwnerRepo(path)
+		}
 	}
+
 	return "", "", fmt.Errorf("remote %q is not a GitHub URL", remote)
 }
 
 func splitOwnerRepo(path string) (string, string, error) {
-	parts := strings.SplitN(path, "/", 2) //nolint:mnd // self-explanatory
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("could not parse owner/repo from remote path %q", path)
+	parts := strings.Split(path, "/")
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		return parts[0], parts[1], nil
 	}
-	return parts[0], parts[1], nil
+	return "", "", fmt.Errorf("could not parse owner/repo from remote path %q", path)
 }
 
 // isPathLike reports whether a CLI repo/owner value should be interpreted as
