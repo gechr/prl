@@ -15,6 +15,7 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
+	xhuman "github.com/gechr/x/human"
 )
 
 // cloneTarget represents a repository to clone with an optional branch.
@@ -136,7 +137,7 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool)
 	if total > 0 {
 		clog.Info().
 			Int("count", total).
-			Msgf("All %s cloned", pluralize(total, "repository", "repositories"))
+			Msgf("All %s cloned", xhuman.Plural(total, "repository", "repositories"))
 	}
 	return nil
 }

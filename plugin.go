@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gechr/clog"
+	xstrings "github.com/gechr/x/strings"
 )
 
 const pluginTimeout = 5 * time.Second
@@ -552,7 +553,7 @@ func classifySlackRecipient(recipient string) (string, []string) {
 	}
 
 	if strings.Contains(recipient, ",") {
-		parts := splitCSV(recipient)
+		parts := xstrings.SplitCSV(recipient)
 		if len(parts) > 1 {
 			return valueUsers, parts
 		}

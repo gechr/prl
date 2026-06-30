@@ -9,6 +9,7 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
+	xslices "github.com/gechr/x/slices"
 )
 
 // SearchParams holds the parameters for a GitHub search API call.
@@ -106,7 +107,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	if cli.Author != nil {
 		authorValues = cli.Author.Values
 	}
-	authorFilters := deduplicate(filterAllValue(authorValues), true)
+	authorFilters := xslices.UniqueFold(filterAllValue(authorValues))
 	bots := discoverBotAuthors(cfg)
 
 	// Commenter filter
@@ -163,12 +164,12 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 			}
 			allMembers = append(allMembers, members...)
 		}
-		authorFilters = deduplicate(append(authorFilters, allMembers...), true)
+		authorFilters = xslices.UniqueFold(append(authorFilters, allMembers...))
 	}
 	for i, author := range authorFilters {
 		authorFilters[i] = normalizeBotAuthorValue(author, bots)
 	}
-	authorFilters = deduplicate(authorFilters, true)
+	authorFilters = xslices.UniqueFold(authorFilters)
 	if q := buildORQualifier("author", authorFilters); q != "" {
 		qualifiers = append(qualifiers, q)
 	}
