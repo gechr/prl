@@ -2,10 +2,7 @@ package main
 
 import (
 	"runtime"
-	"slices"
 	"strings"
-
-	"github.com/maruel/natural"
 )
 
 // deduplicate returns items in first-seen order with duplicates removed.
@@ -31,13 +28,6 @@ func deduplicate[T comparable](items []T, ignoreCase bool) []T {
 
 func isDarwin() bool {
 	return runtime.GOOS == "darwin"
-}
-
-// natsort sorts a slice in-place using natural ordering of the string key.
-func natsort[S ~[]E, E ~string](s S) {
-	slices.SortFunc(s, func(a, b E) int {
-		return natural.Compare(string(a), string(b))
-	})
 }
 
 // pluralize returns singular or plural form based on count.

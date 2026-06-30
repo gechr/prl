@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/x/ansi"
+	xslices "github.com/gechr/x/slices"
 )
 
 // targetPR pairs a list index with a copy of the PR at that index.
@@ -749,7 +750,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		for i, t := range targets {
 			urls[i] = t.pr.URL
 		}
-		natsort(urls)
+		xslices.SortNatural(urls)
 		_ = copyToClipboard(strings.Join(urls, nl))
 		last := targets[len(targets)-1]
 		msg := last.pr.Ref()

@@ -20,6 +20,7 @@ import (
 	cspinner "github.com/gechr/clog/fx/spinner"
 	"github.com/gechr/primer/pick"
 	xansi "github.com/gechr/x/ansi"
+	xslices "github.com/gechr/x/slices"
 	"github.com/gechr/x/terminal"
 )
 
@@ -870,7 +871,7 @@ func runOnce(
 		for i, pr := range prs {
 			urls[i] = pr.URL
 		}
-		natsort(urls)
+		xslices.SortNatural(urls)
 		if err := copyToClipboard(strings.Join(urls, nl)); err != nil {
 			clog.Warn().Err(err).Msg("Clipboard copy failed")
 		}
