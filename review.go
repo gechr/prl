@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/gechr/x/shell"
+	"github.com/gechr/x/terminal/emulator"
 )
 
 type aiReviewLauncher string
@@ -28,19 +29,17 @@ func currentAIReviewLauncher() aiReviewLauncher {
 	if !isDarwin() {
 		return aiReviewLauncherNone
 	}
-	if os.Getenv("KITTY_WINDOW_ID") != "" {
+	switch emulator.Detect() {
+	case emulator.Kitty:
 		if _, err := exec.LookPath("kitty"); err == nil {
 			return aiReviewLauncherKitty
 		}
-	}
-	switch os.Getenv("TERM_PROGRAM") {
-	case "ghostty":
+	case emulator.Ghostty:
 		return aiReviewLauncherGhostty
-	case "iTerm.app":
+	case emulator.ITerm2:
 		return aiReviewLauncherITerm2
-	default:
-		return aiReviewLauncherNone
 	}
+	return aiReviewLauncherNone
 }
 
 func hasAIReviewLauncher() bool { return currentAIReviewLauncher() != aiReviewLauncherNone }
