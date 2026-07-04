@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/gechr/clog"
+	"github.com/gechr/x/set"
 )
 
 var aiReviewPromptPlaceholderPattern = regexp.MustCompile(`\{([a-zA-Z][a-zA-Z0-9]*)\}`)
@@ -100,33 +100,24 @@ func reviewPrompt(pr PullRequest, cfg *Config, provider reviewProvider) string {
 }
 
 func validateReviewPromptTemplate(template string) error {
-	allowed := make(map[string]struct{}, len(reviewPromptPlaceholderNames()))
-	for _, name := range reviewPromptPlaceholderNames() {
-		allowed[name] = struct{}{}
-	}
+	allowed := set.New(reviewPromptPlaceholderNames()...)
 
-	unknown := make(map[string]struct{})
+	unknown := set.New[string]()
 	for _, match := range aiReviewPromptPlaceholderPattern.FindAllStringSubmatch(template, -1) {
 		if len(match) < aiReviewPromptSubmatchCount {
 			continue
 		}
-		if _, ok := allowed[match[1]]; !ok {
-			unknown[match[1]] = struct{}{}
+		if !allowed.Contains(match[1]) {
+			unknown.Add(match[1])
 		}
 	}
-	if len(unknown) == 0 {
+	if unknown.Len() == 0 {
 		return nil
 	}
 
-	names := make([]string, 0, len(unknown))
-	for name := range unknown {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
 	return fmt.Errorf(
 		"unknown placeholder(s): %s (available: %s)",
-		strings.Join(names, ", "),
+		strings.Join(set.Sorted(unknown), ", "),
 		strings.Join(reviewPromptPlaceholderNames(), ", "),
 	)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/gechr/clog"
 	"github.com/gechr/conductor"
 	cli "github.com/gechr/conductor/cli/kong"
+	xstrings "github.com/gechr/x/strings"
 )
 
 // CSVFlag is a comma-separated value flag backed by clib.
@@ -481,9 +482,7 @@ func (c *CLI) setOutput(s string) {
 func normalizeSendToRecipient(recipient string) string {
 	if recipient == "" ||
 		strings.HasPrefix(recipient, "#") ||
-		strings.HasPrefix(recipient, "@") ||
-		strings.Contains(recipient, ",") ||
-		strings.Contains(recipient, "@") ||
+		xstrings.ContainsAny(recipient, ",", "@") ||
 		looksLikeSlackRecipientID(recipient) {
 		return recipient
 	}

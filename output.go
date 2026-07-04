@@ -11,6 +11,7 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
+	xslices "github.com/gechr/x/slices"
 )
 
 type timelineActors struct {
@@ -1217,15 +1218,11 @@ func renderBullets(prs []PullRequest) string {
 
 // renderRepos outputs unique repo names in alphabetical order.
 func renderRepos(prs []PullRequest) string {
-	seen := make(map[string]struct{})
-	var names []string
+	names := make([]string, 0, len(prs))
 	for _, pr := range prs {
-		name := pr.Repository.Name
-		if _, ok := seen[name]; !ok {
-			seen[name] = struct{}{}
-			names = append(names, name)
-		}
+		names = append(names, pr.Repository.Name)
 	}
+	names = xslices.Unique(names)
 	sort.Strings(names)
 	return strings.Join(names, nl)
 }

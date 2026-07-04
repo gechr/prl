@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -16,6 +15,7 @@ import (
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
 	xhuman "github.com/gechr/x/human"
+	xos "github.com/gechr/x/os"
 )
 
 // cloneTarget represents a repository to clone with an optional branch.
@@ -75,7 +75,7 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool)
 	var toClone []cloneTarget
 	for _, t := range targets {
 		dir := cloneDir(t)
-		if _, err := os.Stat(dir); err == nil {
+		if ok, _ := xos.Exists(dir); ok {
 			key, url, label := prLink(t)
 			clog.Warn().
 				Link(key, url, label).

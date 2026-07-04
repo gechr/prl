@@ -9,12 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gechr/clog"
+	xmaps "github.com/gechr/x/maps"
 	xstrings "github.com/gechr/x/strings"
 )
 
@@ -183,12 +183,9 @@ func discoverPluginsOnPATH() []pluginCandidate {
 	}
 
 	candidates := make([]pluginCandidate, 0, len(seen))
-	for _, candidate := range seen {
+	for _, candidate := range xmaps.Sorted(seen) {
 		candidates = append(candidates, candidate)
 	}
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].name < candidates[j].name
-	})
 
 	return candidates
 }

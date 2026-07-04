@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	xstrings "github.com/gechr/x/strings"
 )
 
 // Reintroduce mutating-request spacing here if GitHub secondary rate limiting becomes an issue.
@@ -246,7 +248,7 @@ func isSecondaryRateLimit(status int, headers http.Header, body []byte) bool {
 		return false
 	}
 	msg := strings.ToLower(payload.Message)
-	return strings.Contains(msg, "rate limit") || strings.Contains(msg, "abuse detection")
+	return xstrings.ContainsAny(msg, "rate limit", "abuse detection")
 }
 
 func parseRetryAfter(value string) (time.Duration, bool) {

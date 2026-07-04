@@ -7,6 +7,10 @@ import (
 	"strings"
 
 	"github.com/gechr/clog"
+	xos "github.com/gechr/x/os"
+	"github.com/gechr/x/shell"
+	xslices "github.com/gechr/x/slices"
+	xstrings "github.com/gechr/x/strings"
 	goyaml "github.com/goccy/go-yaml"
 	goyamlast "github.com/goccy/go-yaml/ast"
 	goyamlparser "github.com/goccy/go-yaml/parser"
@@ -20,11 +24,11 @@ import (
 const envPrefix = "PRL_"
 
 func configPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := shell.ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".config", "prl", "config.yaml"), nil
+	return filepath.Join(dir, "prl", "config.yaml"), nil
 }
 
 // Configuration key constants.
@@ -242,7 +246,7 @@ func loadConfig() (*Config, error) {
 	// 2. YAML config file (optional)
 	if cp, cpErr := configPath(); cpErr != nil {
 		clog.Debug().Err(cpErr).Msg("Failed to determine config path")
-	} else if _, statErr := os.Stat(cp); statErr == nil {
+	} else if ok, _ := xos.Exists(cp); ok {
 		if err := k.Load(file.Provider(cp), koanfyaml.Parser()); err != nil {
 			return nil, fmt.Errorf("loading config file %s: %w", cp, err)
 		}
@@ -317,20 +321,14 @@ func loadConfig() (*Config, error) {
 	}
 	if len(cfg.TUI.Review.Enabled) > 0 {
 		normalized := make([]string, 0, len(cfg.TUI.Review.Enabled))
-		seen := map[string]struct{}{}
 		for _, raw := range cfg.TUI.Review.Enabled {
 			provider := normalizeReviewProvider(raw)
 			if provider == reviewProviderUnknown {
 				return nil, fmt.Errorf("invalid tui.review.enabled provider %q", raw)
 			}
-			name := string(provider)
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			normalized = append(normalized, name)
+			normalized = append(normalized, string(provider))
 		}
-		cfg.TUI.Review.Enabled = normalized
+		cfg.TUI.Review.Enabled = xslices.Unique(normalized)
 	}
 	provider := normalizeReviewProvider(cfg.TUI.Review.Default.Provider)
 	if provider == reviewProviderUnknown {
@@ -533,12 +531,7 @@ func withSingleTrailingNewline(content string) string {
 }
 
 func indentBlock(content string, indent int) string {
-	prefix := strings.Repeat(" ", indent)
-	lines := strings.Split(content, nl)
-	for i, line := range lines {
-		lines[i] = prefix + line
-	}
-	return strings.Join(lines, nl)
+	return xstrings.Indent(content, strings.Repeat(" ", indent))
 }
 
 // mergeIntoAncestor finds the top-level ancestor of a dotted key in the YAML
@@ -798,7 +791,7 @@ func initConfig() error {
 		return fmt.Errorf("determining config path: %w", err)
 	}
 
-	if _, err := os.Stat(cp); err == nil {
+	if ok, _ := xos.Exists(cp); ok {
 		clog.Warn().Path("path", cp).Msg("Config already exists")
 		return errOK
 	}
