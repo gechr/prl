@@ -26,7 +26,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 )
 
-require github.com/gechr/clive v0.2.7
+require github.com/gechr/clive v0.2.8
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
@@ -102,7 +102,7 @@ require (
 	github.com/firefart/nonamedreturns v1.0.6 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
-	github.com/gechr/conductor v0.0.4
+	github.com/gechr/conductor v0.0.8
 	github.com/ghostiam/protogetter v0.3.20 // indirect
 	github.com/go-critic/go-critic v0.14.3 // indirect
 	github.com/go-toolsmith/astcast v1.1.0 // indirect
