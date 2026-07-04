@@ -7,6 +7,8 @@ import (
 
 	clib "github.com/gechr/clib/cli/kong"
 	"github.com/gechr/clog"
+	"github.com/gechr/conductor"
+	cli "github.com/gechr/conductor/cli/kong"
 )
 
 // CSVFlag is a comma-separated value flag backed by clib.
@@ -25,6 +27,7 @@ func normalizeReviewFilterValue(value string) string {
 type CLI struct {
 	// Embedded flags (hidden)
 	clib.CompletionFlags
+	cli.SelfUpdateFlag
 
 	// Positional
 	Query []string `help:"Search term(s) to filter pull requests" arg:"" optional:""`
@@ -110,6 +113,14 @@ type CLI struct {
 	reviewExplicit   bool `kong:"-"`
 	sortExplicit     bool `kong:"-"`
 	outputExplicit   bool `kong:"-"`
+
+	prl *prl    `kong:"-"`
+	cfg *Config `kong:"-"`
+}
+
+// ConductorFlags implements [conductor.FlagSource].
+func (c *CLI) ConductorFlags() conductor.Flags {
+	return conductor.Flags{Verbose: c.Verbose, Color: c.Color}
 }
 
 // Validate checks for mutually exclusive options.

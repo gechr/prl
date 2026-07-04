@@ -14,17 +14,17 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/cli/go-gh/v2/pkg/api"
-	clib "github.com/gechr/clib/cli/kong"
-	"github.com/gechr/clib/complete"
+	"github.com/gechr/clive"
+	"github.com/gechr/clive/updater/brew"
 	"github.com/gechr/clog"
 	cspinner "github.com/gechr/clog/fx/spinner"
+	"github.com/gechr/conductor"
+	cli "github.com/gechr/conductor/cli/kong"
 	"github.com/gechr/primer/pick"
 	xansi "github.com/gechr/x/ansi"
 	xslices "github.com/gechr/x/slices"
 	"github.com/gechr/x/terminal"
 )
-
-var version = "dev"
 
 // Sentinel errors for controlled exits.
 var (
@@ -33,73 +33,76 @@ var (
 )
 
 func main() {
-	if err := run(); err != nil {
-		switch {
-		case errors.Is(err, errOK):
-			return
-		case errors.Is(err, errFatal):
-			os.Exit(1)
-		default:
-			clog.Fatal().Err(err).Send()
-		}
-	}
-}
-
-func run() error {
-	// Route all log output to stderr so stdout is reserved for machine-readable data.
-	clog.SetOutputWriter(os.Stderr)
+	app := conductor.New(conductor.App{
+		Name:        "prl",
+		Description: "Search, filter, display, and act on GitHub pull requests",
+		Module:      "github.com/gechr/prl",
+		HelpShort:   "Short help",
+		HelpLong:    "Long help",
+		Updater: brew.New(
+			clive.Info{Module: "github.com/gechr/prl"},
+			brew.WithFormula("prl"),
+			brew.WithTap("gechr/tap"),
+		),
+		ConfigureLog: configureClog,
+	})
 
 	prl := New()
 
-	// Load configuration
 	cfg, err := loadConfig()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		clog.Fatal().Err(err).Msg("Failed to load config")
 	}
 
-	// Parse CLI arguments
-	var cli CLI
-	parser := kong.Must(&cli,
-		kong.Name("prl"),
-		kong.Description("Search, filter, display, and act on GitHub pull requests"),
-		kong.Help(prl.helpPrinter(cfg)),
+	root := CLI{prl: prl, cfg: cfg}
+	prog, err := cli.New(app, &root,
+		// prl renders its own config-aware help, overriding conductor's
+		// default help wiring.
+		cli.WithKongOptions(kong.Help(prl.helpPrinter(cfg))),
+		cli.WithCompletionHandler(func(shell, kind string, _ []string) {
+			if completeErr := prl.handleComplete(shell, kind, cfg); completeErr != nil {
+				clog.Error().Msg(completeErr.Error())
+			}
+		}),
+		cli.WithExitCode(exitCode),
 	)
-
-	_, err = parser.Parse(os.Args[1:])
 	if err != nil {
-		clog.Fatal().Msg(err.Error())
+		clog.Fatal().Err(err).Msg("Failed to build CLI")
 	}
+	os.Exit(prog.Run(os.Args[1:]))
+}
+
+// exitCode maps prl's sentinel errors to process exit codes; the Fatal branch
+// prints and exits directly, preserving the pre-conductor output.
+func exitCode(err error) int {
+	switch {
+	case errors.Is(err, errOK):
+		return 0
+	case errors.Is(err, errFatal):
+		return 1
+	default:
+		clog.Fatal().Err(err).Send()
+	}
+	return 1
+}
+
+// configureClog layers prl's voice over conductor's defaults; conductor runs
+// it via App.ConfigureLog.
+func configureClog() {
+	symbols := clog.DefaultSymbols()
+	symbols[clog.LevelInfo] = "✅"
+	clog.SetSymbols(symbols)
+}
+
+// Run implements the kong entry point: conductor dispatches here after
+// completion preflight, parsing, standard-flag application and the passive
+// update check.
+func (c *CLI) Run(app *conductor.Runtime) error {
+	prl, cfg, cli := c.prl, c.cfg, c
 
 	if cli.Version {
-		fmt.Println(version)
+		app.PrintVersion(false)
 		return errOK
-	}
-
-	// Handle completion (before validation/search logic)
-	flags, flagsErr := clib.Reflect(&cli)
-	if flagsErr != nil {
-		clog.Fatal().Msg(flagsErr.Error())
-	}
-	gen := complete.NewGenerator("prl").FromFlags(flags)
-	gen.Specs = append(gen.Specs,
-		complete.Spec{ShortFlag: "h", Terse: "Short help"},
-		complete.Spec{LongFlag: "help", Terse: "Long help"},
-	)
-	var completeErr error
-	handled, hErr := cli.Handle(
-		gen,
-		func(shell, kind string, _ []string) {
-			completeErr = prl.handleComplete(shell, kind, cfg)
-		},
-	)
-	if hErr != nil {
-		return hErr
-	}
-	if completeErr != nil {
-		return completeErr
-	}
-	if handled {
-		return nil
 	}
 
 	// Init mode: write default config and exit
@@ -107,12 +110,6 @@ func run() error {
 		return initConfig()
 	}
 
-	// Configure logging and color
-	clog.SetSliceSeparator(" ")
-	clog.SetVerbose(cli.Verbose)
-	symbols := clog.DefaultSymbols()
-	symbols[clog.LevelInfo] = "✅"
-	clog.SetSymbols(symbols)
 	tty := applyColorMode(cli.Color)
 
 	// Validate
@@ -140,14 +137,14 @@ func run() error {
 	cli.ApplyOutputOverrides()
 
 	// Build search query
-	params, err := buildSearchQuery(&cli, cfg)
+	params, err := buildSearchQuery(cli, cfg)
 	if err != nil {
 		return err
 	}
 
 	// Dry run mode
 	if cli.Dry {
-		lipgloss.Println(prl.buildDryRunOutput(params, &cli))
+		lipgloss.Println(prl.buildDryRunOutput(params, cli))
 		return nil
 	}
 
@@ -182,7 +179,7 @@ func run() error {
 
 	// Watch mode: loop search+render with screen clear
 	if cli.Watch {
-		return runWatch(prl, rest, &cli, cfg, tty, params, s)
+		return runWatch(prl, rest, cli, cfg, tty, params, s)
 	}
 
 	// Interactive TUI browser
@@ -192,13 +189,13 @@ func run() error {
 		}
 		cli.setOutput(valueTable)
 		clog.SetLevel(clog.LevelFatal) // TUI manages its own notifications
-		return runTui(prl, rest, &cli, cfg, tty, params, s)
+		return runTui(prl, rest, cli, cfg, tty, params, s)
 	}
 
 	var output string
 	if err := withSpinner(tty && !cli.Debug, s, func(stopSpinner func()) error {
 		var runErr error
-		output, runErr = runOnce(prl, rest, &cli, cfg, tty, params, stopSpinner)
+		output, runErr = runOnce(prl, rest, cli, cfg, tty, params, stopSpinner)
 		return runErr
 	}); err != nil {
 		return err
