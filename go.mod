@@ -26,7 +26,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 )
 
-require github.com/gechr/clive v0.2.8
+require github.com/gechr/clive v0.2.9
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
