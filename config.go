@@ -482,12 +482,12 @@ func saveConfigKey(key string, value any) error {
 		}
 
 		//nolint:gosec // config file, not sensitive
-		return os.WriteFile(cp, []byte(withSingleTrailingNewline(f.String())), 0o644)
+		return os.WriteFile(cp, []byte(xstrings.EnsureTrailingNewline(f.String())), 0o644)
 	}
 
 	if merged := mergeIntoAncestor(f, key, value); merged {
 		//nolint:gosec // config file, not sensitive
-		return os.WriteFile(cp, []byte(withSingleTrailingNewline(f.String())), 0o644)
+		return os.WriteFile(cp, []byte(xstrings.EnsureTrailingNewline(f.String())), 0o644)
 	}
 
 	// No ancestor found - append as a new top-level section.
@@ -515,7 +515,7 @@ func saveConfigKey(key string, value any) error {
 	}
 
 	//nolint:gosec // config file, not sensitive
-	return os.WriteFile(cp, []byte(withSingleTrailingNewline(out)), 0o644)
+	return os.WriteFile(cp, []byte(xstrings.EnsureTrailingNewline(out)), 0o644)
 }
 
 func marshalYAMLValue(value any) (string, error) {
@@ -524,10 +524,6 @@ func marshalYAMLValue(value any) (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(string(encoded), nl), nil
-}
-
-func withSingleTrailingNewline(content string) string {
-	return strings.TrimRight(content, nl) + nl
 }
 
 func indentBlock(content string, indent int) string {
