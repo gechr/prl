@@ -9,8 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
 	"github.com/gechr/primer/table"
-	"github.com/gechr/primer/term"
 	"github.com/gechr/x/ansi"
+	xterminal "github.com/gechr/x/terminal"
 )
 
 // tableLayout holds width-aware rendering decisions.
@@ -29,7 +29,7 @@ type (
 func (p *prl) NewTableRenderer(
 	cli *CLI, tty bool, opts ...table.Option,
 ) *table.Renderer[PRRowModel] {
-	return p.newTableRenderer(cli, tty, term.Width(os.Stdout), opts...)
+	return p.newTableRenderer(cli, tty, xterminal.Width(os.Stdout), opts...)
 }
 
 func (p *prl) newTableRenderer(

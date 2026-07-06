@@ -30,9 +30,9 @@ import (
 	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/scrollwheel"
 	"github.com/gechr/primer/table"
-	"github.com/gechr/primer/term"
 	"github.com/gechr/primer/view"
 	xansi "github.com/gechr/x/ansi"
+	xterminal "github.com/gechr/x/terminal"
 )
 
 type confirmSubmission struct {
@@ -1896,7 +1896,7 @@ func requestWindowSizeCmd() tea.Cmd {
 }
 
 func (m *tuiModel) refreshTerminalSize() {
-	width, height := term.Size(os.Stdout)
+	width, height := xterminal.Size(os.Stdout)
 	if width <= 0 || height <= 0 {
 		return
 	}
@@ -3015,7 +3015,7 @@ func runTui(
 
 	buildInitialResult := func(prs []PullRequest, cache *listMetadataCache) fetchResult {
 		items := buildPRRowModels(prs, singleOwner(cli.Owner.Values), resolver)
-		initWidth := max(0, term.Width(os.Stdout)-tuiListPrefixWidth(len(items)))
+		initWidth := max(0, xterminal.Width(os.Stdout)-tuiListPrefixWidth(len(items)))
 		renderer := p.newTableRenderer(cli, tty, initWidth, table.WithShowIndex(false))
 		header, rows, colWidths := renderTUITable(renderer, items, "", false, initWidth)
 		return fetchResult{
@@ -3043,7 +3043,7 @@ func runTui(
 				resolver: resolver,
 				rest:     rest,
 				params:   params,
-				width:    term.Width(os.Stdout),
+				width:    xterminal.Width(os.Stdout),
 				cache:    cache,
 			}
 			items, searchErr := snapshot.fetchAndBuild()
