@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +78,7 @@ func TestParseDate_OperatorFlipping(t *testing.T) {
 	for _, tt := range tests {
 		got, err := parseDate(tt.input)
 		require.NoError(t, err, "parseDate(%q)", tt.input)
-		require.True(t, strings.HasPrefix(got, tt.wantOp),
+		require.Equal(t, tt.wantOp, got[:len(tt.wantOp)],
 			"parseDate(%q) = %q, want prefix %q", tt.input, got, tt.wantOp)
 	}
 }
@@ -358,10 +357,11 @@ func TestBuildSearchQuery_MergesAuthorAndTeamWithoutDuplicates(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Contains(t, params.Query, "(author:user-1 OR author:user-2)")
-	require.Equal(t, 1, strings.Count(params.Query, "author:user-1"))
-	require.Equal(t, 1, strings.Count(params.Query, "author:user-2"))
-	require.NotContains(t, params.Query, "author:USER-2")
+	require.Equal(
+		t,
+		"is:pr archived:false state:open (author:user-1 OR author:user-2)",
+		params.Query,
+	)
 }
 
 func TestBuildSearchQuery_UsesOwnerQualifier(t *testing.T) {
@@ -377,8 +377,7 @@ func TestBuildSearchQuery_SelfRequiredUsesGitHubRequiredQualifier(t *testing.T) 
 		Review: valueReviewFilterSelfRequired,
 	}, &Config{})
 	require.NoError(t, err)
-	require.Contains(t, params.Query, "review:required")
-	require.NotContains(t, params.Query, valueReviewFilterSelfRequired)
+	require.Equal(t, "is:pr archived:false state:open review:required", params.Query)
 }
 
 func TestBuildSearchQuery_AppendsBotSuffixForPluginProvidedBots(t *testing.T) {
@@ -403,8 +402,11 @@ exit 1
 		Author: &author,
 	}, &Config{Plugin: pluginPath})
 	require.NoError(t, err)
-	require.Contains(t, params.Query, "(author:dependabot[bot] OR author:alice)")
-	require.Equal(t, 1, strings.Count(params.Query, "author:dependabot[bot]"))
+	require.Equal(
+		t,
+		"is:pr archived:false state:open (author:dependabot[bot] OR author:alice)",
+		params.Query,
+	)
 }
 
 func TestBuildSearchQuery_TopicRequiresPlugin(t *testing.T) {
@@ -414,5 +416,5 @@ func TestBuildSearchQuery_TopicRequiresPlugin(t *testing.T) {
 	_, err := buildSearchQuery(&CLI{
 		Topic: "platform",
 	}, &Config{})
-	require.ErrorContains(t, err, "--topic requires a plugin")
+	require.EqualError(t, err, "--topic requires a plugin (no prl-plugin-* binary found)")
 }

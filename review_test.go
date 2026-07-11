@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -51,34 +51,42 @@ func TestCurrentAIReviewLauncher(t *testing.T) {
 }
 
 func TestBuildAIReviewAppleScriptGhosttyUsesNewTab(t *testing.T) {
-	script, err := buildAIReviewAppleScript(aiReviewLauncherGhostty, "echo 'review'\n")
+	script, err := buildAIReviewAppleScript(aiReviewLauncherGhostty)
 
 	require.NoError(t, err)
-	require.Contains(t, script, `tell application "Ghostty"`)
-	require.Contains(t, script, "set cfg to new surface configuration")
-	require.Contains(t, script, `set initial input of cfg to "echo 'review'\n"`)
-	require.Contains(t, script, "new tab in front window with configuration cfg")
-	require.NotContains(t, script, "split focused terminal")
-	require.NotContains(t, script, "display dialog")
+	require.Equal(t, `on run argv
+	set shellCmd to item 1 of argv
+	tell application "Ghostty"
+	tell application "System Events" to tell process "Ghostty" to set frontmost to true
+	set cfg to new surface configuration
+	set initial input of cfg to shellCmd
+	new tab in front window with configuration cfg
+	end tell
+end run`, script)
 }
 
 func TestBuildAIReviewAppleScriptITerm2UsesNewTab(t *testing.T) {
-	script, err := buildAIReviewAppleScript(aiReviewLauncherITerm2, "echo review")
+	script, err := buildAIReviewAppleScript(aiReviewLauncherITerm2)
 
 	require.NoError(t, err)
-	require.Contains(t, script, `tell application "iTerm2"`)
-	require.Contains(t, script, `tell current window`)
-	require.Contains(t, script, `set newTab to (create tab with default profile)`)
-	require.Contains(t, script, `write text " " & "echo review"`)
-	require.NotContains(t, script, "split horizontally")
-	require.NotContains(t, script, "split vertically")
-	require.NotContains(t, script, "display dialog")
+	require.Equal(t, `on run argv
+	set shellCmd to item 1 of argv
+	tell application "iTerm2"
+	activate
+	tell current window
+		set newTab to (create tab with default profile)
+		tell current session of newTab
+			write text " " & shellCmd
+		end tell
+	end tell
+	end tell
+end run`, script)
 }
 
 func TestBuildAIReviewAppleScriptUnsupported(t *testing.T) {
-	_, err := buildAIReviewAppleScript(aiReviewLauncherNone, "echo review")
+	_, err := buildAIReviewAppleScript(aiReviewLauncherNone)
 
-	require.ErrorContains(t, err, "unsupported terminal")
+	require.EqualError(t, err, `unsupported terminal ""`)
 }
 
 func TestPrepareAIReviewConfirmUsesYesNo(t *testing.T) {
@@ -177,6 +185,8 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	pr := testReviewPullRequest()
 	const promptFile = "/tmp/prl-prompt.txt"
 	promptExpr := fmt.Sprintf(`"$(cat %s)"`, shell.Quote(promptFile))
+	cleanup := fmt.Sprintf("; rm -f %s", shell.Quote(promptFile))
+	baseCmd := expectedAIReviewBaseCommand(pr)
 
 	cmd := buildAIReviewCommand(
 		pr,
@@ -186,20 +196,21 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		claudeReviewModelSonnet,
 		claudeReviewEffortHigh,
 	)
-	require.Equal(t, 1, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelSonnet)))
-	require.Equal(t, 0, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelOpus)))
-	require.Equal(t, 1, strings.Count(cmd, "--effort="+shell.Quote(claudeReviewEffortHigh)))
-	require.Contains(t, cmd, promptExpr)
-
-	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewProviderClaude, "", "")
-	require.Equal(t, 1, strings.Count(cmd, "--model="+shell.Quote(claudeReviewModelOpus)))
 	require.Equal(
 		t,
-		1,
-		strings.Count(
-			cmd,
-			"--effort="+shell.Quote(claudeReviewEffortHigh),
-		),
+		baseCmd+"claude --safe-mode --permission-mode plan --model=sonnet "+
+			"--effort=high --system-prompt 'You are an expert code reviewer. "+
+			"Be thorough, precise, and actionable.' "+promptExpr+cleanup,
+		cmd,
+	)
+
+	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewProviderClaude, "", "")
+	require.Equal(
+		t,
+		baseCmd+"claude --safe-mode --permission-mode plan --model=opus "+
+			"--effort=high --system-prompt 'You are an expert code reviewer. "+
+			"Be thorough, precise, and actionable.' "+promptExpr+cleanup,
+		cmd,
 	)
 
 	cmd = buildAIReviewCommand(
@@ -210,15 +221,11 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		codexReviewModel54Mini,
 		codexReviewEffortXHigh,
 	)
-	require.Contains(
+	require.Equal(
 		t,
+		baseCmd+"codex --sandbox read-only -m gpt-5.4-mini "+
+			"-c model_reasoning_effort=xhigh "+promptExpr+cleanup,
 		cmd,
-		fmt.Sprintf(
-			"codex -m %s -c model_reasoning_effort=%s %s",
-			shell.Quote(codexReviewModel54Mini),
-			shell.Quote(codexReviewEffortXHigh),
-			promptExpr,
-		),
 	)
 
 	cmd = buildAIReviewCommand(
@@ -226,19 +233,19 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		promptFile,
 		nil,
 		reviewProviderGemini,
-		geminiReviewModel3Pro,
+		geminiReviewModel31Pro,
 		"",
 	)
-	require.Contains(
+	require.Equal(
 		t,
+		baseCmd+"/bin/rm -rf "+shell.Quote(aiReviewDir(pr, promptFile))+"/.gemini "+
+			"&& /bin/mkdir -p "+shell.Quote(aiReviewDir(pr, promptFile))+"/.gemini "+
+			`&& printf '%s' '{"modelConfigs":{"customAliases":{"prl-review":{"modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}},"model":"gemini-3.1-pro"}}}}}' > `+
+			shell.Quote(aiReviewDir(pr, promptFile))+"/.gemini/settings.json "+
+			"&& gemini --sandbox --approval-mode plan --model prl-review "+
+			"--prompt-interactive "+promptExpr+cleanup,
 		cmd,
-		fmt.Sprintf(
-			"gemini --model %s --prompt-interactive %s",
-			shell.Quote("prl-review"),
-			promptExpr,
-		),
 	)
-	require.Contains(t, cmd, `"thinkingLevel":"HIGH"`)
 }
 
 func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
@@ -254,12 +261,55 @@ func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 		codexReviewEffortMedium,
 	)
 
-	// Prompt is loaded from a file at runtime - the typed shell command
-	// must not embed the prompt body (which may contain newlines that
-	// terminal initial-input automation would otherwise execute as
-	// separate commands).
-	require.Contains(t, cmd, fmt.Sprintf(`"$(cat %s)"`, shell.Quote(promptFile)))
-	require.Contains(t, cmd, fmt.Sprintf("; rm -f %s", shell.Quote(promptFile)))
+	require.Equal(
+		t,
+		expectedAIReviewBaseCommand(pr)+
+			`codex --sandbox read-only -m gpt-5.4 -c model_reasoning_effort=medium "$(cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+		cmd,
+	)
+}
+
+func TestBuildAIReviewCommandUsesRevisionSpecificReviewDirectory(t *testing.T) {
+	pr := testReviewPullRequest()
+	pr.HeadSHA = "abc123"
+
+	cacheHome, err := shell.CacheDir()
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		filepath.Join(cacheHome, "prl", "reviews", "owner", "repo", "42", "abc123"),
+		aiReviewDir(pr, "/tmp/prl-review-prompt.txt"),
+	)
+}
+
+func TestSafeReviewPathComponentRejectsTraversal(t *testing.T) {
+	require.Equal(t, "owner", safeReviewPathComponent("owner", "fallback"))
+	require.Equal(t, "fallback", safeReviewPathComponent("..", "fallback"))
+	require.Equal(t, "fallback", safeReviewPathComponent("../../tmp", "fallback"))
+	require.Equal(t, "fallback", safeReviewPathComponent("owner/repo", "fallback"))
+}
+
+func expectedAIReviewBaseCommand(pr PullRequest) string {
+	const promptFile = "/tmp/prl-prompt.txt"
+	reviewDir := aiReviewDir(pr, promptFile)
+	headGuard := ""
+	if pr.HeadSHA != "" {
+		headGuard = fmt.Sprintf(
+			`test "$(git rev-parse HEAD)" = %s && `,
+			shell.Quote(pr.HeadSHA),
+		)
+	}
+	return fmt.Sprintf(
+		"/usr/bin/trash %s 2>/dev/null; /bin/mkdir -p %s && cd %s && git clone --quiet --depth 1 %s . && git fetch origin refs/pull/%d/head:pr-%d --no-tags && git checkout pr-%d && %s",
+		shell.Quote(reviewDir),
+		shell.Quote(reviewDir),
+		shell.Quote(reviewDir),
+		shell.Quote("git@github.com:"+pr.Repository.NameWithOwner),
+		pr.Number,
+		pr.Number,
+		pr.Number,
+		headGuard,
+	)
 }
 
 func TestWriteReviewPromptFilePreservesContent(t *testing.T) {
@@ -271,6 +321,29 @@ func TestWriteReviewPromptFilePreservesContent(t *testing.T) {
 	got, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, prompt, string(got))
+}
+
+func TestWriteReviewLaunchFileQuarantinesShellCommand(t *testing.T) {
+	const promptFile = "/tmp/prl-review-prompt.txt"
+	const shellCmd = "printf '%s\\n' 'line one' 'line two'"
+
+	path, err := writeReviewLaunchFile(shellCmd, promptFile)
+	require.NoError(t, err)
+	defer os.Remove(path)
+
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	cleanup := "/bin/rm -f " + shell.Quote(promptFile) + " " + shell.Quote(path)
+	require.Equal(
+		t,
+		"#!/bin/sh\ntrap "+shell.Quote(cleanup)+" EXIT HUP INT TERM\n"+shellCmd+"\n",
+		string(got),
+	)
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	err = exec.Command("/bin/sh", "-n", path).Run()
+	require.NoError(t, err)
 }
 
 func TestDefaultAIReviewPromptUsesParagraphs(t *testing.T) {
@@ -433,7 +506,12 @@ func TestBuildAIReviewCommandUsesConfiguredFallbackChoices(t *testing.T) {
 
 	cmd := buildAIReviewCommand(pr, "/tmp/prl-prompt.txt", cfg, reviewProviderCodex, "", "")
 
-	require.Contains(t, cmd, "codex -m gpt-5.5 -c model_reasoning_effort=deep")
+	require.Equal(
+		t,
+		expectedAIReviewBaseCommand(pr)+
+			`codex --sandbox read-only -m gpt-5.5 -c model_reasoning_effort=deep "$(cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+		cmd,
+	)
 }
 
 func TestBuildAIReviewCommandUsesGeminiBudgetFor25Flash(t *testing.T) {
@@ -448,8 +526,17 @@ func TestBuildAIReviewCommandUsesGeminiBudgetFor25Flash(t *testing.T) {
 		geminiReviewEffort1024,
 	)
 
-	require.Contains(t, cmd, `"model":"gemini-2.5-flash"`)
-	require.Contains(t, cmd, `"thinkingBudget":1024`)
+	reviewDir := aiReviewDir(pr, "/tmp/prl-prompt.txt")
+	require.Equal(
+		t,
+		expectedAIReviewBaseCommand(pr)+
+			"/bin/rm -rf "+shell.Quote(reviewDir)+"/.gemini "+
+			"&& /bin/mkdir -p "+shell.Quote(reviewDir)+"/.gemini "+
+			`&& printf '%s' '{"modelConfigs":{"customAliases":{"prl-review":{"modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":1024}},"model":"gemini-2.5-flash"}}}}}' > `+
+			shell.Quote(reviewDir)+"/.gemini/settings.json "+
+			`&& gemini --sandbox --approval-mode plan --model prl-review --prompt-interactive "$(cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+		cmd,
+	)
 }
 
 func TestMatchesPatternTreatsPlainStringsAsExact(t *testing.T) {
@@ -478,8 +565,21 @@ func TestClaudeEffortRulesUseGlobFallback(t *testing.T) {
 	)
 	require.Equal(
 		t,
-		claudeReviewEffortMedium,
+		claudeReviewEffortHigh,
 		defaultReviewEffort(nil, reviewProviderClaude, "claude-3.7-sonnet"),
+	)
+}
+
+func TestClaudeSonnetAndFableDefaultToMediumEffort(t *testing.T) {
+	require.Equal(
+		t,
+		claudeReviewEffortMedium,
+		defaultReviewEffort(nil, reviewProviderClaude, claudeReviewModelSonnet),
+	)
+	require.Equal(
+		t,
+		claudeReviewEffortMedium,
+		defaultReviewEffort(nil, reviewProviderClaude, claudeReviewModelFable),
 	)
 }
 
@@ -496,8 +596,41 @@ func TestCodexEffortRulesUseGlobFallback(t *testing.T) {
 	)
 	require.Equal(
 		t,
-		codexReviewEffortMedium,
+		codexReviewEffortXHigh,
 		defaultReviewEffort(nil, reviewProviderCodex, "gpt-5.5"),
+	)
+}
+
+func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: codexReviewModel56, value: codexReviewModel56},
+			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
+			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
+			{label: codexReviewModel55, value: codexReviewModel55},
+			{label: codexReviewModel54, value: codexReviewModel54},
+			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
+			{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
+		},
+		reviewModelChoices(nil, reviewProviderCodex),
+	)
+	require.Equal(t, codexReviewModel56, defaultReviewModel(nil, reviewProviderCodex))
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: codexReviewEffortLow, value: codexReviewEffortLow},
+			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+			{label: codexReviewEffortMax, value: codexReviewEffortMax},
+		},
+		reviewEffortChoices(nil, reviewProviderCodex, codexReviewModel56Terra),
+	)
+	require.Equal(
+		t,
+		codexReviewEffortHigh,
+		defaultReviewEffort(nil, reviewProviderCodex, codexReviewModel56),
 	)
 }
 
@@ -517,6 +650,28 @@ func TestGeminiEffortRulesPreferSpecificGlobBeforeCatchAll(t *testing.T) {
 		t,
 		geminiReviewEffortDynamic,
 		defaultReviewEffort(nil, reviewProviderGemini, "gemini-2.5-flash-preview"),
+	)
+}
+
+func TestGemini3EffortRulesDistinguishProAndFlash(t *testing.T) {
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		reviewEffortChoices(nil, reviewProviderGemini, "gemini-3.1-pro-preview"),
+	)
+	require.Equal(
+		t,
+		[]filterChoice{
+			{label: geminiReviewEffortMinimal, value: geminiReviewEffortMinimal},
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		reviewEffortChoices(nil, reviewProviderGemini, "gemini-3.5-flash"),
 	)
 }
 

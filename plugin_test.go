@@ -24,10 +24,10 @@ exit 0
 
 func TestDiscoverPluginErrorsOnAmbiguousPATH(t *testing.T) {
 	dir := t.TempDir()
-	writeExecutable(t, dir, "prl-plugin-alpha", `#!/bin/sh
+	alpha := writeExecutable(t, dir, "prl-plugin-alpha", `#!/bin/sh
 exit 0
 `)
-	writeExecutable(t, dir, "prl-plugin-beta", `#!/bin/sh
+	beta := writeExecutable(t, dir, "prl-plugin-beta", `#!/bin/sh
 exit 0
 `)
 
@@ -36,7 +36,11 @@ exit 0
 
 	plug, err := discoverPlugin(&Config{})
 	require.Nil(t, plug)
-	require.ErrorContains(t, err, "multiple prl-plugin-* plugins found on PATH")
+	require.EqualError(
+		t,
+		err,
+		"multiple prl-plugin-* plugins found on PATH ("+alpha+", "+beta+"); set plugin in config",
+	)
 }
 
 func TestPluginCompleteTreatsExitCodeOneAsNotImplemented(t *testing.T) {

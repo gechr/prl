@@ -57,6 +57,9 @@ const (
 	claudeReviewModelSonnet = "sonnet"
 	claudeReviewModelOpus   = "opus"
 	claudeReviewModelFable  = "fable"
+	codexReviewModel56      = "gpt-5.6"
+	codexReviewModel56Terra = "gpt-5.6-terra"
+	codexReviewModel56Luna  = "gpt-5.6-luna"
 	codexReviewModel55      = "gpt-5.5"
 	codexReviewModel54      = "gpt-5.4"
 	codexReviewModel54Mini  = "gpt-5.4-mini"
@@ -72,6 +75,7 @@ const (
 	codexReviewEffortMedium  = "medium"
 	codexReviewEffortHigh    = "high"
 	codexReviewEffortXHigh   = "xhigh"
+	codexReviewEffortMax     = "max"
 
 	geminiReviewEffortMinimal = "minimal"
 	geminiReviewEffortLow     = "low"
@@ -84,11 +88,11 @@ const (
 	geminiReviewEffortDynamic = "dynamic"
 
 	geminiReviewModel31Pro = "gemini-3.1-pro"
-	geminiReviewModel3Pro  = "gemini-3-pro"
 	geminiReviewModelFlash = "gemini-2.5-flash"
 
 	geminiModelPatternExact   = "gemini"
 	geminiModelPatternAll     = "gemini-*"
+	geminiModelPattern31Pro   = "gemini-3.1-pro*"
 	geminiModelPattern3       = "gemini-3*"
 	geminiModelPattern25Flash = "gemini-2.5-flash*"
 )
@@ -115,18 +119,20 @@ var claudeReviewConfig = reviewProviderConfig{
 
 var codexReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
+		{label: codexReviewModel56, value: codexReviewModel56},
+		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
+		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 		{label: codexReviewModel55, value: codexReviewModel55},
 		{label: codexReviewModel54, value: codexReviewModel54},
 		{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
 		{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
 	},
-	defaultModel: codexReviewModel55,
+	defaultModel: codexReviewModel56,
 }
 
 var geminiReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
 		{label: geminiReviewModel31Pro, value: geminiReviewModel31Pro},
-		{label: geminiReviewModel3Pro, value: geminiReviewModel3Pro},
 		{label: geminiReviewModelFlash, value: geminiReviewModelFlash},
 	},
 	defaultModel: geminiReviewModel31Pro,
@@ -275,7 +281,7 @@ var claudeEffortRules = []reviewEffortRule{
 		def: claudeReviewEffortHigh,
 	},
 	{
-		pattern: "*",
+		pattern: claudeReviewModelSonnet,
 		choices: []filterChoice{
 			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
 			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
@@ -286,9 +292,44 @@ var claudeEffortRules = []reviewEffortRule{
 		},
 		def: claudeReviewEffortMedium,
 	},
+	{
+		pattern: claudeReviewModelFable,
+		choices: []filterChoice{
+			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
+			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
+			{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+			{label: claudeReviewEffortXHigh, value: claudeReviewEffortXHigh},
+			{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
+			{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
+		},
+		def: claudeReviewEffortMedium,
+	},
+	{
+		pattern: "*",
+		choices: []filterChoice{
+			{label: claudeReviewEffortLow, value: claudeReviewEffortLow},
+			{label: claudeReviewEffortMedium, value: claudeReviewEffortMedium},
+			{label: claudeReviewEffortHigh, value: claudeReviewEffortHigh},
+			{label: claudeReviewEffortXHigh, value: claudeReviewEffortXHigh},
+			{label: claudeReviewEffortMax, value: claudeReviewEffortMax},
+			{label: claudeReviewEffortAuto, value: claudeReviewEffortAuto},
+		},
+		def: claudeReviewEffortHigh,
+	},
 }
 
 var codexEffortRules = []reviewEffortRule{
+	{
+		pattern: "gpt-5.6*",
+		choices: []filterChoice{
+			{label: codexReviewEffortLow, value: codexReviewEffortLow},
+			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+			{label: codexReviewEffortMax, value: codexReviewEffortMax},
+		},
+		def: codexReviewEffortHigh,
+	},
 	{
 		pattern: "*",
 		choices: []filterChoice{
@@ -297,7 +338,7 @@ var codexEffortRules = []reviewEffortRule{
 			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
 			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
 		},
-		def: codexReviewEffortMedium,
+		def: codexReviewEffortXHigh,
 	},
 }
 
@@ -315,8 +356,19 @@ var geminiEffortRules = []reviewEffortRule{
 		mode: geminiEffortModeThinkingBudget,
 	},
 	{
+		pattern: geminiModelPattern31Pro,
+		choices: []filterChoice{
+			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
+			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+		},
+		def:  geminiReviewEffortHigh,
+		mode: geminiEffortModeThinkingLevel,
+	},
+	{
 		pattern: geminiModelPattern3,
 		choices: []filterChoice{
+			{label: geminiReviewEffortMinimal, value: geminiReviewEffortMinimal},
 			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
 			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
 			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
@@ -583,23 +635,43 @@ func launchAIReview(
 	if err != nil {
 		return err
 	}
+	dispatched := false
+	launchFile := ""
+	defer func() {
+		if !dispatched {
+			_ = os.Remove(promptFile)
+			if launchFile != "" {
+				_ = os.Remove(launchFile)
+			}
+		}
+	}()
 
 	shellCmd := buildAIReviewCommand(pr, promptFile, cfg, provider, model, effort)
+	launchFile, err = writeReviewLaunchFile(shellCmd, promptFile)
+	if err != nil {
+		return err
+	}
+	launchCmd := "/bin/sh " + shell.Quote(launchFile)
 
 	if launcher == aiReviewLauncherKitty {
 		tabTitle := fmt.Sprintf("%s#%d", pr.Repository.Name, pr.Number)
-		return launchAIReviewKitty(ctx, shellCmd, tabTitle)
+		if kittyErr := launchAIReviewKitty(ctx, launchCmd, tabTitle); kittyErr != nil {
+			return kittyErr
+		}
+		dispatched = true
+		return nil
 	}
 
-	script, err := buildAIReviewAppleScript(launcher, shellCmd)
+	script, err := buildAIReviewAppleScript(launcher)
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
+	cmd := exec.CommandContext(ctx, "osascript", "-e", script, "--", launchCmd)
 	if output, asErr := cmd.CombinedOutput(); asErr != nil {
 		return fmt.Errorf("osascript: %w: %s", asErr, strings.TrimSpace(string(output)))
 	}
+	dispatched = true
 	return nil
 }
 
@@ -618,6 +690,25 @@ func writeReviewPromptFile(prompt string) (string, error) {
 	if _, err := f.WriteString(prompt); err != nil {
 		os.Remove(f.Name())
 		return "", fmt.Errorf("write prompt file: %w", err)
+	}
+	return f.Name(), nil
+}
+
+func writeReviewLaunchFile(shellCmd, promptFile string) (string, error) {
+	f, err := os.CreateTemp("", "prl-review-*.sh")
+	if err != nil {
+		return "", fmt.Errorf("write launch file: %w", err)
+	}
+	cleanup := "/bin/rm -f " + shell.Quote(promptFile) + " " + shell.Quote(f.Name())
+	contents := "#!/bin/sh\ntrap " + shell.Quote(cleanup) + " EXIT HUP INT TERM\n" + shellCmd + "\n"
+	if _, err := f.WriteString(contents); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("write launch file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("write launch file: %w", err)
 	}
 	return f.Name(), nil
 }
@@ -675,16 +766,16 @@ func buildAIReviewCommand(
 	// progress and any SSH/auth prompts. Fetches refs/pull/N/head which
 	// works for open, closed, and fork PRs alike.
 	remote := "git@github.com:" + nwo
-	// Use a fixed review directory so the user only has to trust it once.
-	cacheHome, err := shell.CacheDir()
-	if err != nil {
-		cacheHome = filepath.Join(os.TempDir(), ".cache")
+	reviewDir := aiReviewDir(pr, promptFile)
+	headGuard := ""
+	if pr.HeadSHA != "" && safeReviewPathComponent(pr.HeadSHA, "") == pr.HeadSHA {
+		headGuard = fmt.Sprintf(
+			`test "$(git rev-parse HEAD)" = %s && `,
+			shell.Quote(pr.HeadSHA),
+		)
 	}
-	reviewDir := filepath.Join(
-		cacheHome, "prl", "reviews", pr.Repository.Name, strconv.Itoa(pr.Number),
-	)
 	baseCmd := fmt.Sprintf(
-		"/usr/bin/trash %s 2>/dev/null; /bin/mkdir -p %s && cd %s && git clone --quiet --depth 1 %s . && git fetch origin refs/pull/%d/head:pr-%d --no-tags && git checkout pr-%d && ",
+		"/usr/bin/trash %s 2>/dev/null; /bin/mkdir -p %s && cd %s && git clone --quiet --depth 1 %s . && git fetch origin refs/pull/%d/head:pr-%d --no-tags && git checkout pr-%d && %s",
 		shell.Quote(reviewDir),
 		shell.Quote(reviewDir),
 		shell.Quote(reviewDir),
@@ -692,6 +783,7 @@ func buildAIReviewCommand(
 		pr.Number,
 		pr.Number,
 		pr.Number,
+		headGuard,
 	)
 	cmdModel := normalizeReviewModel(cfg, provider, model)
 	cmdEffort := normalizeReviewEffort(cfg, provider, cmdModel, effort)
@@ -699,7 +791,7 @@ func buildAIReviewCommand(
 	switch provider {
 	case reviewProviderCodex:
 		return baseCmd + fmt.Sprintf(
-			"codex -m %s -c model_reasoning_effort=%s %s%s",
+			"codex --sandbox read-only -m %s -c model_reasoning_effort=%s %s%s",
 			shell.Quote(cmdModel),
 			shell.Quote(cmdEffort),
 			prompt,
@@ -709,7 +801,7 @@ func buildAIReviewCommand(
 		return baseCmd + buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt) + cleanup
 	case reviewProviderUnknown, reviewProviderClaude:
 		return baseCmd + fmt.Sprintf(
-			"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s%s",
+			"claude --safe-mode --permission-mode plan --model=%s %s--system-prompt %s %s%s",
 			shell.Quote(cmdModel),
 			claudeEffortArg(cmdEffort),
 			shell.Quote(
@@ -720,13 +812,46 @@ func buildAIReviewCommand(
 		)
 	}
 	return baseCmd + fmt.Sprintf(
-		"claude --model=%s %s--allowedTools 'Bash(gh:*)' --system-prompt %s %s%s",
+		"claude --safe-mode --permission-mode plan --model=%s %s--system-prompt %s %s%s",
 		shell.Quote(cmdModel),
 		claudeEffortArg(cmdEffort),
 		shell.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
 		prompt,
 		cleanup,
 	)
+}
+
+func aiReviewDir(pr PullRequest, promptFile string) string {
+	cacheHome, err := shell.CacheDir()
+	if err != nil {
+		cacheHome = filepath.Join(os.TempDir(), ".cache")
+	}
+	owner, repo, ok := strings.Cut(pr.Repository.NameWithOwner, "/")
+	if !ok {
+		owner, repo = "unknown", pr.Repository.Name
+	}
+	owner = safeReviewPathComponent(owner, "unknown")
+	repo = safeReviewPathComponent(repo, safeReviewPathComponent(pr.Repository.Name, "repository"))
+	revisionFallback := strings.TrimSuffix(filepath.Base(promptFile), filepath.Ext(promptFile))
+	revision := safeReviewPathComponent(pr.HeadSHA, revisionFallback)
+	return filepath.Join(
+		cacheHome, "prl", "reviews", owner, repo, strconv.Itoa(pr.Number), revision,
+	)
+}
+
+func safeReviewPathComponent(value, fallback string) string {
+	if value == "" || value == "." || value == ".." {
+		return fallback
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+		default:
+			return fallback
+		}
+	}
+	return value
 }
 
 func claudeEffortArg(effort string) string {
@@ -748,7 +873,8 @@ func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string) strin
 		)
 	}
 	return fmt.Sprintf(
-		"/bin/mkdir -p %s/.gemini && printf '%%s' %s > %s/.gemini/settings.json && gemini --model %s --prompt-interactive %s",
+		"/bin/rm -rf %s/.gemini && /bin/mkdir -p %s/.gemini && printf '%%s' %s > %s/.gemini/settings.json && gemini --sandbox --approval-mode plan --model %s --prompt-interactive %s",
+		shell.Quote(reviewDir),
 		shell.Quote(reviewDir),
 		shell.Quote(string(settingsJSON)),
 		shell.Quote(reviewDir),
@@ -799,27 +925,33 @@ func geminiThinkingConfig(model, effort string) map[string]any {
 	return nil
 }
 
-func buildAIReviewAppleScript(launcher aiReviewLauncher, shellCmd string) (string, error) {
+func buildAIReviewAppleScript(launcher aiReviewLauncher) (string, error) {
 	switch launcher {
 	case aiReviewLauncherNone:
 		return "", fmt.Errorf("unsupported terminal %q", launcher)
 	case aiReviewLauncherGhostty:
-		return fmt.Sprintf(`tell application "Ghostty"
+		return `on run argv
+	set shellCmd to item 1 of argv
+	tell application "Ghostty"
 	tell application "System Events" to tell process "Ghostty" to set frontmost to true
 	set cfg to new surface configuration
-	set initial input of cfg to %q
+	set initial input of cfg to shellCmd
 	new tab in front window with configuration cfg
-end tell`, shellCmd), nil
+	end tell
+end run`, nil
 	case aiReviewLauncherITerm2:
-		return fmt.Sprintf(`tell application "iTerm2"
+		return `on run argv
+	set shellCmd to item 1 of argv
+	tell application "iTerm2"
 	activate
 	tell current window
 		set newTab to (create tab with default profile)
 		tell current session of newTab
-			write text " " & %q
+			write text " " & shellCmd
 		end tell
 	end tell
-end tell`, shellCmd), nil
+	end tell
+end run`, nil
 	case aiReviewLauncherKitty:
 		// unreachable: Kitty is dispatched before AppleScript in launchAIReview.
 		return "", fmt.Errorf("kitty does not use AppleScript")

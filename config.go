@@ -685,8 +685,8 @@ tui:
       codex:
         # Optional overrides for the available model/effort choices.
         # If omitted, prl uses the built-in Codex review options.
-        # models: [gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
-        # efforts: [low, medium, high, xhigh]
+        # models: [gpt-5.6, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
+        # efforts: [low, medium, high, xhigh, max]
         # Default prompt for Codex AI review.
         # Available placeholders:
         #   %[10]s
@@ -696,9 +696,10 @@ tui:
       gemini:
         # Optional overrides for the available model/effort choices.
         # If omitted, prl uses the built-in Gemini review options.
-        # models: [gemini-3.1-pro, gemini-3-pro, gemini-2.5-flash]
+        # models: [gemini-3.1-pro, gemini-2.5-flash]
         # efforts:
-        #   Gemini 3: [low, medium, high]
+        #   Gemini 3.1 Pro: [low, medium, high]
+        #   Gemini 3 Flash: [minimal, low, medium, high]
         #   Gemini 2.5 Flash budgets: [0, 1024, 8192, 24576, dynamic]
         # Default prompt for Gemini AI review.
         # Available placeholders:

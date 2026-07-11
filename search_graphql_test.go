@@ -30,16 +30,16 @@ func TestExecuteListSearchFallsBackWhenGraphQLIsEmpty(t *testing.T) {
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/graphql":
-			body := readBody(t, req.Body)
-			require.Contains(t, body, "is:pr archived:false")
+			gqlReq := decodeGraphQLBody(t, readBody(t, req.Body))
+			require.Equal(t, "is:pr archived:false sort:updated-desc", gqlReq.Variables["query"])
 			return jsonResponse(
 				req,
 				http.StatusOK,
 				`{"data":{"search":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`,
 			), nil
 		case "/search/issues":
-			require.Contains(t, req.URL.RawQuery, "advanced_search=true")
-			require.Contains(t, req.URL.Query().Get("q"), "is:pr archived:false")
+			require.Equal(t, "true", req.URL.Query().Get("advanced_search"))
+			require.Equal(t, "is:pr archived:false", req.URL.Query().Get("q"))
 			return jsonResponse(
 				req,
 				http.StatusOK,
@@ -94,7 +94,7 @@ func TestExecuteListSearchFallsBackWhenGraphQLIsEmpty(t *testing.T) {
 	require.Len(t, prs, 1)
 	require.Equal(t, 7, prs[0].Number)
 	require.Equal(t, "owner/repo", prs[0].Repository.NameWithOwner)
-	require.NotContains(t, prs[0].Title, "  ")
+	require.Equal(t, "Restore fallback", prs[0].Title)
 }
 
 func TestToPullRequestGraphQLHydratesMergeStatus(t *testing.T) {

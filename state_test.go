@@ -59,14 +59,20 @@ func TestSaveTUIStateMirrorsConfigSubtree(t *testing.T) {
 	data, err := os.ReadFile(sp)
 	require.NoError(t, err)
 
-	out := string(data)
-	require.Contains(t, out, "tui:")
-	require.Contains(t, out, "enabled: true")
-	require.Contains(t, out, "key: updated")
-	require.Contains(t, out, "order: desc")
-	require.Contains(t, out, "state: open")
-	require.Contains(t, out, "bots: false")
-	require.Contains(t, out, "draft: null")
+	require.Equal(t, `tui:
+  filters:
+    state: open
+    draft: null
+    bots: false
+    archived: false
+    ci: ""
+    review: ""
+  refresh:
+    enabled: true
+  sort:
+    key: updated
+    order: desc
+`, string(data))
 }
 
 // TestSaveLoadTUIStateRoundTrip verifies a snapshot survives a save/load cycle.

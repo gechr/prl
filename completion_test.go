@@ -20,9 +20,10 @@ func TestFishCompletionKeepsPluginOrderForAuthorFlag(t *testing.T) {
 	err = gen.Print(&buf, "fish")
 	require.NoError(t, err)
 
+	lines := strings.Split(buf.String(), nl)
 	require.Contains(
 		t,
-		buf.String(),
+		lines,
 		`complete -c prl -s a -l author -k -x -a "(prl --@complete=author)" -d "Author"`,
 	)
 }

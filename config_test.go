@@ -29,10 +29,15 @@ func TestSaveConfigKeyClearsPersistedSortWithoutPanic(t *testing.T) {
 
 	data, err := os.ReadFile(cp)
 	require.NoError(t, err)
-	require.Contains(t, string(data), `key: ""`)
-	require.Contains(t, string(data), `order: ""`)
-	require.True(t, strings.HasSuffix(string(data), nl))
-	require.False(t, strings.HasSuffix(string(data), nl+nl))
+	content := string(data)
+
+	sortIdx := strings.Index(content, "  sort:"+nl)
+	require.NotEqual(t, -1, sortIdx)
+	sortBlock := "  sort:" + nl + `    key: ""` + nl + `    order: ""` + nl
+	require.Equal(t, sortBlock, content[sortIdx:sortIdx+len(sortBlock)])
+
+	tail := "team_aliases: {}" + nl
+	require.Equal(t, tail, content[len(content)-len(tail):])
 }
 
 func TestLoadConfigRejectsInvalidAIReviewPromptPlaceholder(t *testing.T) {
@@ -56,8 +61,11 @@ func TestLoadConfigRejectsInvalidAIReviewPromptPlaceholder(t *testing.T) {
 	)
 
 	_, err = loadConfig()
-	require.ErrorContains(t, err, "invalid tui.review.providers.claude.prompt")
-	require.ErrorContains(t, err, "unknown placeholder(s): unknownPlaceholder")
+	require.EqualError(
+		t,
+		err,
+		"invalid tui.review.providers.claude.prompt: unknown placeholder(s): unknownPlaceholder (available: prNumber, repo, owner, ownerWithRepo, prURL, prRef, title)",
+	)
 }
 
 func TestLoadConfigRejectsInvalidReviewDefaultModelForProvider(t *testing.T) {
@@ -81,7 +89,7 @@ func TestLoadConfigRejectsInvalidReviewDefaultModelForProvider(t *testing.T) {
 	)
 
 	_, err = loadConfig()
-	require.ErrorContains(t, err, `invalid tui.review.default.model "banana" for provider "codex"`)
+	require.EqualError(t, err, `invalid tui.review.default.model "banana" for provider "codex"`)
 }
 
 func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testing.T) {
@@ -106,7 +114,7 @@ func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testi
 	)
 
 	_, err = loadConfig()
-	require.ErrorContains(
+	require.EqualError(
 		t,
 		err,
 		`invalid tui.review.default.effort "max" for provider "codex" model "gpt-5.4"`,

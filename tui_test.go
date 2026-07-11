@@ -33,25 +33,32 @@ func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
 	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
 
 	rendered := m.confirmOptionsHeader()
-	stripped := ansi.Strip(rendered)
 
+	label := m.styles.helpKey
+	faint := lg.NewStyle().Faint(true)
+	sel := styleTitle.Bold(true)
+	active := styleHighlight.Faint(true)
+	selActive := styleHighlight.Bold(true)
+	g := "  "
 	require.Equal(
 		t,
-		`Provider
-claude  codex  gemini
-
-Model
-sonnet  opus  fable
-
-Effort
-low  medium  high  xhigh  max  auto
-
-`,
-		stripped,
+		label.Render("Provider")+nl+
+			selActive.Render(string(reviewProviderClaude))+g+
+			active.Render(string(reviewProviderCodex))+g+
+			active.Render(string(reviewProviderGemini))+nl+nl+
+			label.Render("Model")+nl+
+			faint.Render(claudeReviewModelSonnet)+g+
+			sel.Render(claudeReviewModelOpus)+g+
+			faint.Render(claudeReviewModelFable)+nl+nl+
+			label.Render("Effort")+nl+
+			faint.Render(claudeReviewEffortLow)+g+
+			faint.Render(claudeReviewEffortMedium)+g+
+			sel.Render(claudeReviewEffortHigh)+g+
+			faint.Render(claudeReviewEffortXHigh)+g+
+			faint.Render(claudeReviewEffortMax)+g+
+			faint.Render(claudeReviewEffortAuto)+nl+nl,
+		rendered,
 	)
-	require.Equal(t, 0, strings.Count(rendered, cursorLineBG))
-	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewModelOpus))
-	require.Contains(t, rendered, styleTitle.Bold(true).Render(claudeReviewEffortHigh))
 }
 
 func TestShellSingleQuoteEscapesSingleQuotes(t *testing.T) {
@@ -149,14 +156,29 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 
 	overlay := m.renderHelpOverlay()
 
+	lines := strings.Split(ansi.Strip(overlay), nl)
 	if isDarwin() {
-		require.Contains(t, overlay, "Launch AI review")
-		require.Contains(t, overlay, "alt+r")
-		require.Contains(t, overlay, "Launch AI review (no confirm)")
+		require.Equal(
+			t,
+			"│       alt+a  Approve PRs (no confirm)           r  Launch AI review                 │",
+			lines[13],
+		)
+		require.Equal(
+			t,
+			"│           d  View diff                      alt+r  Launch AI review (no confirm)    │",
+			lines[14],
+		)
+		require.Equal(
+			t,
+			"│    shift+↑↓  Extend selection               alt+c  Copy URL(s)                      │",
+			lines[7],
+		)
 	} else {
-		require.NotContains(t, overlay, "Launch AI review")
+		// Non-darwin has no AI-review launcher, which gates the review
+		// shortcuts out of the help overlay.
+		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+		require.Contains(t, strings.Fields(strings.Join(lines, " ")), "shift+↑↓")
 	}
-	require.Contains(t, overlay, "shift+↑↓")
 }
 
 func TestInlineHelpKeyEmbedsModifiedSingleLetterShortcut(t *testing.T) {
@@ -220,6 +242,9 @@ func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) 
 	require.Equal(
 		t,
 		[]filterChoice{
+			{label: codexReviewModel56, value: codexReviewModel56},
+			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
+			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 			{label: codexReviewModel55, value: codexReviewModel55},
 			{label: codexReviewModel54, value: codexReviewModel54},
 			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
@@ -234,6 +259,7 @@ func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) 
 			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
 			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
 			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+			{label: codexReviewEffortMax, value: codexReviewEffortMax},
 		},
 		bm.confirmOptions[2].choices,
 	)
@@ -288,11 +314,31 @@ func TestRenderConfirmOptionsHighlightsActiveRowInGreen(t *testing.T) {
 
 	rendered := m.confirmOptionsHeader()
 
-	require.NotContains(t, rendered, cursorLineBG)
-	require.Contains(t, rendered, m.styles.helpKey.Render("Model"))
-	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelSonnet))
-	require.Contains(t, rendered, styleHighlight.Bold(true).Render(claudeReviewModelOpus))
-	require.Contains(t, rendered, styleHighlight.Faint(true).Render(claudeReviewModelFable))
+	label := m.styles.helpKey
+	faint := lg.NewStyle().Faint(true)
+	sel := styleTitle.Bold(true)
+	active := styleHighlight.Faint(true)
+	selActive := styleHighlight.Bold(true)
+	g := "  "
+	require.Equal(
+		t,
+		label.Render("Provider")+nl+
+			sel.Render(string(reviewProviderClaude))+g+
+			faint.Render(string(reviewProviderCodex))+g+
+			faint.Render(string(reviewProviderGemini))+nl+nl+
+			label.Render("Model")+nl+
+			active.Render(claudeReviewModelSonnet)+g+
+			selActive.Render(claudeReviewModelOpus)+g+
+			active.Render(claudeReviewModelFable)+nl+nl+
+			label.Render("Effort")+nl+
+			faint.Render(claudeReviewEffortLow)+g+
+			faint.Render(claudeReviewEffortMedium)+g+
+			sel.Render(claudeReviewEffortHigh)+g+
+			faint.Render(claudeReviewEffortXHigh)+g+
+			faint.Render(claudeReviewEffortMax)+g+
+			faint.Render(claudeReviewEffortAuto)+nl+nl,
+		rendered,
+	)
 }
 
 func TestUpdateConfirmOverlayTabLoopsAcrossOptions(t *testing.T) {
@@ -469,7 +515,8 @@ func TestTuiTableRendererSuppressesIndexColumn(t *testing.T) {
 	rt := m.tableRendererFor(len(models)).Render(models)
 
 	require.NotEmpty(t, rt.Rows)
-	require.True(t, strings.HasPrefix(ansi.Strip(rt.Rows[0].Display), "newest PR"))
+	display := ansi.Strip(rt.Rows[0].Display)
+	require.Equal(t, "newest PR", display[:len("newest PR")])
 }
 
 func TestRerenderShowsEstimatedHeaderWithoutRows(t *testing.T) {
@@ -493,7 +540,11 @@ func TestRerenderShowsEstimatedHeaderWithoutRows(t *testing.T) {
 	require.Empty(t, rows)
 	require.NotEmpty(t, colWidths)
 	require.NotEqual(t, -1, titleIdx)
-	require.Contains(t, ansi.Strip(header), "TITLE")
+	require.Equal(
+		t,
+		"TITLE                           PR                    STATUS    REASON        CREATED  UPDATED",
+		ansi.Strip(header),
+	)
 	require.GreaterOrEqual(t, colWidths[titleIdx], columnWidthEstimate[colTitle])
 }
 
@@ -523,7 +574,11 @@ func TestRefreshResultClearsRowsButKeepsHeader(t *testing.T) {
 	require.True(t, ok)
 	require.Empty(t, bm.items)
 	require.Empty(t, bm.rows)
-	require.Contains(t, ansi.Strip(bm.header), "TITLE")
+	require.Equal(
+		t,
+		"TITLE                           PR                    STATUS    REASON        CREATED  UPDATED",
+		ansi.Strip(bm.header),
+	)
 	require.NotEmpty(t, bm.colWidths)
 }
 
@@ -546,8 +601,11 @@ func TestViewListShowsRefreshingHeaderWithoutRows(t *testing.T) {
 	lines := strings.Split(out, nl)
 
 	require.NotEmpty(t, lines)
-	require.Contains(t, lines[0], "*")
-	require.Contains(t, lines[0], "TITLE")
+	require.Equal(
+		t,
+		"*    TITLE                           PR                    STATUS    REASON        CREATED  UPDATED",
+		lines[0],
+	)
 }
 
 func TestViewListNumbersVisibleRows(t *testing.T) {
@@ -571,9 +629,14 @@ func TestViewListNumbersVisibleRows(t *testing.T) {
 
 	out := ansi.Strip(m.viewList().Content)
 
-	require.Contains(t, out, "  1  beta")
-	require.NotContains(t, out, "alpha")
-	require.NotContains(t, out, "gamma")
+	require.Equal(
+		t,
+		"  1  beta\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n/> eta \n"+
+			"────────────────────────────────────────────────────────────────────────────────\n"+
+			" enter show  space select  / filter  diff  comment  Close  open  alt+copy\n"+
+			"Refresh off  Options  ? help  quit",
+		out,
+	)
 }
 
 func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
@@ -589,18 +652,15 @@ func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
 	}
 
 	out := ansi.Strip(m.viewList().Content)
-	lines := strings.Split(out, nl)
 
-	found := false
-	for _, line := range lines {
-		if strings.HasSuffix(line, " state:closed ──") {
-			found = true
-			require.True(t, strings.HasPrefix(line, "──"))
-			break
-		}
-	}
-	require.True(t, found)
-	require.NotContains(t, out, " · ")
+	require.Equal(
+		t,
+		"\n\n\n\n\n\n\n\n"+
+			"──────────────────────────────────────────────────────────────── state:closed ──\n"+
+			" enter show  space select  / filter  diff  comment  Close  open  alt+copy\n"+
+			"Refresh off  Options  ? help  quit",
+		out,
+	)
 }
 
 func TestUpdateListViewShiftDownSelectsAndMovesNext(t *testing.T) {
@@ -994,8 +1054,12 @@ func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 	rendered := strings.Join(lines, nl)
 
 	stripped := ansi.Strip(rendered)
-	require.Contains(t, stripped, "🤖 Copilot")
-	require.NotContains(t, stripped, "💬 Copilot")
+	require.Equal(
+		t,
+		"Overview\n\n    Title: \n   Author: @alice\n      URL: https://github.com/owner/repo/pull/42\n"+
+			"  Reviews: 🤖 Copilot\n   Status: Unknown\n\nNo description provided.",
+		stripped,
+	)
 }
 
 func TestViewDiffHandlesTinyViewport(t *testing.T) {
@@ -1035,7 +1099,8 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 	vpHeight := m.diffView.Height()
 	topPct := int(math.Round(m.diffView.ScrollPercent() * 100))
 	topStatus := fmt.Sprintf("1-%d/%d (%d%%)", vpHeight, len(diffLines), topPct)
-	require.Equal(t, 1, strings.Count(ansi.Strip(m.viewDiff().Content), topStatus))
+	topFrame := ansi.Strip(m.viewDiff().Content)
+	require.Equal(t, topStatus, topFrame[len(topFrame)-len(topStatus):])
 
 	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: 'G', Text: "G"})
 
@@ -1045,7 +1110,8 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 	require.Equal(t, len(diffLines)-vpHeight, bm.diffView.YOffset())
 	offset := bm.diffView.YOffset()
 	bottomStatus := fmt.Sprintf("%d-%d/%d (100%%)", offset+1, len(diffLines), len(diffLines))
-	require.Equal(t, 1, strings.Count(ansi.Strip(bm.viewDiff().Content), bottomStatus))
+	bottomFrame := ansi.Strip(bm.viewDiff().Content)
+	require.Equal(t, bottomStatus, bottomFrame[len(bottomFrame)-len(bottomStatus):])
 }
 
 func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
@@ -1060,7 +1126,7 @@ func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
 	})
 	require.LessOrEqual(t, lg.Width(rows[0]), 4)
 	require.LessOrEqual(t, lg.Width(rows[1]), 4)
-	require.True(t, strings.HasPrefix(rows[1], "\x1b["))
+	require.Equal(t, "\x1b[", rows[1][:len("\x1b[")])
 }
 
 func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
@@ -1116,10 +1182,17 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	}
 	out = strings.Join(lines, nl)
 
-	require.Contains(t, out, strings.Join([]string{
-		ansi.Strip(diffLines[0]),
-		ansi.Strip(diffLines[1]),
-	}, nl))
+	require.Equal(
+		t,
+		"owner/repo#42 »\n"+
+			"────────────────────────────────────────────────────────────────────────────────\n"+
+			"+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"+
+			"aaaaaaa\n\n"+
+			"────────────────────────────────────────────────────────────────────────────────\n"+
+			" ↑↓ scroll  automerge  Draft  approve  Approve/merge  unsubscribe  comment\n"+
+			"Close  open  alt+copy  slack  review  ctrl+r copilot  dismiss",
+		out,
+	)
 }
 
 func TestViewDiffFillsTerminalRectangle(t *testing.T) {
@@ -1191,7 +1264,7 @@ func TestAppendRightStatusDoesNotIncreaseFooterLineCount(t *testing.T) {
 	lines := strings.Split(ansi.Strip(got), nl)
 	require.Len(t, lines, 2)
 	require.LessOrEqual(t, lg.Width(lines[1]), m.width)
-	require.Contains(t, lines[1], "Diffing")
+	require.Equal(t, " Diffing owner/repo#42…", lines[1])
 }
 
 func TestAppendRightStatusTruncatesLongStatusToSingleLine(t *testing.T) {
@@ -1199,9 +1272,8 @@ func TestAppendRightStatusTruncatesLongStatusToSingleLine(t *testing.T) {
 
 	got := ansi.Strip(m.appendRightStatus("", "Diffing owner/repo#42…"))
 
-	require.NotContains(t, got, nl)
+	require.Equal(t, "Diffing …", got)
 	require.LessOrEqual(t, lg.Width(got), m.width)
-	require.Contains(t, got, "…")
 }
 
 func TestAppendRightStatusUsesLeftPaddingForExactFit(t *testing.T) {
@@ -1260,8 +1332,7 @@ func TestSyncDiffViewCachesNormalizedRenderLines(t *testing.T) {
 	m.syncDiffView()
 
 	require.Len(t, m.diffRenderLines, 2)
-	require.NotContains(t, ansi.Strip(m.diffRenderLines[0]), "\t")
-	require.Contains(t, ansi.Strip(m.diffRenderLines[0]), "left    right")
+	require.Equal(t, "left    right      ", ansi.Strip(m.diffRenderLines[0]))
 	require.Equal(t, 19, ansi.WcWidth.StringWidth(m.diffRenderLines[0]))
 	require.Equal(t, 19, ansi.WcWidth.StringWidth(m.diffRenderLines[1]))
 	require.Equal(t, len(m.diffRenderLines), m.diffView.TotalLineCount())
@@ -1285,9 +1356,7 @@ func TestRenderViewportContentUsesCachedLinesWithScrollbar(t *testing.T) {
 	rows := strings.Split(got, nl)
 
 	require.Len(t, rows, 3)
-	require.Contains(t, rows[0], "line 2")
-	require.Contains(t, rows[1], "line 3")
-	require.Contains(t, rows[2], "line 4")
+	require.Equal(t, "line 2    ┃\nline 3    ┃\nline 4    █", got)
 	for _, row := range rows {
 		require.Equal(t, 11, ansi.WcWidth.StringWidth(row))
 	}
@@ -1459,7 +1528,6 @@ func TestWrapDiffLinesExpandsTabs(t *testing.T) {
 	rows := layout.WrapLines("a\tb", 80)
 
 	require.Len(t, rows, 1)
-	require.NotContains(t, rows[0], "\t")
 	require.Equal(t, "a    b", ansi.Strip(rows[0]))
 }
 
@@ -1475,8 +1543,7 @@ func TestSyncDetailViewExpandsTabs(t *testing.T) {
 	m.syncDetailView()
 
 	out := ansi.Strip(m.detailView.View())
-	require.NotContains(t, out, "\t")
-	require.Contains(t, out, "left    right")
+	require.Equal(t, "left    right      ", out)
 }
 
 func TestFillViewToTerminalExpandsTabs(t *testing.T) {
@@ -1484,10 +1551,9 @@ func TestFillViewToTerminalExpandsTabs(t *testing.T) {
 
 	got := layout.Fill("left\tright", m.width, m.height)
 
-	require.NotContains(t, got, "\t")
 	lines := strings.Split(got, nl)
 	require.Len(t, lines, 2)
-	require.Contains(t, lines[0], "left    right")
+	require.Equal(t, "left    right", lines[0])
 	require.Equal(t, 12, lg.Width(lines[1]))
 }
 
@@ -1563,8 +1629,11 @@ func TestBatchActionFailuresSurfaceDetails(t *testing.T) {
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, tuiActionInfo, bm.confirmAction)
-	require.Contains(t, bm.confirmPrompt, pr.Ref())
-	require.Contains(t, bm.confirmPrompt, "boom")
+	require.Equal(
+		t,
+		"Approve failed:\n\nowner/repo#42: boom",
+		ansi.Strip(bm.confirmPrompt),
+	)
 }
 
 func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {
@@ -1973,12 +2042,11 @@ func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
 
 	overlay := m.renderOptionsOverlay()
 
-	require.Contains(
+	require.Equal(
 		t,
-		overlay,
-		styleTitle.Bold(true).Render(valueMerged),
+		"\x1b[38;5;198m│\x1b[m    \x1b[2m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2;38;5;240mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2;38;5;240mready\x1b[m  \x1b[2;38;5;240mall\x1b[m\x1b[2m  (CLI)\x1b[m           \x1b[38;5;198m│\x1b[m",
+		strings.Split(overlay, nl)[2],
 	)
-	require.Contains(t, overlay, lg.NewStyle().Faint(true).Render("  (CLI)"))
 }
 
 func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
@@ -1992,7 +2060,11 @@ func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
 
 	overlay := m.renderOptionsOverlay()
 
-	require.Contains(t, overlay, cursorLineBG)
+	require.Equal(
+		t,
+		"\x1b[38;5;198m│\x1b[m  \x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m❯ \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m  Drafts  \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;218m\x1b[48;2;40;10;30mshow\x1b[m\x1b[48;2;40;10;30m  \x1b[2m\x1b[48;2;40;10;30mhide\x1b[m\x1b[48;2;40;10;30m                                      \x1b[0m  \x1b[38;5;198m│\x1b[m",
+		strings.Split(overlay, nl)[3],
+	)
 }
 
 func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
@@ -2013,28 +2085,26 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 	m.optionsPicker = m.newFilterPicker()
 	m.optionsPicker.Cursor = int(filterRowDraft)
 
-	overlay := m.renderOptionsOverlay()
+	// Default state (open) renders bold as the selected choice.
+	boldStateRow := "\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[1;38;5;218mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                  \x1b[38;5;198m│\x1b[m"
 
-	require.Contains(
-		t,
-		overlay,
-		styleTitle.Bold(true).Render(valueOpen),
-	)
+	overlay := m.renderOptionsOverlay()
+	require.Equal(t, boldStateRow, strings.Split(overlay, nl)[2])
 
 	m.optionsPicker.IsReset[filterRowState] = true
 	overlay = m.renderOptionsOverlay()
-
-	require.Contains(
-		t,
-		overlay,
-		styleTitle.Bold(true).Render(valueOpen),
-	)
+	require.Equal(t, boldStateRow, strings.Split(overlay, nl)[2])
 
 	m.optionsPicker.Values[filterRowState] = filterChoiceIndex(filterRowState, valueClosed)
 	m.optionsPicker.IsReset[filterRowState] = false
 	overlay = m.renderOptionsOverlay()
 
-	require.Contains(t, overlay, m.styles.defaultChoice.Render(valueOpen))
+	// With closed selected, the default (open) uses the muted default-choice style.
+	require.Equal(
+		t,
+		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[1;38;5;218mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                  \x1b[38;5;198m│\x1b[m",
+		strings.Split(overlay, nl)[2],
+	)
 }
 
 func TestUpdateOptionsOverlayResetSetsFirstChoice(t *testing.T) {

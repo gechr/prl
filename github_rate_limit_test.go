@@ -27,7 +27,11 @@ func TestSecondaryRateLimitRetryPreservesBodyAndUsesRetryAfter(t *testing.T) {
 	wait, ok := secondaryRateLimitRetry(resp)
 	require.True(t, ok)
 	require.Equal(t, 7*time.Second, wait)
-	require.Contains(t, readBody(t, resp.Body), "secondary rate limit")
+	require.JSONEq(
+		t,
+		`{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}`,
+		readBody(t, resp.Body),
+	)
 }
 
 func TestSecondaryRateLimitRetryFallsBackWithoutHeader(t *testing.T) {

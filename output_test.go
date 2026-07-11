@@ -97,8 +97,11 @@ func TestFetchAutomergeStatusOnlyQueriesMissingIDs(t *testing.T) {
 		calls++
 
 		body := readBody(t, req.Body)
-		require.NotContains(t, body, `"PR_1"`)
-		require.Contains(t, body, `"PR_2"`)
+		var got struct {
+			Variables map[string][]string `json:"variables"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &got))
+		require.Equal(t, map[string][]string{"ids": {"PR_2"}}, got.Variables)
 
 		return jsonResponse(
 			req,
@@ -393,8 +396,11 @@ func TestHydrateListMetadataLoadsViewerApproval(t *testing.T) {
 		}
 		err := json.Unmarshal([]byte(body), &got)
 		require.NoError(t, err)
-		require.Contains(t, got.Query, "viewer{login}")
-		require.Contains(t, got.Query, "latestOpinionatedReviews(last:100)")
+		require.Equal(
+			t,
+			`query ListMetadata($viewerReviewIDs: [ID!]!){viewer{login} viewerReviewNodes:nodes(ids:$viewerReviewIDs){... on PullRequest{id latestOpinionatedReviews(last:100){nodes{author{login} state}}}}}`,
+			got.Query,
+		)
 		require.Equal(t, map[string][]string{"viewerReviewIDs": {"PR_1", "PR_2"}}, got.Variables)
 
 		return jsonResponse(

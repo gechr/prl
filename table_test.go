@@ -220,12 +220,12 @@ func TestRender_IndexLeftPadding(t *testing.T) {
 	// First data line = newest = #1. The dim style wraps " 1", so the visible
 	// text should be " 1" (left-padded to 2-digit width).
 	firstDataLine := ansi.Strip(lines[1]) // skip header
-	require.True(t, strings.HasPrefix(firstDataLine, " "),
+	require.Equal(t, " ", firstDataLine[:1],
 		"single-digit index not left-padded: %q", firstDataLine)
 
 	// Last data line = oldest = #12, should start with "12" (no padding needed).
 	lastLine := ansi.Strip(lines[len(lines)-1])
-	require.True(t, strings.HasPrefix(strings.TrimLeft(lastLine, " "), "12"),
+	require.Equal(t, "12", strings.TrimLeft(lastLine, " ")[:2],
 		"last data line should start with 12, got: %q", lastLine)
 }
 
@@ -256,8 +256,7 @@ func TestTitleColumnPreservesEmojiVariationSelectorInTTY(t *testing.T) {
 	cell := testPRL.allColumnDefs(tableLayout{})[colTitle].Render(row, ctx)
 
 	require.Equal(t, pr.Title, cell.Plain)
-	require.Contains(t, cell.Text, "\ufe0f")
-	require.Contains(t, ansi.Strip(cell.Text), "⬆️  Bump tar")
+	require.Equal(t, "⬆️  Bump tar from 7.5.7 to 7.5.11", ansi.Strip(cell.Text))
 }
 
 func TestRender_HeaderContainsBoldStyle(t *testing.T) {
@@ -295,7 +294,8 @@ func TestRender_HeaderRendererPreservesColumnAlignment(t *testing.T) {
 	header := ansi.Strip(rt.Header)
 	row := ansi.Strip(rt.Rows[0].Display)
 
-	require.Contains(t, header, "NUMBER ▲")
+	numberIdx := visibleIndex(header, "NUMBER")
+	require.Equal(t, "NUMBER ▲", header[numberIdx:numberIdx+len("NUMBER ▲")])
 	require.Equal(t, visibleIndex(row, "alpha"), visibleIndex(header, "REPO"))
 	require.Equal(t, visibleIndex(row, "#1"), visibleIndex(header, "NUMBER"))
 	require.Equal(t, visibleIndex(row, "open"), visibleIndex(header, "STATE"))
@@ -560,7 +560,7 @@ func TestRender_TitleTruncation(t *testing.T) {
 	// The cell plain value should be truncated to maxTitleLen runes (with ellipsis).
 	visible := rt.Rows[0].Cells[0].Plain
 	require.Len(t, []rune(visible), maxTitleLen)
-	require.True(t, strings.HasSuffix(visible, "…"))
+	require.Equal(t, "…", visible[len(visible)-len("…"):])
 }
 
 func TestRender_ColumnAlignment(t *testing.T) {
@@ -767,9 +767,14 @@ func TestRender_NarrowTerminal_CompactTime(t *testing.T) {
 	r := testPRL.newTableRenderer(testCLI(), true, 80)
 	rt := r.Render(models)
 
-	stripped := ansi.Strip(rt.String())
-	require.NotContains(t, stripped, "minutes")
-	require.NotContains(t, stripped, "hours")
+	// Narrow terminal -> created/updated cells use the compact time format.
+	item := rt.Rows[0].Item
+	var cellTexts []string
+	for _, c := range rt.Rows[0].Cells {
+		cellTexts = append(cellTexts, c.Text)
+	}
+	require.Contains(t, cellTexts, testPRL.theme.RenderTimeAgoCompact(item.CreatedAt, true))
+	require.Contains(t, cellTexts, testPRL.theme.RenderTimeAgoCompact(item.UpdatedAt, true))
 }
 
 func TestRender_WideTerminal_LongTime(t *testing.T) {
@@ -778,8 +783,14 @@ func TestRender_WideTerminal_LongTime(t *testing.T) {
 	r := testPRL.newTableRenderer(testCLI(), true, 200)
 	rt := r.Render(models)
 
-	stripped := ansi.Strip(rt.String())
-	require.Contains(t, stripped, "hour")
+	// Wide terminal -> created/updated cells use the long time format.
+	item := rt.Rows[0].Item
+	var cellTexts []string
+	for _, c := range rt.Rows[0].Cells {
+		cellTexts = append(cellTexts, c.Text)
+	}
+	require.Contains(t, cellTexts, testPRL.theme.RenderTimeAgo(item.CreatedAt, true))
+	require.Contains(t, cellTexts, testPRL.theme.RenderTimeAgo(item.UpdatedAt, true))
 }
 
 func TestRender_FlexTruncation(t *testing.T) {
@@ -829,7 +840,7 @@ func TestRender_FlexNoTruncationWhenWide(t *testing.T) {
 	// Title cell should be truncated to maxTitleLen (the pre-render cap), not beyond.
 	visible := rt.Rows[0].Cells[0].Plain
 	require.Len(t, []rune(visible), maxTitleLen)
-	require.True(t, strings.HasSuffix(visible, "…"))
+	require.Equal(t, "…", visible[len(visible)-len("…"):])
 }
 
 // --- Column hiding tests ---

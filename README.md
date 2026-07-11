@@ -270,17 +270,18 @@ tui:
           URL: {prURL}
       codex:
         # Optional: override the available model/effort choices.
-        # models: [gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
-        # efforts: [low, medium, high, xhigh]
+        # models: [gpt-5.6, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
+        # efforts: [low, medium, high, xhigh, max]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.
 
           URL: {prURL}
       gemini:
         # Optional: override the available model/effort choices.
-        # models: [gemini-3.1-pro, gemini-3-pro, gemini-2.5-flash]
+        # models: [gemini-3.1-pro, gemini-2.5-flash]
         # efforts:
-        #   Gemini 3: [low, medium, high]
+        #   Gemini 3.1 Pro: [low, medium, high]
+        #   Gemini 3 Flash: [minimal, low, medium, high]
         #   Gemini 2.5 Flash budgets: [0, 1024, 8192, 24576, dynamic]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -395,8 +396,9 @@ func TestExecuteBulkUnsubscribeResolvesCurrentLoginOnce(t *testing.T) {
 			userCalls.Add(1)
 			return jsonResponse(req, http.StatusOK, `{"login":"me"}`), nil
 		case "/graphql":
-			body := readBody(t, req.Body)
-			require.Contains(t, body, "updateSubscription")
+			gqlReq := decodeGraphQLBody(t, readBody(t, req.Body))
+			require.Equal(t, "mutation Unsubscribe", gqlReq.Query[:len("mutation Unsubscribe")])
+			require.Contains(t, []string{"PR_1", "PR_2"}, gqlReq.Variables["id"])
 			return jsonResponse(
 				req,
 				http.StatusOK,
@@ -535,8 +537,8 @@ func TestExecuteForceMergeBatchesCheckPolling(t *testing.T) {
 
 	select {
 	case body := <-checksStarted:
-		require.Contains(t, body, `"PR_1"`)
-		require.Contains(t, body, `"PR_2"`)
+		gqlReq := decodeGraphQLBody(t, body)
+		require.ElementsMatch(t, []any{"PR_1", "PR_2"}, gqlReq.Variables["ids"])
 	case <-time.After(10 * time.Second):
 		t.Fatal("batched force-merge check poll did not start")
 	}
@@ -571,8 +573,9 @@ func TestFetchPRDetailUsesSingleGraphQLPageWhenItFits(t *testing.T) {
 		switch req.URL.Path {
 		case "/graphql":
 			gqlCalls.Add(1)
-			body := readBody(t, req.Body)
-			require.Contains(t, body, "query PRDetailPage")
+			gqlReq := decodeGraphQLBody(t, readBody(t, req.Body))
+			require.Equal(t, "query PRDetailPage", gqlReq.Query[:len("query PRDetailPage")])
+			require.Equal(t, "PR_node", gqlReq.Variables["id"])
 			return jsonResponse(
 				req,
 				http.StatusOK,
@@ -664,7 +667,7 @@ func TestFetchPRDetailPaginatesFilesWhenNeeded(t *testing.T) {
 				}}}`,
 			), nil
 		case strings.Contains(body, "query PRDetailFiles"):
-			require.Contains(t, body, "files-2")
+			require.Equal(t, "files-2", decodeGraphQLBody(t, body).Variables["after"])
 			return jsonResponse(
 				req,
 				http.StatusOK,
@@ -802,4 +805,22 @@ func readBody(t *testing.T, body io.ReadCloser) string {
 	require.NoError(t, err)
 	require.NoError(t, body.Close())
 	return string(bytes.TrimSpace(data))
+}
+
+// graphQLRequest is the JSON envelope go-gh serializes each GraphQL request
+// into: the operation document plus its variables.
+type graphQLRequest struct {
+	Query     string         `json:"query"`
+	Variables map[string]any `json:"variables"`
+}
+
+// decodeGraphQLBody parses a serialized GraphQL POST body so tests can assert
+// exact equality on the operation and its variables rather than matching
+// substrings of the whitespace-formatted query document.
+func decodeGraphQLBody(t *testing.T, body string) graphQLRequest {
+	t.Helper()
+
+	var req graphQLRequest
+	require.NoError(t, json.Unmarshal([]byte(body), &req))
+	return req
 }
