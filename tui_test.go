@@ -1159,6 +1159,10 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 }
 
 func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
+	// Pin launcher detection: the footer's "review" shortcut is gated on
+	// hasAIReviewLauncher(), which is env- and platform-dependent.
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("TERM_PROGRAM", "ghostty")
 	pr := testReviewPullRequest()
 	diff := styleDanger.Render("+" + strings.Repeat("a", 85))
 	width := 80
@@ -1182,6 +1186,12 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	}
 	out = strings.Join(lines, nl)
 
+	// The "review" shortcut only renders where an AI-review launcher
+	// exists (darwin).
+	footer := "Close  open  alt+copy  slack  ctrl+r copilot  dismiss"
+	if isDarwin() {
+		footer = "Close  open  alt+copy  slack  review  ctrl+r copilot  dismiss"
+	}
 	require.Equal(
 		t,
 		"owner/repo#42 »\n"+
@@ -1190,7 +1200,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 			"aaaaaaa\n\n"+
 			"────────────────────────────────────────────────────────────────────────────────\n"+
 			" ↑↓ scroll  automerge  Draft  approve  Approve/merge  unsubscribe  comment\n"+
-			"Close  open  alt+copy  slack  review  ctrl+r copilot  dismiss",
+			footer,
 		out,
 	)
 }
