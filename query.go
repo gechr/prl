@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gechr/x/human"
 	xslices "github.com/gechr/x/slices"
 )
 
@@ -280,11 +281,7 @@ func formatDuration(seconds int64) string {
 	}
 	for _, u := range units {
 		if seconds%u.divisor == 0 {
-			n := seconds / u.divisor
-			if n == 1 {
-				return fmt.Sprintf("%d %s", n, u.single)
-			}
-			return fmt.Sprintf("%d %s", n, u.plural)
+			return human.Pluralize(int(seconds/u.divisor), u.single, u.plural)
 		}
 	}
 	return fmt.Sprintf("%d seconds", seconds)

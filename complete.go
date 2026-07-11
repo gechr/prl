@@ -11,6 +11,12 @@ import (
 
 const tab = "\t"
 
+// completionValue returns the value part of a "value\tdescription" completion line.
+func completionValue(line string) string {
+	val, _, _ := strings.Cut(line, tab)
+	return val
+}
+
 // handleComplete handles --complete=<kind> --shell=<shell> and prints completions to stdout.
 func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 	if shell != "fish" {
@@ -45,47 +51,33 @@ func (p *prl) handleComplete(shell, kind string, cfg *Config) error {
 // completeAuthors returns author completions as "username\tDisplay Name" lines.
 // Tries plugin first, falls back to config authors.
 func completeAuthors(cfg *Config) []string {
-	var results []string
-	seen := make(map[string]bool)
 	bots := discoverBotAuthors(cfg)
 
-	results = append(results, valueAtMe+tab+"Current user")
-	seen[valueAtMe] = true
-	results = append(results, "all"+tab+"All authors")
-	seen["all"] = true
+	results := []string{
+		valueAtMe + tab + "Current user",
+		"all" + tab + "All authors",
+	}
 
 	if cfg == nil {
 		return results
 	}
 
 	// Try plugin
-	if pluginResults := tryPluginComplete(cfg, valueUsers); pluginResults != nil {
-		for _, r := range pluginResults {
-			val, desc, _ := strings.Cut(r, tab)
-			normalized := normalizeBotAuthorValue(val, bots)
-			if !seen[normalized] {
-				seen[normalized] = true
-				results = append(results, normalized+tab+desc)
-			}
-		}
+	for _, r := range tryPluginComplete(cfg, valueUsers) {
+		val, desc, _ := strings.Cut(r, tab)
+		results = append(results, normalizeBotAuthorValue(val, bots)+tab+desc)
 	}
 
 	// Add config authors as a fallback and supplement to plugin results.
-	if len(cfg.Authors) > 0 {
-		for _, username := range xmaps.KeysNatural(cfg.Authors) {
-			name := cfg.Authors[username]
-			if strings.EqualFold(name, BotName) {
-				name += " 🤖"
-			}
-			if seen[username] {
-				continue
-			}
-			seen[username] = true
-			results = append(results, username+tab+name)
+	for _, username := range xmaps.KeysNatural(cfg.Authors) {
+		name := cfg.Authors[username]
+		if strings.EqualFold(name, BotName) {
+			name += " 🤖"
 		}
+		results = append(results, username+tab+name)
 	}
 
-	return results
+	return xslices.UniqueFunc(results, completionValue)
 }
 
 // completeTeams returns team name completions.
@@ -95,45 +87,17 @@ func completeTeams(cfg *Config) []string {
 		return nil
 	}
 
-	if pluginResults := tryPluginComplete(cfg, "teams"); pluginResults != nil {
-		seen := make(map[string]bool)
-		var results []string
-
-		for _, r := range pluginResults {
-			val, _, _ := strings.Cut(r, tab)
-			seen[val] = true
-			results = append(results, r)
-		}
-
-		for alias, target := range cfg.TeamAliases {
-			if !seen[alias] {
-				seen[alias] = true
-				results = append(results, alias+tab+target)
-			}
-		}
-
-		xslices.SortNatural(results)
-		return results
-	}
-
-	// Fall back to config teams + aliases
-	seen := make(map[string]bool)
-	var results []string
-
-	for team := range cfg.Teams {
-		if !seen[team] {
-			seen[team] = true
-			results = append(results, team)
-		}
+	results := tryPluginComplete(cfg, "teams")
+	if results == nil {
+		// Fall back to config teams
+		results = xmaps.Keys(cfg.Teams)
 	}
 
 	for alias, target := range cfg.TeamAliases {
-		if !seen[alias] {
-			seen[alias] = true
-			results = append(results, alias+tab+target)
-		}
+		results = append(results, alias+tab+target)
 	}
 
+	results = xslices.UniqueFunc(results, completionValue)
 	xslices.SortNatural(results)
 	return results
 }
@@ -183,21 +147,16 @@ func tryPluginComplete(cfg *Config, kind string) []string {
 func (p *prl) completeColumns() []string {
 	defs := p.allColumnDefs(tableLayout{})
 
-	canonical := make(map[string]bool)
 	var results []string
-
 	for key, col := range defs {
 		name := col.Name
 		if name == "" {
 			name = key
 		}
-		if canonical[name] {
-			continue
-		}
-		canonical[name] = true
 		results = append(results, name)
 	}
 
+	results = xslices.Unique(results)
 	xslices.SortNatural(results)
 	return results
 }

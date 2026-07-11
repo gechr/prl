@@ -250,8 +250,8 @@ github.com/gechr/conductor v0.1.0 h1:G2ZfHuDKsjEEnjoJpVasPk+8tDHglkcEUU2uTpqSkgU
 github.com/gechr/conductor v0.1.0/go.mod h1:kpeniQvNpO5AXhqXjLYbZDOf3qTI97TRCwouJ9EiNlk=
 github.com/gechr/primer v0.1.2 h1:/T68wBfu2xcgnzPhm7QFS42WiIREg9QGw7E2nkdIe5o=
 github.com/gechr/primer v0.1.2/go.mod h1:vvEV6UIEEymcFFoRFBe2cOZtPGPZVBhqWAqzPfWtJfY=
-github.com/gechr/x v0.2.18 h1:dCmgaxvpZl/eGtE9Oibx/6jWnwXsyR7zbegi1tQKs0I=
-github.com/gechr/x v0.2.18/go.mod h1:JfRxaH9Wus8xdwsJI67BSHt9typTTIFEjNxJAdRX4TI=
+github.com/gechr/x v0.3.0 h1:DYzk2EKXBchkviKpeWAOf1eLJFFdr1GdDe0UWMXchsM=
+github.com/gechr/x v0.3.0/go.mod h1:JfRxaH9Wus8xdwsJI67BSHt9typTTIFEjNxJAdRX4TI=
 github.com/ghostiam/protogetter v0.3.20 h1:oW7OPFit2FxZOpmMRPP9FffU4uUpfeE/rEdE1f+MzD0=
 github.com/ghostiam/protogetter v0.3.20/go.mod h1:FjIu5Yfs6FT391m+Fjp3fbAYJ6rkL/J6ySpZBfnODuI=
 github.com/go-critic/go-critic v0.14.3 h1:5R1qH2iFeo4I/RJU8vTezdqs08Egi4u5p6vOESA0pog=

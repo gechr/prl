@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	xos "github.com/gechr/x/os"
 	"github.com/gechr/x/shell"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCurrentAIReviewLauncher(t *testing.T) {
-	if !isDarwin() {
+	if !xos.IsDarwin() {
 		t.Run("non-darwin always returns none", func(t *testing.T) {
 			t.Setenv("KITTY_WINDOW_ID", "1")
 			t.Setenv("TERM_PROGRAM", "ghostty")

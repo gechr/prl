@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	xos "github.com/gechr/x/os"
 	"github.com/gechr/x/shell"
 	xslices "github.com/gechr/x/slices"
 	"github.com/gechr/x/terminal/emulator"
@@ -27,7 +28,7 @@ const (
 )
 
 func currentAIReviewLauncher() aiReviewLauncher {
-	if !isDarwin() {
+	if !xos.IsDarwin() {
 		return aiReviewLauncherNone
 	}
 	switch emulator.Detect() {

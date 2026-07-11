@@ -32,6 +32,7 @@ import (
 	"github.com/gechr/primer/table"
 	"github.com/gechr/primer/view"
 	xansi "github.com/gechr/x/ansi"
+	"github.com/gechr/x/human"
 	xterminal "github.com/gechr/x/terminal"
 )
 
@@ -1216,10 +1217,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, flashResult(&m, "Slack failed:", fmt.Sprintf("%v", msg.err), "", true)
 		}
-		status := fmt.Sprintf("%d PRs", msg.count)
-		if msg.count == 1 {
-			status = "1 PR"
-		}
+		status := human.Pluralize(msg.count, "PR", "PRs")
 		return m, flashResult(&m, "Slacked", status, "", false)
 
 	case jumpTimeoutMsg:

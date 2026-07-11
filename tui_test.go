@@ -21,6 +21,7 @@ import (
 	"github.com/gechr/primer/scrollwheel"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/x/ansi"
+	xos "github.com/gechr/x/os"
 	"github.com/gechr/x/shell"
 	"github.com/stretchr/testify/require"
 )
@@ -66,7 +67,7 @@ func TestShellSingleQuoteEscapesSingleQuotes(t *testing.T) {
 }
 
 func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
-	if !isDarwin() {
+	if !xos.IsDarwin() {
 		t.Skip("AI review requires macOS")
 	}
 
@@ -157,7 +158,7 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	overlay := m.renderHelpOverlay()
 
 	lines := strings.Split(ansi.Strip(overlay), nl)
-	if isDarwin() {
+	if xos.IsDarwin() {
 		require.Equal(
 			t,
 			"│       alt+a  Approve PRs (no confirm)           r  Launch AI review                 │",
@@ -1189,7 +1190,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	// The "review" shortcut only renders where an AI-review launcher
 	// exists (darwin).
 	footer := "Close  open  alt+copy  slack  ctrl+r copilot  dismiss"
-	if isDarwin() {
+	if xos.IsDarwin() {
 		footer = "Close  open  alt+copy  slack  review  ctrl+r copilot  dismiss"
 	}
 	require.Equal(

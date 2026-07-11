@@ -3,20 +3,17 @@ package main
 import (
 	"context"
 	"os/exec"
-	"runtime"
 
 	"github.com/atotto/clipboard"
+	xos "github.com/gechr/x/os"
 )
 
 // openBrowser opens the given URLs in the default browser.
 func openBrowser(urls ...string) error {
-	var name string
-	switch runtime.GOOS {
-	case "linux":
+	//nolint:goconst // macOS launcher binary, not the PR state value
+	name := "open"
+	if xos.IsLinux() {
 		name = "xdg-open"
-	default:
-		//nolint:goconst // macOS launcher binary, not the PR state value
-		name = "open"
 	}
 	for _, url := range urls {
 		if err := exec.CommandContext(context.Background(), name, url).Run(); err != nil {
