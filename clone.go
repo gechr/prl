@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +15,7 @@ import (
 	"github.com/gechr/clog"
 	xhuman "github.com/gechr/x/human"
 	xos "github.com/gechr/x/os"
+	xslices "github.com/gechr/x/slices"
 )
 
 // cloneTarget represents a repository to clone with an optional branch.
@@ -395,7 +395,7 @@ func buildCloneTargets(
 		}
 		grouped[nwo] = append(grouped[nwo], pr)
 	}
-	sort.Strings(order)
+	xslices.SortNatural(order)
 
 	singlePRs := make([]PullRequest, 0, len(order))
 	for _, nwo := range order {

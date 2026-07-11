@@ -746,10 +746,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if len(targets) == 0 {
 			return m, nil, true
 		}
-		urls := make([]string, len(targets))
-		for i, t := range targets {
-			urls[i] = t.pr.URL
-		}
+		urls := xslices.Map(targets, func(t targetPR) string { return t.pr.URL })
 		xslices.SortNatural(urls)
 		_ = copyToClipboard(strings.Join(urls, nl))
 		last := targets[len(targets)-1]

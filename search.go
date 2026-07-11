@@ -47,13 +47,12 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// Repo filter
 	repos := cli.Repo.Values
 	if len(repos) > 0 {
-		qualified := make([]string, len(repos))
-		for i, repo := range repos {
+		qualified := xslices.Map(repos, func(repo string) string {
 			if !strings.Contains(repo, "/") && len(ownerVals) == 1 {
 				repo = ownerVals[0] + "/" + repo
 			}
-			qualified[i] = repo
-		}
+			return repo
+		})
 		qualifiers = append(qualifiers, buildORQualifier("repo", qualified))
 	}
 
@@ -380,10 +379,7 @@ func toPullRequest(item searchItem) PullRequest {
 		}
 	}
 
-	labels := make([]Label, len(item.Labels))
-	for i, l := range item.Labels {
-		labels[i] = Label(l)
-	}
+	labels := xslices.Map(item.Labels, func(l searchLabel) Label { return Label(l) })
 
 	return PullRequest{
 		Number:     item.Number,

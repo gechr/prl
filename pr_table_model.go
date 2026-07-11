@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	xslices "github.com/gechr/x/slices"
 )
 
 // PRRowModel holds enriched, typed table data for a pull request before rendering.
@@ -51,10 +53,7 @@ func buildPRRowModels(
 		owner, _, _ := strings.Cut(pr.Repository.NameWithOwner, "/")
 
 		// Build labels.
-		labels := make([]string, len(pr.Labels))
-		for j, l := range pr.Labels {
-			labels[j] = l.Name
-		}
+		labels := xslices.Map(pr.Labels, func(l Label) string { return l.Name })
 
 		models[i] = PRRowModel{
 			PR:          pr,

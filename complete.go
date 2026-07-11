@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/gechr/clog"
+	xmaps "github.com/gechr/x/maps"
+	xslices "github.com/gechr/x/slices"
 )
 
 const tab = "\t"
@@ -71,13 +72,7 @@ func completeAuthors(cfg *Config) []string {
 
 	// Add config authors as a fallback and supplement to plugin results.
 	if len(cfg.Authors) > 0 {
-		var configUsers []string
-		for username := range cfg.Authors {
-			configUsers = append(configUsers, username)
-		}
-		sort.Strings(configUsers)
-
-		for _, username := range configUsers {
+		for _, username := range xmaps.KeysNatural(cfg.Authors) {
 			name := cfg.Authors[username]
 			if strings.EqualFold(name, BotName) {
 				name += " 🤖"
@@ -117,7 +112,7 @@ func completeTeams(cfg *Config) []string {
 			}
 		}
 
-		sort.Strings(results)
+		xslices.SortNatural(results)
 		return results
 	}
 
@@ -139,7 +134,7 @@ func completeTeams(cfg *Config) []string {
 		}
 	}
 
-	sort.Strings(results)
+	xslices.SortNatural(results)
 	return results
 }
 
@@ -203,6 +198,6 @@ func (p *prl) completeColumns() []string {
 		results = append(results, name)
 	}
 
-	sort.Strings(results)
+	xslices.SortNatural(results)
 	return results
 }

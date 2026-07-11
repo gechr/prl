@@ -15,6 +15,7 @@ import (
 
 	"github.com/gechr/clog"
 	xmaps "github.com/gechr/x/maps"
+	xslices "github.com/gechr/x/slices"
 	xstrings "github.com/gechr/x/strings"
 )
 
@@ -113,10 +114,7 @@ func discoverPluginUncached(cfg *Config) (*Plugin, error) {
 		clog.Debug().Str("path", candidates[0].path).Msg("Discovered plugin on PATH")
 		return &Plugin{path: candidates[0].path}, nil
 	default:
-		paths := make([]string, len(candidates))
-		for i, candidate := range candidates {
-			paths[i] = candidate.path
-		}
+		paths := xslices.Map(candidates, func(c pluginCandidate) string { return c.path })
 		return nil, fmt.Errorf(
 			"multiple prl-plugin-* plugins found on PATH (%s); set plugin in config",
 			strings.Join(paths, ", "),

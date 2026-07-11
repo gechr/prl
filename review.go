@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/gechr/x/shell"
+	xslices "github.com/gechr/x/slices"
 	"github.com/gechr/x/terminal/emulator"
 )
 
@@ -162,11 +163,9 @@ func builtInReviewConfig(provider reviewProvider) reviewProviderConfig {
 }
 
 func reviewChoices(values []string) []filterChoice {
-	choices := make([]filterChoice, len(values))
-	for i, value := range values {
-		choices[i] = filterChoice{label: value, value: value}
-	}
-	return choices
+	return xslices.Map(values, func(value string) filterChoice {
+		return filterChoice{label: value, value: value}
+	})
 }
 
 func isChoiceValue(choices []filterChoice, value string) bool {

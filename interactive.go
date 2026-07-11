@@ -8,6 +8,7 @@ import (
 	"github.com/gechr/clog"
 	"github.com/gechr/primer/input"
 	"github.com/gechr/primer/pick"
+	xslices "github.com/gechr/x/slices"
 )
 
 // prlHuhTheme implements huh.Theme with prl's custom styling.
@@ -47,14 +48,13 @@ func interactiveSelect(rows []TableRow, header string) ([]TableRow, error) {
 		return nil, nil
 	}
 
-	items := make([]pick.Item[TableRow], len(rows))
-	for i, row := range rows {
-		items[i] = pick.Item[TableRow]{
+	items := xslices.Map(rows, func(row TableRow) pick.Item[TableRow] {
+		return pick.Item[TableRow]{
 			Display:  row.Display,
 			Value:    row,
 			Selected: true,
 		}
-	}
+	})
 
 	return pick.MultiSelect(header, items, prlHuhTheme{}, maxSelectHeight, true)
 }

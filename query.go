@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	xslices "github.com/gechr/x/slices"
 )
 
 var (
@@ -298,10 +300,7 @@ func buildORQualifier(qualifier string, values []string) string {
 	if len(values) == 1 {
 		return qualifier + ":" + values[0]
 	}
-	parts := make([]string, len(values))
-	for i, v := range values {
-		parts[i] = qualifier + ":" + v
-	}
+	parts := xslices.Map(values, func(v string) string { return qualifier + ":" + v })
 	return "(" + strings.Join(parts, " OR ") + ")"
 }
 

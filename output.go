@@ -1223,7 +1223,7 @@ func renderRepos(prs []PullRequest) string {
 		names = append(names, pr.Repository.Name)
 	}
 	names = xslices.Unique(names)
-	sort.Strings(names)
+	xslices.SortNatural(names)
 	return strings.Join(names, nl)
 }
 
