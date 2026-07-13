@@ -47,6 +47,7 @@ func TestListResultCacheRoundTrip(t *testing.T) {
 			Labels:         []Label{{Name: "bug"}},
 			MergeStatus:    MergeStatusCIFailed,
 			NodeID:         "PR_node",
+			Number:         42,
 			Repository:     Repository{Name: "repo", NameWithOwner: "owner/repo"},
 			ReviewDecision: valueReviewApproved,
 			State:          valueOpen,

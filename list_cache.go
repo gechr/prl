@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	listResultCacheVersion  = 1
+	listResultCacheVersion  = 2
 	listResultCacheDirPerm  = 0o755
 	listResultCacheFilePerm = 0o600
 )
@@ -37,6 +37,7 @@ type cachedPullRequest struct {
 	Labels               []Label    `json:"labels"`
 	MergeStatus          int        `json:"mergeStatus"`
 	NodeID               string     `json:"nodeId"`
+	Number               int        `json:"number"`
 	Repository           Repository `json:"repository"`
 	ReviewDecision       string     `json:"reviewDecision"`
 	ReviewDecisionLoaded bool       `json:"reviewDecisionLoaded"`
@@ -90,6 +91,7 @@ func cachedPR(pr PullRequest) cachedPullRequest {
 		Labels:               append([]Label(nil), pr.Labels...),
 		MergeStatus:          int(pr.MergeStatus),
 		NodeID:               pr.NodeID,
+		Number:               pr.Number,
 		Repository:           pr.Repository,
 		ReviewDecision:       pr.ReviewDecision,
 		ReviewDecisionLoaded: pr.reviewDecisionLoaded,
@@ -114,6 +116,7 @@ func (pr cachedPullRequest) pullRequest() PullRequest {
 		Labels:               append([]Label(nil), pr.Labels...),
 		MergeStatus:          MergeStatus(pr.MergeStatus),
 		NodeID:               pr.NodeID,
+		Number:               pr.Number,
 		Repository:           pr.Repository,
 		ReviewDecision:       pr.ReviewDecision,
 		State:                pr.State,
