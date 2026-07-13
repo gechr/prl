@@ -802,7 +802,7 @@ func buildAIReviewCommand(
 		return baseCmd + buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt) + cleanup
 	case reviewProviderUnknown, reviewProviderClaude:
 		return baseCmd + fmt.Sprintf(
-			"claude --safe-mode --permission-mode plan --model=%s %s--system-prompt %s %s%s",
+			"claude --permission-mode plan --model=%s %s--system-prompt %s %s%s",
 			shell.Quote(cmdModel),
 			claudeEffortArg(cmdEffort),
 			shell.Quote(
@@ -813,7 +813,7 @@ func buildAIReviewCommand(
 		)
 	}
 	return baseCmd + fmt.Sprintf(
-		"claude --safe-mode --permission-mode plan --model=%s %s--system-prompt %s %s%s",
+		"claude --permission-mode plan --model=%s %s--system-prompt %s %s%s",
 		shell.Quote(cmdModel),
 		claudeEffortArg(cmdEffort),
 		shell.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),

@@ -199,7 +199,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	)
 	require.Equal(
 		t,
-		baseCmd+"claude --safe-mode --permission-mode plan --model=sonnet "+
+		baseCmd+"claude --permission-mode plan --model=sonnet "+
 			"--effort=high --system-prompt 'You are an expert code reviewer. "+
 			"Be thorough, precise, and actionable.' "+promptExpr+cleanup,
 		cmd,
@@ -208,7 +208,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewProviderClaude, "", "")
 	require.Equal(
 		t,
-		baseCmd+"claude --safe-mode --permission-mode plan --model=opus "+
+		baseCmd+"claude --permission-mode plan --model=opus "+
 			"--effort=high --system-prompt 'You are an expert code reviewer. "+
 			"Be thorough, precise, and actionable.' "+promptExpr+cleanup,
 		cmd,
