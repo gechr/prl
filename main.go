@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clive"
+	"github.com/gechr/clive/notify"
 	"github.com/gechr/clive/updater/brew"
 	"github.com/gechr/clog"
 	cspinner "github.com/gechr/clog/fx/spinner"
@@ -44,6 +45,7 @@ func main() {
 			brew.WithFormula("prl"),
 			brew.WithTap("gechr/tap"),
 		),
+		NotifyOptions: []notify.Option{notify.WithOutdatedHintCommand("prl --self-update")},
 		ConfigureLog: configureClog,
 	})
 
