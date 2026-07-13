@@ -58,13 +58,12 @@ const (
 	claudeReviewModelSonnet = "sonnet"
 	claudeReviewModelOpus   = "opus"
 	claudeReviewModelFable  = "fable"
-	codexReviewModel56      = "gpt-5.6"
+	codexReviewModel56Sol   = "gpt-5.6-sol"
 	codexReviewModel56Terra = "gpt-5.6-terra"
 	codexReviewModel56Luna  = "gpt-5.6-luna"
 	codexReviewModel55      = "gpt-5.5"
 	codexReviewModel54      = "gpt-5.4"
 	codexReviewModel54Mini  = "gpt-5.4-mini"
-	codexReviewModel53Codex = "gpt-5.3-codex"
 
 	claudeReviewEffortLow    = "low"
 	claudeReviewEffortMedium = "medium"
@@ -120,15 +119,14 @@ var claudeReviewConfig = reviewProviderConfig{
 
 var codexReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
-		{label: codexReviewModel56, value: codexReviewModel56},
+		{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
 		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 		{label: codexReviewModel55, value: codexReviewModel55},
 		{label: codexReviewModel54, value: codexReviewModel54},
 		{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
-		{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
 	},
-	defaultModel: codexReviewModel56,
+	defaultModel: codexReviewModel56Sol,
 }
 
 var geminiReviewConfig = reviewProviderConfig{
@@ -719,7 +717,7 @@ func writeReviewLaunchFile(shellCmd, promptFile string) (string, error) {
 // expression must not be further shell-quoted.
 func promptArg(promptFile string) (string, string) {
 	q := shell.Quote(promptFile)
-	return fmt.Sprintf(`"$(cat %s)"`, q), fmt.Sprintf("; rm -f %s", q)
+	return fmt.Sprintf(`"$(/bin/cat %s)"`, q), fmt.Sprintf("; rm -f %s", q)
 }
 
 // launchAIReviewKitty opens a new Kitty tab using Kitty's remote control
@@ -863,7 +861,7 @@ func claudeEffortArg(effort string) string {
 }
 
 // buildGeminiReviewCommand expects promptExpr to be an already shell-safe
-// expression (e.g. "$(cat /path)"); it must not be further quoted.
+// expression (e.g. "$(/bin/cat /path)"); it must not be further quoted.
 func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string) string {
 	settingsJSON, err := json.Marshal(geminiReviewSettings(model, effort))
 	if err != nil {

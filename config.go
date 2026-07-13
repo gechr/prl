@@ -685,7 +685,7 @@ tui:
       codex:
         # Optional overrides for the available model/effort choices.
         # If omitted, prl uses the built-in Codex review options.
-        # models: [gpt-5.6, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex]
+        # models: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini]
         # efforts: [low, medium, high, xhigh, max]
         # Default prompt for Codex AI review.
         # Available placeholders:

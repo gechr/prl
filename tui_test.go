@@ -243,13 +243,12 @@ func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) 
 	require.Equal(
 		t,
 		[]filterChoice{
-			{label: codexReviewModel56, value: codexReviewModel56},
+			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
 			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 			{label: codexReviewModel55, value: codexReviewModel55},
 			{label: codexReviewModel54, value: codexReviewModel54},
 			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
-			{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
 		},
 		bm.confirmOptions[1].choices,
 	)

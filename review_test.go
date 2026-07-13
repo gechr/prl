@@ -185,7 +185,7 @@ func TestClaudeReviewDefaultsUseOpusHighAndIncludeFable(t *testing.T) {
 func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	pr := testReviewPullRequest()
 	const promptFile = "/tmp/prl-prompt.txt"
-	promptExpr := fmt.Sprintf(`"$(cat %s)"`, shell.Quote(promptFile))
+	promptExpr := fmt.Sprintf(`"$(/bin/cat %s)"`, shell.Quote(promptFile))
 	cleanup := fmt.Sprintf("; rm -f %s", shell.Quote(promptFile))
 	baseCmd := expectedAIReviewBaseCommand(pr)
 
@@ -265,7 +265,7 @@ func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 	require.Equal(
 		t,
 		expectedAIReviewBaseCommand(pr)+
-			`codex --sandbox read-only -m gpt-5.4 -c model_reasoning_effort=medium "$(cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+			`codex --sandbox read-only -m gpt-5.4 -c model_reasoning_effort=medium "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
 		cmd,
 	)
 }
@@ -510,7 +510,7 @@ func TestBuildAIReviewCommandUsesConfiguredFallbackChoices(t *testing.T) {
 	require.Equal(
 		t,
 		expectedAIReviewBaseCommand(pr)+
-			`codex --sandbox read-only -m gpt-5.5 -c model_reasoning_effort=deep "$(cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+			`codex --sandbox read-only -m gpt-5.5 -c model_reasoning_effort=deep "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
 		cmd,
 	)
 }
@@ -535,7 +535,7 @@ func TestBuildAIReviewCommandUsesGeminiBudgetFor25Flash(t *testing.T) {
 			"&& /bin/mkdir -p "+shell.Quote(reviewDir)+"/.gemini "+
 			`&& printf '%s' '{"modelConfigs":{"customAliases":{"prl-review":{"modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":1024}},"model":"gemini-2.5-flash"}}}}}' > `+
 			shell.Quote(reviewDir)+"/.gemini/settings.json "+
-			`&& gemini --sandbox --approval-mode plan --model prl-review --prompt-interactive "$(cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+			`&& gemini --sandbox --approval-mode plan --model prl-review --prompt-interactive "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
 		cmd,
 	)
 }
@@ -606,17 +606,16 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 	require.Equal(
 		t,
 		[]filterChoice{
-			{label: codexReviewModel56, value: codexReviewModel56},
+			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
 			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 			{label: codexReviewModel55, value: codexReviewModel55},
 			{label: codexReviewModel54, value: codexReviewModel54},
 			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
-			{label: codexReviewModel53Codex, value: codexReviewModel53Codex},
 		},
 		reviewModelChoices(nil, reviewProviderCodex),
 	)
-	require.Equal(t, codexReviewModel56, defaultReviewModel(nil, reviewProviderCodex))
+	require.Equal(t, codexReviewModel56Sol, defaultReviewModel(nil, reviewProviderCodex))
 	require.Equal(
 		t,
 		[]filterChoice{
@@ -631,7 +630,26 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 	require.Equal(
 		t,
 		codexReviewEffortHigh,
-		defaultReviewEffort(nil, reviewProviderCodex, codexReviewModel56),
+		defaultReviewEffort(nil, reviewProviderCodex, codexReviewModel56Sol),
+	)
+}
+
+func TestBuildAIReviewCommandUsesCodex56SolByDefault(t *testing.T) {
+	pr := testReviewPullRequest()
+	cmd := buildAIReviewCommand(
+		pr,
+		"/tmp/prl-prompt.txt",
+		nil,
+		reviewProviderCodex,
+		"",
+		"",
+	)
+
+	require.Equal(
+		t,
+		expectedAIReviewBaseCommand(pr)+
+			`codex --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+		cmd,
 	)
 }
 
