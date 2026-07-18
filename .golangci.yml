@@ -99,9 +99,13 @@ linters:
     gocognit:
       min-complexity: 40
     gocritic:
+      enabled-checks:
+        - ruleguard
       settings:
         captLocal:
           paramsOnly: false
+        ruleguard:
+          rules: gorules/rules.go
         underef:
           skipRecvDeref: false
     gomodguard_v2:
