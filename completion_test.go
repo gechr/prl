@@ -24,6 +24,6 @@ func TestFishCompletionKeepsPluginOrderForAuthorFlag(t *testing.T) {
 	require.Contains(
 		t,
 		lines,
-		`complete -c prl -s a -l author -k -x -a "(prl --@complete=author)" -d "Author"`,
+		`complete -c prl -s a -l author -x -kra "(__prl_complete_author)" -d "Author"`,
 	)
 }
