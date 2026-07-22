@@ -181,7 +181,7 @@ prl -o json
 
 ## TUI
 
-`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`.
+`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`. AI reviews open in a new tab of the host terminal: inside a Herdr session (`HERDR_ENV=1`) a Herdr tab, otherwise Ghostty, iTerm2, or Kitty on macOS.
 
 ## Date Syntax
 

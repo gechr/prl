@@ -13,7 +13,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCurrentAIReviewLauncherHerdr(t *testing.T) {
+	if _, err := exec.LookPath("herdr"); err != nil {
+		t.Skip("herdr not in PATH")
+	}
+
+	t.Run("herdr session wins over the host emulator", func(t *testing.T) {
+		t.Setenv(herdrEnvVar, "1")
+		t.Setenv("KITTY_WINDOW_ID", "1")
+		t.Setenv("TERM_PROGRAM", "ghostty")
+		require.Equal(t, aiReviewLauncherHerdr, currentAIReviewLauncher())
+	})
+
+	t.Run("unset herdr env falls through", func(t *testing.T) {
+		t.Setenv(herdrEnvVar, "")
+		t.Setenv("KITTY_WINDOW_ID", "")
+		t.Setenv("TERM_PROGRAM", "Apple_Terminal")
+		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+	})
+}
+
 func TestCurrentAIReviewLauncher(t *testing.T) {
+	t.Setenv(herdrEnvVar, "")
+
 	if !xos.IsDarwin() {
 		t.Run("non-darwin always returns none", func(t *testing.T) {
 			t.Setenv("KITTY_WINDOW_ID", "1")

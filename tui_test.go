@@ -71,6 +71,7 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 		t.Skip("AI review requires macOS")
 	}
 
+	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	pr := testReviewPullRequest()
 	m := tuiModel{
@@ -152,6 +153,7 @@ func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
 }
 
 func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
+	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	m := tuiModel{styles: newTuiStyles()}
 
@@ -1162,6 +1164,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	// Pin launcher detection: the footer's "review" shortcut is gated on
 	// hasAIReviewLauncher(), which is env- and platform-dependent.
 	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	pr := testReviewPullRequest()
 	diff := styleDanger.Render("+" + strings.Repeat("a", 85))
