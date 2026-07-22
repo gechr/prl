@@ -52,6 +52,10 @@ func buildExamplesSection() help.Section {
 					Comment: "Search your open PRs matching 'golangci-lint'",
 					Command: "prl golangci-lint",
 				},
+				{
+					Comment: "List PRs from every team except one (prefix a value with ! or - to exclude it)",
+					Command: "prl -t !team-name -s all",
+				},
 			},
 		},
 	}

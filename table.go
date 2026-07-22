@@ -374,11 +374,11 @@ func normalizeColumns(values []string) []string {
 	return cols
 }
 
-// singleOwner returns the owner name if exactly one non-"all" owner is specified, otherwise "".
+// singleOwner returns the owner name if exactly one positive owner is specified, otherwise "".
 func singleOwner(values []string) string {
-	filtered := filterAllValue(values)
-	if len(filtered) == 1 {
-		return filtered[0]
+	positive, _ := splitNegated(filterAllValue(values))
+	if len(positive) == 1 {
+		return positive[0]
 	}
 	return ""
 }

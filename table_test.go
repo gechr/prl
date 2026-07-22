@@ -733,6 +733,11 @@ func TestComputeLayout_MediumTerminal(t *testing.T) {
 	require.False(t, layout.compact)
 }
 
+func TestSingleOwner_IgnoresNegatedOwners(t *testing.T) {
+	require.Empty(t, singleOwner([]string{"!excluded"}))
+	require.Equal(t, "included", singleOwner([]string{"included", "!excluded"}))
+}
+
 func TestComputeLayout_CustomColumns_NoTime(t *testing.T) {
 	// Without time columns, compact is not needed.
 	cols := []string{"index", colTitle, "ref"}

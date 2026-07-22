@@ -8,6 +8,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestNormalize_NegatedTeamImpliesAuthorAny(t *testing.T) {
+	c := &CLI{Team: CSVFlag{Values: []string{"!ops"}}}
+	c.Normalize(&Config{})
+	require.NotNil(t, c.Author)
+	require.Equal(t, []string{valueAll}, c.Author.Values)
+}
+
+func TestNormalize_PositiveTeamDoesNotImplyAuthorAny(t *testing.T) {
+	c := &CLI{Team: CSVFlag{Values: []string{"ops"}}}
+	c.Normalize(&Config{Default: Defaults{Authors: []string{"@me"}}})
+	require.NotNil(t, c.Author)
+	require.Equal(t, []string{"@me"}, c.Author.Values)
+}
+
+func TestNormalize_MixedTeamsDoNotDiscardDefaultAuthors(t *testing.T) {
+	c := &CLI{Team: CSVFlag{Values: []string{"ops", "!frontend"}}}
+	c.Normalize(&Config{Default: Defaults{Authors: []string{"@me"}}})
+	require.NotNil(t, c.Author)
+	require.Equal(t, []string{"@me"}, c.Author.Values)
+}
+
+func TestNormalize_PreservesNegationWhenResolvingTeamAlias(t *testing.T) {
+	c := &CLI{Team: CSVFlag{Values: []string{"!ops"}}}
+	c.Normalize(&Config{TeamAliases: map[string]string{"ops": "acme/operations"}})
+	require.Equal(t, []string{"!acme/operations"}, c.Team.Values)
+}
+
 func TestQueryString(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -42,6 +69,23 @@ func TestValidate_AllowsAuthorAndTeamTogether(t *testing.T) {
 	}
 
 	require.NoError(t, cli.Validate())
+}
+
+func TestValidate_RejectsNegatedRequestedForUnsubscribe(t *testing.T) {
+	tests := []string{"!alice", "team:!ops", "!team:ops"}
+	for _, requested := range tests {
+		t.Run(requested, func(t *testing.T) {
+			cli := &CLI{
+				Unsubscribe:     true,
+				ReviewRequested: CSVFlag{Values: []string{requested}},
+			}
+			require.EqualError(
+				t,
+				cli.Validate(),
+				"--unsubscribe cannot use negated --requested values",
+			)
+		})
+	}
 }
 
 func TestValidate_IntervalRequiresInteractiveOrWatch(t *testing.T) {

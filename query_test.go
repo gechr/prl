@@ -409,6 +409,216 @@ exit 1
 	)
 }
 
+func TestSplitNegated(t *testing.T) {
+	positive, negative := splitNegated([]string{"foo", "-bar", "!baz", "qux"})
+	require.Equal(t, []string{"foo", "qux"}, positive)
+	require.Equal(t, []string{"bar", "baz"}, negative)
+}
+
+func TestSplitNegated_CancelsOpposingValues(t *testing.T) {
+	positive, negative := splitNegated([]string{"foo", "FOO", "!foo", "bar", "!baz"})
+	require.Equal(t, []string{"bar"}, positive)
+	require.Equal(t, []string{"baz"}, negative)
+}
+
+func TestBuildFilterQualifiers(t *testing.T) {
+	got := buildFilterQualifiers("involves", []string{"alice", "!bob", "carol"})
+	require.Equal(t, []string{"(involves:alice OR involves:carol)", "-involves:bob"}, got)
+}
+
+func TestBuildFilterQualifiers_AllNegated(t *testing.T) {
+	got := buildFilterQualifiers("commenter", []string{"!bob"})
+	require.Equal(t, []string{"-commenter:bob"}, got)
+}
+
+func TestBuildFilterQualifiers_CancelsOpposingValues(t *testing.T) {
+	got := buildFilterQualifiers("involves", []string{"alice", "!ALICE", "bob"})
+	require.Equal(t, []string{"involves:bob"}, got)
+}
+
+func TestBuildSearchQuery_NegatedAuthor(t *testing.T) {
+	author := CSVFlag{Values: []string{"user-1", "!user-2"}}
+	params, err := buildSearchQuery(&CLI{Author: &author}, &Config{})
+	require.NoError(t, err)
+	require.Equal(t, "is:pr archived:false state:open author:user-1 -author:user-2", params.Query)
+}
+
+func TestBuildSearchQuery_NegatedTeamExcludesMembers(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\nexit 1\n")
+	resetPluginCacheForTest(t)
+
+	params, err := buildSearchQuery(&CLI{
+		Team: CSVFlag{Values: []string{"!ops"}},
+	}, &Config{
+		Plugin: pluginPath,
+		Teams: map[string][]string{
+			"ops": {"user-1", "user-2"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open -author:user-1 -author:user-2",
+		params.Query,
+	)
+}
+
+func TestBuildSearchQuery_NegatedTeamCancelsOverlappingPositiveAuthor(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\nexit 1\n")
+	resetPluginCacheForTest(t)
+
+	author := CSVFlag{Values: []string{"user-1"}}
+	params, err := buildSearchQuery(&CLI{
+		Author: &author,
+		Team:   CSVFlag{Values: []string{"!ops"}},
+	}, &Config{
+		Plugin: pluginPath,
+		Teams: map[string][]string{
+			"ops": {"user-1", "user-2"},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open -author:user-2",
+		params.Query,
+	)
+}
+
+func TestBuildSearchQuery_MixedTeamsKeepDefaultAuthorScope(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\nexit 1\n")
+	resetPluginCacheForTest(t)
+
+	cli := &CLI{Team: CSVFlag{Values: []string{"ops", "!frontend"}}}
+	cfg := &Config{
+		Plugin: pluginPath,
+		Default: Defaults{
+			Authors: []string{"@me"},
+		},
+		Teams: map[string][]string{
+			"ops":      {"alice"},
+			"frontend": {"bob"},
+		},
+	}
+	cli.Normalize(cfg)
+	params, err := buildSearchQuery(cli, cfg)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open (author:@me OR author:alice) -author:bob",
+		params.Query,
+	)
+}
+
+func TestBuildSearchQuery_NegatedRequestedReviewers(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		ReviewRequested: CSVFlag{Values: []string{
+			"alice",
+			"!bob",
+			"team:ops",
+			"!team:frontend",
+		}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open user-review-requested:alice "+
+			"-user-review-requested:bob team-review-requested:ops "+
+			"-team-review-requested:frontend",
+		params.Query,
+	)
+}
+
+func TestBuildSearchQuery_NegatedRepo(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Repo: CSVFlag{Values: []string{"acme/foo", "!acme/bar"}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(t, "is:pr archived:false state:open repo:acme/foo -repo:acme/bar", params.Query)
+}
+
+func TestBuildSearchQuery_RepoCancellationUsesQualifiedNames(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"acme"}},
+		Repo:  CSVFlag{Values: []string{"foo", "!acme/foo"}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(t, "is:pr archived:false state:open user:acme", params.Query)
+}
+
+func TestBuildSearchQuery_PurelyNegatedRepoStillScopesByOwner(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"acme"}},
+		Repo:  CSVFlag{Values: []string{"!acme/bar"}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(t, "is:pr archived:false state:open -repo:acme/bar user:acme", params.Query)
+}
+
+func TestBuildSearchQuery_NegatedOwner(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"acme", "!other"}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open user:acme -org:other -user:other",
+		params.Query,
+	)
+}
+
+func TestBuildSearchQuery_NegatedOwnerStillAppliesWithPositiveRepo(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"!acme"}},
+		Repo:  CSVFlag{Values: []string{"acme/foo"}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open repo:acme/foo -org:acme -user:acme",
+		params.Query,
+	)
+}
+
+func TestBuildSearchQuery_NegatedOwnerDoesNotQualifyShorthandRepo(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"!acme"}},
+		Repo:  CSVFlag{Values: []string{"foo"}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open repo:foo -org:acme -user:acme",
+		params.Query,
+	)
+}
+
+func TestBuildSearchQuery_NegatedOwnerDoesNotQualifyTopicRepos(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+if [ "$1" = "resolve" ] && [ "$2" = "topic" ]; then
+  printf 'foo\n'
+  exit 0
+fi
+exit 1
+`)
+	resetPluginCacheForTest(t)
+
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"!acme"}},
+		Topic: "platform",
+	}, &Config{Plugin: pluginPath})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open -org:acme -user:acme repo:foo",
+		params.Query,
+	)
+}
+
 func TestBuildSearchQuery_TopicRequiresPlugin(t *testing.T) {
 	resetPluginCacheForTest(t)
 	t.Setenv("PATH", "")

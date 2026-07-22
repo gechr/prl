@@ -287,6 +287,90 @@ func formatDuration(seconds int64) string {
 	return fmt.Sprintf("%d seconds", seconds)
 }
 
+// hasNegatedValue reports whether any value has a leading "-" or "!" negation prefix.
+func hasNegatedValue(values []string) bool {
+	for _, v := range values {
+		if rest := strings.TrimLeft(v, "-!"); rest != "" && rest != v {
+			return true
+		}
+	}
+	return false
+}
+
+// splitNegated partitions values into positive and negated groups. A value with
+// a leading "-" or "!" is negated, with the prefix stripped from the result.
+// Values present in both groups cancel each other.
+func splitNegated(values []string) ([]string, []string) {
+	var positive, negative []string
+	for _, v := range values {
+		if rest := strings.TrimLeft(v, "-!"); rest != "" && rest != v {
+			negative = append(negative, rest)
+		} else {
+			positive = append(positive, v)
+		}
+	}
+	return removeOpposingValues(positive, negative)
+}
+
+// removeOpposingValues removes values present in both groups. An explicit
+// positive and negative occurrence cancel each other before qualifiers are built.
+func removeOpposingValues(positive, negative []string) ([]string, []string) {
+	positive = xslices.UniqueFold(positive)
+	negative = xslices.UniqueFold(negative)
+	if len(positive) == 0 || len(negative) == 0 {
+		return positive, negative
+	}
+
+	positiveSet := make(map[string]bool, len(positive))
+	for _, value := range positive {
+		positiveSet[strings.ToLower(value)] = true
+	}
+	negativeSet := make(map[string]bool, len(negative))
+	for _, value := range negative {
+		negativeSet[strings.ToLower(value)] = true
+	}
+
+	positive = xslices.Filter(positive, func(value string) bool {
+		return !negativeSet[strings.ToLower(value)]
+	})
+	negative = xslices.Filter(negative, func(value string) bool {
+		return !positiveSet[strings.ToLower(value)]
+	})
+	return positive, negative
+}
+
+// resolveTeamMembers resolves each team slug to GitHub usernames via the plugin
+// (falling back to config teams), returning an error if any team has no members.
+func resolveTeamMembers(plug *Plugin, cfg *Config, teams []string) ([]string, error) {
+	var members []string
+	for _, team := range teams {
+		m, err := plug.ResolveTeam(team, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("resolving team %q: %w", team, err)
+		}
+		if len(m) == 0 {
+			return nil, fmt.Errorf("no members found for team %q", team)
+		}
+		members = append(members, m...)
+	}
+	return members, nil
+}
+
+// buildFilterQualifiers builds GitHub search qualifiers for a multi-value filter,
+// splitting values (via splitNegated) into a positive OR-qualifier and individual
+// negated "-qualifier:value" qualifiers (e.g. alice,!bob -> qualifier:alice -qualifier:bob).
+func buildFilterQualifiers(qualifier string, values []string) []string {
+	positive, negative := splitNegated(values)
+	var out []string
+	if q := buildORQualifier(qualifier, positive); q != "" {
+		out = append(out, q)
+	}
+	for _, v := range negative {
+		out = append(out, "-"+qualifier+":"+v)
+	}
+	return out
+}
+
 // buildORQualifier constructs a GitHub search OR expression for multi-value qualifiers.
 // Single value: "qualifier:value"
 // Multiple values: "(qualifier:v1 OR qualifier:v2 ... qualifier:vN)"

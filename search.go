@@ -41,27 +41,49 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		// no state filter
 	}
 
-	// Resolve owner values (strip "all")
+	// Resolve owner values (strip "all") and keep exclusions separate from the
+	// positive owner scope used to qualify shorthand repository names.
 	ownerVals := filterAllValue(cli.Owner.Values)
+	positiveOwners, negativeOwners := splitNegated(ownerVals)
+	qualifiedOwner := ""
+	if len(positiveOwners) == 1 {
+		qualifiedOwner = positiveOwners[0]
+	}
 
 	// Repo filter
 	repos := cli.Repo.Values
+	var positiveRepos []string
 	if len(repos) > 0 {
-		qualified := xslices.Map(repos, func(repo string) string {
-			if !strings.Contains(repo, "/") && len(ownerVals) == 1 {
-				repo = ownerVals[0] + "/" + repo
+		qualify := func(repo string) string {
+			if !strings.Contains(repo, "/") && qualifiedOwner != "" {
+				repo = qualifiedOwner + "/" + repo
 			}
 			return repo
-		})
-		qualifiers = append(qualifiers, buildORQualifier("repo", qualified))
+		}
+		var negativeRepos []string
+		positiveRepos, negativeRepos = splitNegated(repos)
+		positiveRepos = xslices.Map(positiveRepos, qualify)
+		negativeRepos = xslices.Map(negativeRepos, qualify)
+		positiveRepos, negativeRepos = removeOpposingValues(positiveRepos, negativeRepos)
+		if q := buildORQualifier("repo", positiveRepos); q != "" {
+			qualifiers = append(qualifiers, q)
+		}
+		for _, r := range negativeRepos {
+			qualifiers = append(qualifiers, "-repo:"+r)
+		}
 	}
 
-	// Owner filter
-	if len(repos) == 0 {
-		if q := buildOwnerQualifier(ownerVals); q != "" {
+	// Owner filter: skip only when positive repo qualifiers already scope the
+	// search - a repo filter that is purely exclusion (e.g. -R !owner/repo)
+	// still needs the owner qualifier, or the search is unbounded.
+	if len(positiveRepos) == 0 {
+		if q := buildOwnerQualifier(positiveOwners); q != "" {
 			qualifiers = append(qualifiers, q)
 		}
 	}
+	// Unlike a positive owner, an exclusion remains meaningful when explicit
+	// positive repositories are present (and may deliberately make the query empty).
+	qualifiers = append(qualifiers, buildExcludedOwnerQualifiers(negativeOwners)...)
 
 	// Ignored owners (config-only, always applied)
 	qualifiers = append(qualifiers, buildExcludedOwnerQualifiers(cfg.IgnoredOwners)...)
@@ -106,76 +128,85 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	if cli.Author != nil {
 		authorValues = cli.Author.Values
 	}
-	authorFilters := xslices.UniqueFold(filterAllValue(authorValues))
+	authorPositive, authorNegative := splitNegated(xslices.UniqueFold(filterAllValue(authorValues)))
 	bots := discoverBotAuthors(cfg)
 
 	// Commenter filter
 	commenterVals := filterAllValue(cli.Commenter.Values)
-	if q := buildORQualifier("commenter", commenterVals); q != "" {
-		qualifiers = append(qualifiers, q)
-	}
+	qualifiers = append(qualifiers, buildFilterQualifiers("commenter", commenterVals)...)
 
 	// Involves filter
 	involvesVals := filterAllValue(cli.Involves.Values)
-	if q := buildORQualifier("involves", involvesVals); q != "" {
-		qualifiers = append(qualifiers, q)
-	}
+	qualifiers = append(qualifiers, buildFilterQualifiers("involves", involvesVals)...)
 
 	// Reviewed-by filter
 	reviewedByVals := filterAllValue(cli.ReviewedBy.Values)
-	if q := buildORQualifier("reviewed-by", reviewedByVals); q != "" {
-		qualifiers = append(qualifiers, q)
-	}
+	qualifiers = append(qualifiers, buildFilterQualifiers("reviewed-by", reviewedByVals)...)
 
-	// Review-requested: split into user and team
+	// Review-requested: split into user and team while preserving negation.
 	reqVals := filterAllValue(cli.ReviewRequested.Values)
 	if len(reqVals) > 0 {
 		var userReqs, teamReqs []string
 		for _, v := range reqVals {
-			if after, ok := strings.CutPrefix(v, "team:"); ok {
-				teamReqs = append(teamReqs, after)
+			prefix := ""
+			if positive, negative := splitNegated([]string{v}); len(negative) > 0 {
+				v = negative[0]
+				prefix = "!"
 			} else {
-				userReqs = append(userReqs, v)
+				v = positive[0]
+			}
+			if after, ok := strings.CutPrefix(v, "team:"); ok {
+				teamReqs = append(teamReqs, prefix+after)
+			} else {
+				userReqs = append(userReqs, prefix+v)
 			}
 		}
-		if q := buildORQualifier("user-review-requested", userReqs); q != "" {
-			qualifiers = append(qualifiers, q)
-		}
-		if q := buildORQualifier("team-review-requested", teamReqs); q != "" {
-			qualifiers = append(qualifiers, q)
-		}
+		qualifiers = append(
+			qualifiers,
+			buildFilterQualifiers("user-review-requested", userReqs)...,
+		)
+		qualifiers = append(
+			qualifiers,
+			buildFilterQualifiers("team-review-requested", teamReqs)...,
+		)
 	}
 
-	// Team filter: resolve members and merge with explicit authors.
+	// Team filter: resolve members and merge with explicit authors. A negated team
+	// (e.g. "!foo") excludes its members instead of restricting authors to them.
 	if len(cli.Team.Values) > 0 {
 		plug, err := discoverPlugin(cfg)
 		if err != nil {
 			return nil, err
 		}
-		var allMembers []string
-		for _, team := range cli.Team.Values {
-			members, err := plug.ResolveTeam(team, cfg)
-			if err != nil {
-				return nil, fmt.Errorf("resolving team %q: %w", team, err)
-			}
-			if len(members) == 0 {
-				return nil, fmt.Errorf("no members found for team %q", team)
-			}
-			allMembers = append(allMembers, members...)
+		positiveTeams, negativeTeams := splitNegated(cli.Team.Values)
+		posMembers, err := resolveTeamMembers(plug, cfg, positiveTeams)
+		if err != nil {
+			return nil, err
 		}
-		authorFilters = xslices.UniqueFold(append(authorFilters, allMembers...))
+		negMembers, err := resolveTeamMembers(plug, cfg, negativeTeams)
+		if err != nil {
+			return nil, err
+		}
+		authorPositive = xslices.UniqueFold(append(authorPositive, posMembers...))
+		authorNegative = xslices.UniqueFold(append(authorNegative, negMembers...))
 	}
-	for i, author := range authorFilters {
-		authorFilters[i] = normalizeBotAuthorValue(author, bots)
+	for i, author := range authorPositive {
+		authorPositive[i] = normalizeBotAuthorValue(author, bots)
 	}
-	authorFilters = xslices.UniqueFold(authorFilters)
-	if q := buildORQualifier("author", authorFilters); q != "" {
+	for i, author := range authorNegative {
+		authorNegative[i] = normalizeBotAuthorValue(author, bots)
+	}
+	authorPositive, authorNegative = removeOpposingValues(authorPositive, authorNegative)
+	if q := buildORQualifier("author", authorPositive); q != "" {
 		qualifiers = append(qualifiers, q)
+	}
+	for _, a := range authorNegative {
+		qualifiers = append(qualifiers, "-author:"+a)
 	}
 
 	// Topic filter: resolve repos and add as repo OR filter
 	if cli.Topic != "" {
-		qualifiedRepos, err := resolveTopicReposForSearch(cli.Topic, ownerVals, cfg)
+		qualifiedRepos, err := resolveTopicReposForSearch(cli.Topic, positiveOwners, cfg)
 		if err != nil {
 			return nil, err
 		}

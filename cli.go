@@ -195,6 +195,14 @@ func (c *CLI) Validate() error {
 	if c.Clone && c.HasAction() {
 		return fmt.Errorf("--clone cannot be combined with PR action flags")
 	}
+	if c.Unsubscribe {
+		for _, requested := range c.ReviewRequested.Values {
+			teamRequested := strings.TrimPrefix(requested, "team:")
+			if hasNegatedValue([]string{requested}) || hasNegatedValue([]string{teamRequested}) {
+				return fmt.Errorf("--unsubscribe cannot use negated --requested values")
+			}
+		}
+	}
 	sending := c.Send || c.SendTo != ""
 	if sending && c.Clone {
 		return fmt.Errorf("--send and --clone are mutually exclusive")
@@ -406,12 +414,15 @@ func (c *CLI) Normalize(cfg *Config) {
 
 	// Author defaults
 	// User-oriented filters imply --author=any (don't restrict to self)
+	positiveTeams, negativeTeams := splitNegated(c.Team.Values)
+	onlyNegatedTeams := len(positiveTeams) == 0 && len(negativeTeams) > 0
 	hasUserFilter := len(c.ReviewRequested.Values) > 0 ||
 		len(c.Involves.Values) > 0 ||
 		len(c.Commenter.Values) > 0 ||
 		len(c.ReviewedBy.Values) > 0 ||
 		len(c.ClosedBy.Values) > 0 ||
 		len(c.MergedBy.Values) > 0 ||
+		onlyNegatedTeams ||
 		c.Unsubscribe ||
 		c.Approve
 	if c.Author == nil && hasUserFilter {
@@ -444,7 +455,11 @@ func (c *CLI) Normalize(cfg *Config) {
 
 	// Team alias resolution
 	for i, t := range c.Team.Values {
-		c.Team.Values[i] = cfg.resolveTeamAlias(t)
+		if positive, negative := splitNegated([]string{t}); len(negative) > 0 {
+			c.Team.Values[i] = "!" + cfg.resolveTeamAlias(negative[0])
+		} else {
+			c.Team.Values[i] = cfg.resolveTeamAlias(positive[0])
+		}
 	}
 }
 
