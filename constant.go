@@ -254,7 +254,7 @@ const (
 	tuiActionUnassign      = "unassign"
 	tuiActionUpdateBranch  = "update-branch"
 
-	tuiAIReviewUnsupported = "AI review is only supported in Ghostty, iTerm2, and Kitty for now!"
+	tuiAIReviewUnsupported = "AI review is only supported in Herdr, Ghostty, iTerm2, and Kitty for now!"
 
 	tuiConfirmInputWidth       = 70
 	tuiAIReviewConfirmInputWid = 90

@@ -23,11 +23,23 @@ type aiReviewLauncher string
 const (
 	aiReviewLauncherNone    aiReviewLauncher = ""
 	aiReviewLauncherGhostty aiReviewLauncher = "ghostty"
+	aiReviewLauncherHerdr   aiReviewLauncher = "herdr"
 	aiReviewLauncherITerm2  aiReviewLauncher = "iterm2"
 	aiReviewLauncherKitty   aiReviewLauncher = "kitty"
 )
 
+// herdrEnvVar is set in every pane Herdr owns. Herdr runs on top of a host
+// emulator, so it wins: in a Herdr session the review belongs in a Herdr tab.
+const herdrEnvVar = "HERDR_ENV"
+
+func inHerdrSession() bool { return os.Getenv(herdrEnvVar) == "1" }
+
 func currentAIReviewLauncher() aiReviewLauncher {
+	if inHerdrSession() {
+		if _, err := exec.LookPath("herdr"); err == nil {
+			return aiReviewLauncherHerdr
+		}
+	}
 	if !xos.IsDarwin() {
 		return aiReviewLauncherNone
 	}
@@ -652,13 +664,21 @@ func launchAIReview(
 	}
 	launchCmd := "/bin/sh " + shell.Quote(launchFile)
 
-	if launcher == aiReviewLauncherKitty {
-		tabTitle := fmt.Sprintf("%s#%d", pr.Repository.Name, pr.Number)
+	tabTitle := fmt.Sprintf("%s#%d", pr.Repository.Name, pr.Number)
+	switch launcher {
+	case aiReviewLauncherKitty:
 		if kittyErr := launchAIReviewKitty(ctx, launchCmd, tabTitle); kittyErr != nil {
 			return kittyErr
 		}
 		dispatched = true
 		return nil
+	case aiReviewLauncherHerdr:
+		if herdrErr := launchAIReviewHerdr(ctx, launchCmd, tabTitle); herdrErr != nil {
+			return herdrErr
+		}
+		dispatched = true
+		return nil
+	case aiReviewLauncherNone, aiReviewLauncherGhostty, aiReviewLauncherITerm2:
 	}
 
 	script, err := buildAIReviewAppleScript(launcher)
@@ -747,6 +767,42 @@ func launchAIReviewKitty(ctx context.Context, shellCmd, tabTitle string) error {
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("kitty send-text: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// herdrTabCreateResponse is the subset of `herdr tab create` output we need:
+// the new tab's pane, which `herdr pane run` targets.
+type herdrTabCreateResponse struct {
+	Result struct {
+		RootPane struct {
+			PaneID string `json:"pane_id"`
+		} `json:"root_pane"`
+	} `json:"result"`
+}
+
+// launchAIReviewHerdr runs the review in a new Herdr tab. No command is passed
+// to the tab, so Herdr starts the login shell and the review inherits its
+// environment (API keys, direnv, etc.).
+func launchAIReviewHerdr(ctx context.Context, shellCmd, tabTitle string) error {
+	createCmd := exec.CommandContext(ctx, "herdr", "tab", "create", "--label", tabTitle, "--focus")
+	out, err := createCmd.Output()
+	if err != nil {
+		return fmt.Errorf("herdr tab create: %w", err)
+	}
+	var resp herdrTabCreateResponse
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return fmt.Errorf("herdr tab create: %w", err)
+	}
+	paneID := resp.Result.RootPane.PaneID
+	if paneID == "" {
+		return fmt.Errorf("herdr tab create: no pane in response")
+	}
+
+	// `pane run` writes the command text and presses Enter.
+	runCmd := exec.CommandContext(ctx, "herdr", "pane", "run", paneID, shellCmd)
+	if output, err := runCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("herdr pane run: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
@@ -954,6 +1010,9 @@ end run`, nil
 	case aiReviewLauncherKitty:
 		// unreachable: Kitty is dispatched before AppleScript in launchAIReview.
 		return "", fmt.Errorf("kitty does not use AppleScript")
+	case aiReviewLauncherHerdr:
+		// unreachable: Herdr is dispatched before AppleScript in launchAIReview.
+		return "", fmt.Errorf("herdr does not use AppleScript")
 	}
 	return "", fmt.Errorf("unsupported terminal %q", launcher)
 }
