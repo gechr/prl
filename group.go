@@ -70,6 +70,15 @@ func (k groupKey) String() string {
 	}
 }
 
+// groupAuthorResolver lazily creates an author resolver only when an author
+// appears in the requested grouping keys.
+func groupAuthorResolver(keys []groupKey, cfg *Config) *AuthorResolver {
+	if slices.Contains(keys, groupAuthor) {
+		return NewAuthorResolver(cfg)
+	}
+	return nil
+}
+
 // ownerOf returns the owner portion of a PR's repository (the part before the
 // "/" in "owner/repo"), or "" when unknown.
 func ownerOf(pr PullRequest) string {
@@ -144,6 +153,7 @@ type groupNode struct {
 	Value    string      `json:"value"`
 	Count    int         `json:"count"`
 	Children []groupNode `json:"children,omitempty"`
+	colorKey string
 }
 
 // buildGroupNodes buckets prs by the first key, recursing into the rest to
@@ -171,6 +181,39 @@ func buildGroupNodes(prs []PullRequest, keys []groupKey, stripRepoOwner bool) []
 	}
 	sortGroupNodes(nodes, key)
 	return nodes
+}
+
+// resolveGroupAuthorNames replaces author login bucket labels with their
+// configured or plugin-provided display names. Resolution happens after
+// bucketing so distinct GitHub accounts remain distinct even when they share a
+// display name.
+func resolveGroupAuthorNames(
+	nodes []groupNode,
+	keys []groupKey,
+	resolver *AuthorResolver,
+) {
+	if len(keys) == 0 || resolver == nil {
+		return
+	}
+
+	key, rest := keys[0], keys[1:]
+	for i := range nodes {
+		if key == groupAuthor && nodes[i].Value != groupNoneValue {
+			login := nodes[i].Value
+			display := buildAuthorModel(
+				PullRequest{Author: Author{Login: login}},
+				resolver,
+			).Display
+			if display != login {
+				nodes[i].Value = display
+				nodes[i].colorKey = login
+			}
+		}
+		resolveGroupAuthorNames(nodes[i].Children, rest, resolver)
+	}
+
+	// Keep equal-count buckets naturally ordered by what the user sees.
+	sortGroupNodes(nodes, key)
 }
 
 // sortGroupNodes orders buckets by descending count. State and draft buckets
@@ -230,8 +273,10 @@ func renderGroup(
 	asJSON, tty bool,
 	entityColor func(string) color.Color,
 	termWidth, termHeight int,
+	authorResolver *AuthorResolver,
 ) (string, error) {
 	nodes := buildGroupNodes(prs, keys, commonOwner(prs) != "")
+	resolveGroupAuthorNames(nodes, keys, authorResolver)
 
 	if asJSON {
 		data, err := json.MarshalIndent(nodes, "", "  ")
@@ -294,7 +339,11 @@ func groupNodeLabel(
 ) string {
 	var bucketColor color.Color
 	if tty && depth < len(keys) {
-		bucketColor = groupBucketColor(keys[depth], n.Value, entityColor)
+		colorKey := n.Value
+		if n.colorKey != "" {
+			colorKey = n.colorKey
+		}
+		bucketColor = groupBucketColor(keys[depth], colorKey, entityColor)
 	}
 	name := n.Value
 	count := "(" + strconv.Itoa(n.Count) + ")"

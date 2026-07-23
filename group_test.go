@@ -154,11 +154,70 @@ func TestGroupValues_MissingAuthorAndOwner(t *testing.T) {
 }
 
 func TestRenderGroup_Text(t *testing.T) {
-	out, err := renderGroup(groupTestPRs(), []groupKey{groupAuthor}, false, false, nil, 0, 0)
+	out, err := renderGroup(
+		groupTestPRs(), []groupKey{groupAuthor}, false, false, nil, 0, 0, nil,
+	)
 	require.NoError(t, err)
 
 	want := "alice (2)\n" +
 		"bob (1)"
+	require.Equal(t, want, out)
+}
+
+func TestRenderGroup_ResolvesAuthorNames(t *testing.T) {
+	resolver := &AuthorResolver{
+		names: map[string]string{
+			"alice": "Alice Example",
+			"bob":   "Bob Person",
+		},
+	}
+	out, err := renderGroup(
+		groupTestPRs(),
+		[]groupKey{groupRepo, groupAuthor},
+		false,
+		false,
+		nil,
+		0,
+		0,
+		resolver,
+	)
+	require.NoError(t, err)
+
+	want := "api (2)\n" +
+		"├─ Alice Example (1)\n" +
+		"└─ Bob Person (1)\n" +
+		"\n" +
+		"web (1)\n" +
+		"└─ Alice Example (1)"
+	require.Equal(t, want, out)
+}
+
+func TestRenderGroup_JSONResolvesAuthorNames(t *testing.T) {
+	resolver := &AuthorResolver{
+		names: map[string]string{"alice": "Alice Example"},
+	}
+	out, err := renderGroup(
+		groupTestPRs(),
+		[]groupKey{groupAuthor},
+		true,
+		false,
+		nil,
+		0,
+		0,
+		resolver,
+	)
+	require.NoError(t, err)
+
+	want := `[
+  {
+    "value": "Alice Example",
+    "count": 2
+  },
+  {
+    "value": "bob",
+    "count": 1
+  }
+]`
 	require.Equal(t, want, out)
 }
 
@@ -208,7 +267,7 @@ func TestRenderGroup_GridFillsWidth(t *testing.T) {
 			prs = append(prs, PullRequest{Author: Author{Login: a.login}})
 		}
 	}
-	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 0)
+	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 0, nil)
 	require.NoError(t, err)
 
 	want := "alice (4)  bob (3)  carol (2)  dave (1)"
@@ -227,7 +286,7 @@ func TestRenderGroup_FitsHeightStacks(t *testing.T) {
 			prs = append(prs, PullRequest{Author: Author{Login: a.login}})
 		}
 	}
-	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 40)
+	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 40, nil)
 	require.NoError(t, err)
 
 	want := "alice (4)\n" +
@@ -248,7 +307,7 @@ func TestRenderGroup_NoWidthStacks(t *testing.T) {
 			prs = append(prs, PullRequest{Author: Author{Login: a.login}})
 		}
 	}
-	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 0, 0)
+	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil)
 	require.NoError(t, err)
 
 	want := "alice (4)\n" +
@@ -267,6 +326,7 @@ func TestRenderGroup_TextNested(t *testing.T) {
 		nil,
 		0,
 		0,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -290,6 +350,7 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 		nil,
 		30,
 		0,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -300,7 +361,9 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 }
 
 func TestRenderGroup_JSON(t *testing.T) {
-	out, err := renderGroup(groupTestPRs(), []groupKey{groupState}, true, false, nil, 0, 0)
+	out, err := renderGroup(
+		groupTestPRs(), []groupKey{groupState}, true, false, nil, 0, 0, nil,
+	)
 	require.NoError(t, err)
 
 	want := `[
@@ -317,7 +380,7 @@ func TestRenderGroup_JSON(t *testing.T) {
 }
 
 func TestRenderGroup_Empty(t *testing.T) {
-	out, err := renderGroup(nil, []groupKey{groupAuthor}, false, false, nil, 0, 0)
+	out, err := renderGroup(nil, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil)
 	require.NoError(t, err)
 
 	require.Empty(t, out)

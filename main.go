@@ -880,6 +880,7 @@ func runOnce(
 			prl.AssignEntityColor,
 			groupWidth,
 			groupHeight,
+			groupAuthorResolver(keys, cfg),
 		)
 		if gErr != nil {
 			return "", gErr
