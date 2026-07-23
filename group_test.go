@@ -2,10 +2,24 @@ package main
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
+	xansi "github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
 )
+
+func groupTestSearchParams(terms ...searchQueryTerm) *SearchParams {
+	queries := make([]string, len(terms))
+	for i, term := range terms {
+		queries[i] = term.query
+	}
+	return &SearchParams{
+		Query:      strings.Join(queries, " "),
+		queryTerms: terms,
+	}
+}
 
 func groupTestPRs() []PullRequest {
 	return []PullRequest{
@@ -143,6 +157,14 @@ func TestCommonOwner(t *testing.T) {
 	require.Empty(t, commonOwner(mixed))
 }
 
+func TestShouldStripGroupRepoOwner(t *testing.T) {
+	prs := groupTestPRs()
+	require.True(t, shouldStripGroupRepoOwner(prs, nil))
+	require.True(t, shouldStripGroupRepoOwner(prs, []string{"acme"}))
+	require.False(t, shouldStripGroupRepoOwner(prs, []string{"acme", "other"}))
+	require.True(t, shouldStripGroupRepoOwner(prs, []string{"acme", "!other"}))
+}
+
 func TestGroupValues_MissingAuthorAndOwner(t *testing.T) {
 	pr := PullRequest{}
 	require.Equal(t, []string{groupNoneValue}, groupValues(pr, groupAuthor, false))
@@ -153,9 +175,186 @@ func TestGroupValues_MissingAuthorAndOwner(t *testing.T) {
 	require.Equal(t, []string{"api"}, groupValues(owned, groupRepo, true))
 }
 
+func TestGroupSearchQualifier(t *testing.T) {
+	repoPR := PullRequest{
+		Repository: Repository{Name: "api", NameWithOwner: "acme/api"},
+	}
+	tests := []struct {
+		name  string
+		key   groupKey
+		value string
+		prs   []PullRequest
+		want  string
+	}{
+		{"author", groupAuthor, "alice", nil, "author:alice"},
+		{"missing author", groupAuthor, groupNoneValue, nil, ""},
+		{"short repo", groupRepo, "api", []PullRequest{repoPR}, "repo:acme/api"},
+		{"owner", groupOwner, "acme", nil, "user:acme"},
+		{"merged", groupState, valueMerged, nil, "is:merged"},
+		{"open", groupState, valueOpen, nil, "state:open"},
+		{"closed", groupState, valueClosed, nil, "state:closed is:unmerged"},
+		{"draft", groupDraft, valueDraft, nil, "draft:true"},
+		{"ready", groupDraft, valueReady, nil, "draft:false"},
+		{"label", groupLabel, "help wanted", nil, `label:"help wanted"`},
+		{"missing label", groupLabel, groupNoneValue, nil, "no:label"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, groupSearchQualifier(tt.key, tt.value, tt.prs))
+		})
+	}
+}
+
+func TestGroupSearchQuery_ReplacesBroadAuthorScope(t *testing.T) {
+	params := groupTestSearchParams(
+		searchQueryTerm{query: "is:pr"},
+		searchQueryTerm{query: "archived:false"},
+		searchQueryTerm{query: "user:acme", key: groupOwner, grouped: true},
+		searchQueryTerm{query: "created:>=2026-01-01"},
+		searchQueryTerm{
+			query:   "(author:alice OR author:bob OR author:carol)",
+			key:     groupAuthor,
+			grouped: true,
+		},
+	)
+
+	repoPath := []groupSearchFilter{{
+		key:   groupRepo,
+		query: "repo:acme/api",
+	}}
+	require.Equal(
+		t,
+		"is:pr archived:false user:acme created:>=2026-01-01 "+
+			"repo:acme/api (author:alice OR author:bob OR author:carol)",
+		params.groupSearchQuery(repoPath),
+	)
+
+	authorPath := slices.Clone(repoPath)
+	authorPath = append(authorPath, groupSearchFilter{
+		key:   groupAuthor,
+		query: "author:alice",
+	})
+	require.Equal(
+		t,
+		"is:pr archived:false user:acme created:>=2026-01-01 "+
+			"repo:acme/api author:alice",
+		params.groupSearchQuery(authorPath),
+	)
+}
+
+func TestBuildGroupNodesWithLinks_AccumulatesAncestorFilters(t *testing.T) {
+	params := groupTestSearchParams(
+		searchQueryTerm{query: "is:pr"},
+		searchQueryTerm{query: "archived:false"},
+	)
+	baseQuery := params.Query
+	prs := groupTestPRs()
+	nodes := buildGroupNodesWithLinks(
+		prs, []groupKey{groupRepo, groupAuthor, groupState}, true, params,
+	)
+
+	api := nodes[0]
+	require.Equal(t, "api", api.Value)
+	require.Equal(t, githubRepoPullsURL("acme/api", baseQuery), api.url)
+
+	alice := api.Children[0]
+	require.Equal(t, "alice", alice.Value)
+	require.Equal(
+		t,
+		githubRepoPullsURL("acme/api", baseQuery+" author:alice"),
+		alice.url,
+	)
+	require.Equal(
+		t,
+		githubRepoPullsURL(
+			"acme/api",
+			baseQuery+" author:alice state:open",
+		),
+		alice.Children[0].url,
+	)
+
+	bob := api.Children[1]
+	require.Equal(t, "bob", bob.Value)
+	require.Equal(
+		t,
+		githubRepoPullsURL(
+			"acme/api",
+			baseQuery+" author:bob is:merged",
+		),
+		bob.Children[0].url,
+	)
+
+	nodes = buildGroupNodesWithLinks(
+		prs, []groupKey{groupRepo, groupState, groupAuthor}, true, params,
+	)
+	api = nodes[0]
+	merged := api.Children[0]
+	require.Equal(t, valueMerged, merged.Value)
+	require.Equal(
+		t,
+		githubRepoPullsURL("acme/api", baseQuery+" is:merged"),
+		merged.url,
+	)
+	require.Equal(t, "bob", merged.Children[0].Value)
+	require.Equal(
+		t,
+		githubRepoPullsURL(
+			"acme/api",
+			baseQuery+" is:merged author:bob",
+		),
+		merged.Children[0].url,
+	)
+}
+
+func TestGroupNodeLabel_HyperlinksNestedSearch(t *testing.T) {
+	params := groupTestSearchParams(
+		searchQueryTerm{query: "is:pr"},
+		searchQueryTerm{query: "archived:false"},
+	)
+	nodes := buildGroupNodesWithLinks(
+		groupTestPRs(),
+		[]groupKey{groupRepo, groupAuthor, groupState},
+		true,
+		params,
+	)
+	merged := nodes[0].Children[1].Children[0]
+	wantURL := githubRepoPullsURL(
+		"acme/api",
+		params.Query+" author:bob is:merged",
+	)
+	require.Equal(t, wantURL, merged.url)
+
+	want := xansi.Force().Hyperlink(
+		wantURL,
+		styleGroupName(valueMerged, colorMerged),
+	) + " " + styleDim.Render("(1)")
+	require.Equal(
+		t,
+		want,
+		groupNodeLabel(
+			merged,
+			2,
+			[]groupKey{groupRepo, groupAuthor, groupState},
+			true,
+			nil,
+		),
+	)
+	require.Equal(
+		t,
+		"merged (1)",
+		groupNodeLabel(
+			merged,
+			2,
+			[]groupKey{groupRepo, groupAuthor, groupState},
+			false,
+			nil,
+		),
+	)
+}
+
 func TestRenderGroup_Text(t *testing.T) {
 	out, err := renderGroup(
-		groupTestPRs(), []groupKey{groupAuthor}, false, false, nil, 0, 0, nil,
+		groupTestPRs(), []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true,
 	)
 	require.NoError(t, err)
 
@@ -180,6 +379,8 @@ func TestRenderGroup_ResolvesAuthorNames(t *testing.T) {
 		0,
 		0,
 		resolver,
+		nil,
+		true,
 	)
 	require.NoError(t, err)
 
@@ -205,6 +406,8 @@ func TestRenderGroup_JSONResolvesAuthorNames(t *testing.T) {
 		0,
 		0,
 		resolver,
+		nil,
+		true,
 	)
 	require.NoError(t, err)
 
@@ -267,7 +470,9 @@ func TestRenderGroup_GridFillsWidth(t *testing.T) {
 			prs = append(prs, PullRequest{Author: Author{Login: a.login}})
 		}
 	}
-	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 0, nil)
+	out, err := renderGroup(
+		prs, []groupKey{groupAuthor}, false, false, nil, 80, 0, nil, nil, true,
+	)
 	require.NoError(t, err)
 
 	want := "alice (4)  bob (3)  carol (2)  dave (1)"
@@ -286,7 +491,9 @@ func TestRenderGroup_FitsHeightStacks(t *testing.T) {
 			prs = append(prs, PullRequest{Author: Author{Login: a.login}})
 		}
 	}
-	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 40, nil)
+	out, err := renderGroup(
+		prs, []groupKey{groupAuthor}, false, false, nil, 80, 40, nil, nil, true,
+	)
 	require.NoError(t, err)
 
 	want := "alice (4)\n" +
@@ -307,7 +514,9 @@ func TestRenderGroup_NoWidthStacks(t *testing.T) {
 			prs = append(prs, PullRequest{Author: Author{Login: a.login}})
 		}
 	}
-	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil)
+	out, err := renderGroup(
+		prs, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true,
+	)
 	require.NoError(t, err)
 
 	want := "alice (4)\n" +
@@ -327,6 +536,8 @@ func TestRenderGroup_TextNested(t *testing.T) {
 		0,
 		0,
 		nil,
+		nil,
+		true,
 	)
 	require.NoError(t, err)
 
@@ -351,6 +562,8 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 		30,
 		0,
 		nil,
+		nil,
+		true,
 	)
 	require.NoError(t, err)
 
@@ -362,7 +575,7 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 
 func TestRenderGroup_JSON(t *testing.T) {
 	out, err := renderGroup(
-		groupTestPRs(), []groupKey{groupState}, true, false, nil, 0, 0, nil,
+		groupTestPRs(), []groupKey{groupState}, true, false, nil, 0, 0, nil, nil, true,
 	)
 	require.NoError(t, err)
 
@@ -380,7 +593,9 @@ func TestRenderGroup_JSON(t *testing.T) {
 }
 
 func TestRenderGroup_Empty(t *testing.T) {
-	out, err := renderGroup(nil, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil)
+	out, err := renderGroup(
+		nil, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true,
+	)
 	require.NoError(t, err)
 
 	require.Empty(t, out)

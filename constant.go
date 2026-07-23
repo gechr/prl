@@ -32,6 +32,7 @@ const (
 	valueDesc     = "desc"
 	valueDraft    = "draft"
 	valueHide     = "hide"
+	valueLabel    = "label"
 	valueMerged   = "merged"
 	valueName     = "name"
 	valueOpen     = "open"

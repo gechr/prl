@@ -44,7 +44,7 @@ func parseGroupKey(s string) (groupKey, bool) {
 		return groupState, true
 	case valueDraft, "d":
 		return groupDraft, true
-	case "label", colLabels, "l":
+	case valueLabel, colLabels, "l":
 		return groupLabel, true
 	default:
 		return 0, false
@@ -64,7 +64,7 @@ func (k groupKey) String() string {
 	case groupDraft:
 		return valueDraft
 	case groupLabel:
-		return "label"
+		return valueLabel
 	default:
 		return "?"
 	}
@@ -102,6 +102,14 @@ func commonOwner(prs []PullRequest) string {
 		}
 	}
 	return owner
+}
+
+// shouldStripGroupRepoOwner reports whether repo buckets can safely use bare
+// names. Multiple positive owner scopes stay qualified even when the fetched
+// sample happens to contain results from only one of them.
+func shouldStripGroupRepoOwner(prs []PullRequest, owners []string) bool {
+	positive, _ := splitNegated(filterAllValue(owners))
+	return len(positive) <= 1 && commonOwner(prs) != ""
 }
 
 // groupValues returns the bucket value(s) a PR contributes for the given key.
@@ -154,11 +162,50 @@ type groupNode struct {
 	Count    int         `json:"count"`
 	Children []groupNode `json:"children,omitempty"`
 	colorKey string
+	url      string
+}
+
+type groupSearchFilter struct {
+	key   groupKey
+	query string
+	repo  string
 }
 
 // buildGroupNodes buckets prs by the first key, recursing into the rest to
 // produce a nested breakdown. Buckets are sorted by count (desc) then value.
 func buildGroupNodes(prs []PullRequest, keys []groupKey, stripRepoOwner bool) []groupNode {
+	return buildGroupNodesRecursive(prs, keys, stripRepoOwner, nil, nil, false)
+}
+
+// buildGroupNodesWithLinks builds the same breakdown while attaching a GitHub
+// search URL for each bucket's complete ancestor path.
+func buildGroupNodesWithLinks(
+	prs []PullRequest,
+	keys []groupKey,
+	stripRepoOwner bool,
+	params *SearchParams,
+) []groupNode {
+	return buildGroupNodesRecursive(
+		prs,
+		keys,
+		stripRepoOwner,
+		params,
+		nil,
+		params != nil && params.Query != "",
+	)
+}
+
+// buildGroupNodesRecursive carries the accumulated search path through nested
+// buckets. A branch becomes unlinkable when one of its values cannot be
+// expressed faithfully as a GitHub search qualifier.
+func buildGroupNodesRecursive(
+	prs []PullRequest,
+	keys []groupKey,
+	stripRepoOwner bool,
+	params *SearchParams,
+	path []groupSearchFilter,
+	linkable bool,
+) []groupNode {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -173,14 +220,113 @@ func buildGroupNodes(prs []PullRequest, keys []groupKey, stripRepoOwner bool) []
 
 	nodes := make([]groupNode, 0, len(buckets))
 	for value, sub := range buckets {
+		nodePath := path
+		nodeLinkable := linkable
+		if nodeLinkable {
+			qualifier := groupSearchQualifier(key, value, sub)
+			nodeLinkable = qualifier != ""
+			if nodeLinkable {
+				filter := groupSearchFilter{
+					key:   key,
+					query: qualifier,
+				}
+				if key == groupRepo {
+					filter.repo = groupSearchRepo(value, sub)
+				}
+				nodePath = append(slices.Clone(path), filter)
+			}
+		}
+
+		nodeURL := ""
+		if nodeLinkable {
+			nodeURL = groupSearchURL(params, nodePath)
+		}
 		nodes = append(nodes, groupNode{
-			Value:    value,
-			Count:    len(sub),
-			Children: buildGroupNodes(sub, rest, stripRepoOwner),
+			Value: value,
+			Count: len(sub),
+			Children: buildGroupNodesRecursive(
+				sub,
+				rest,
+				stripRepoOwner,
+				params,
+				nodePath,
+				nodeLinkable,
+			),
+			url: nodeURL,
 		})
 	}
 	sortGroupNodes(nodes, key)
 	return nodes
+}
+
+func groupSearchURL(params *SearchParams, path []groupSearchFilter) string {
+	for _, filter := range slices.Backward(path) {
+		if filter.repo != "" {
+			return githubRepoPullsURL(
+				filter.repo,
+				params.groupSearchQueryScoped(path, true),
+			)
+		}
+	}
+	for _, term := range params.queryTerms {
+		if term.repo != "" {
+			return githubRepoPullsURL(
+				term.repo,
+				params.groupSearchQueryScoped(path, true),
+			)
+		}
+	}
+	return githubSearchURL(params.groupSearchQuery(path))
+}
+
+// groupSearchQualifier maps a bucket to the GitHub search expression that
+// selects it. prs supplies the unshortened repository identity when the
+// displayed repo bucket omits its common owner.
+func groupSearchQualifier(key groupKey, value string, prs []PullRequest) string {
+	switch key {
+	case groupAuthor:
+		if value != groupNoneValue {
+			return "author:" + value
+		}
+	case groupRepo:
+		repo := groupSearchRepo(value, prs)
+		if repo != groupNoneValue {
+			return "repo:" + repo
+		}
+	case groupOwner:
+		if value != groupNoneValue {
+			return "user:" + value
+		}
+	case groupState:
+		switch value {
+		case valueMerged:
+			return "is:merged"
+		case valueOpen:
+			return "state:open"
+		case valueClosed:
+			return "state:closed is:unmerged"
+		}
+	case groupDraft:
+		switch value {
+		case valueDraft:
+			return "draft:true"
+		case valueReady:
+			return "draft:false"
+		}
+	case groupLabel:
+		if value == groupNoneValue {
+			return "no:label"
+		}
+		return valueLabel + ":" + strconv.Quote(value)
+	}
+	return ""
+}
+
+func groupSearchRepo(value string, prs []PullRequest) string {
+	if len(prs) > 0 && prs[0].Repository.NameWithOwner != "" {
+		return prs[0].Repository.NameWithOwner
+	}
+	return value
 }
 
 // resolveGroupAuthorNames replaces author login bucket labels with their
@@ -266,7 +412,8 @@ const (
 // "name (count)"; on a TTY the count is dim, headers are bold, and every
 // bucket except a top-level header is coloured - state and draft buckets with
 // prl's semantic state colours, the rest via entityColor (nil disables entity
-// colour).
+// colour). On a TTY, every exactly representable bucket links to a GitHub
+// search for its complete ancestor path.
 func renderGroup(
 	prs []PullRequest,
 	keys []groupKey,
@@ -274,8 +421,15 @@ func renderGroup(
 	entityColor func(string) color.Color,
 	termWidth, termHeight int,
 	authorResolver *AuthorResolver,
+	params *SearchParams,
+	stripRepoOwner bool,
 ) (string, error) {
-	nodes := buildGroupNodes(prs, keys, commonOwner(prs) != "")
+	nodes := buildGroupNodesWithLinks(
+		prs,
+		keys,
+		stripRepoOwner,
+		params,
+	)
 	resolveGroupAuthorNames(nodes, keys, authorResolver)
 
 	if asJSON {
@@ -337,27 +491,32 @@ func groupNodeLabel(
 	tty bool,
 	entityColor func(string) color.Color,
 ) string {
+	name := n.Value
+	count := "(" + strconv.Itoa(n.Count) + ")"
+	if !tty {
+		return name + " " + count
+	}
+
 	var bucketColor color.Color
-	if tty && depth < len(keys) {
+	if depth < len(keys) {
 		colorKey := n.Value
 		if n.colorKey != "" {
 			colorKey = n.colorKey
 		}
 		bucketColor = groupBucketColor(keys[depth], colorKey, entityColor)
 	}
-	name := n.Value
-	count := "(" + strconv.Itoa(n.Count) + ")"
-	if tty {
-		if len(n.Children) > 0 {
-			style := styleText.Bold(true)
-			if depth > 0 && bucketColor != nil { // top-level headers stay plain
-				style = lg.NewStyle().Bold(true).Foreground(bucketColor)
-			}
-			name = style.Render(name)
-		} else {
-			name = styleGroupName(name, bucketColor)
+	if len(n.Children) > 0 {
+		style := styleText.Bold(true)
+		if depth > 0 && bucketColor != nil { // top-level headers stay plain
+			style = lg.NewStyle().Bold(true).Foreground(bucketColor)
 		}
-		count = styleDim.Render(count)
+		name = style.Render(name)
+	} else {
+		name = styleGroupName(name, bucketColor)
+	}
+	count = styleDim.Render(count)
+	if n.url != "" {
+		name = xansi.Force().Hyperlink(n.url, name)
 	}
 	return name + " " + count
 }

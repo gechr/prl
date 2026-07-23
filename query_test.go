@@ -362,6 +362,14 @@ func TestBuildSearchQuery_MergesAuthorAndTeamWithoutDuplicates(t *testing.T) {
 		"is:pr archived:false state:open (author:user-1 OR author:user-2)",
 		params.Query,
 	)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open author:user-1",
+		params.groupSearchQuery([]groupSearchFilter{{
+			key:   groupAuthor,
+			query: "author:user-1",
+		}}),
+	)
 }
 
 func TestBuildSearchQuery_UsesOwnerQualifier(t *testing.T) {
@@ -538,6 +546,14 @@ func TestBuildSearchQuery_NegatedRepo(t *testing.T) {
 	}, &Config{})
 	require.NoError(t, err)
 	require.Equal(t, "is:pr archived:false state:open repo:acme/foo -repo:acme/bar", params.Query)
+	require.Equal(
+		t,
+		githubRepoPullsURL("acme/foo", "is:pr archived:false state:open author:alice"),
+		groupSearchURL(params, []groupSearchFilter{{
+			key:   groupAuthor,
+			query: "author:alice",
+		}}),
+	)
 }
 
 func TestBuildSearchQuery_RepoCancellationUsesQualifiedNames(t *testing.T) {

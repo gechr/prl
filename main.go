@@ -881,6 +881,8 @@ func runOnce(
 			groupWidth,
 			groupHeight,
 			groupAuthorResolver(keys, cfg),
+			params,
+			shouldStripGroupRepoOwner(prs, cli.Owner.Values),
 		)
 		if gErr != nil {
 			return "", gErr

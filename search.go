@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,24 +20,104 @@ type SearchParams struct {
 	Order      string
 	PerPage    int
 	TotalLimit int
+	queryTerms []searchQueryTerm
+}
+
+// searchQueryTerm retains the dimension that produced a generated qualifier so
+// group links can replace broad scopes without parsing the rendered query.
+type searchQueryTerm struct {
+	query   string
+	key     groupKey
+	grouped bool
+	repo    string
+}
+
+func (p *SearchParams) groupSearchQuery(path []groupSearchFilter) string {
+	return p.groupSearchQueryScoped(path, false)
+}
+
+func (p *SearchParams) groupSearchQueryScoped(
+	path []groupSearchFilter,
+	repoScoped bool,
+) string {
+	replaced := make(map[groupKey]bool, len(path))
+	var pathQueries []string
+	for _, filter := range path {
+		if filter.key != groupLabel {
+			replaced[filter.key] = true
+		}
+		if !repoScoped || (filter.key != groupRepo && filter.key != groupOwner) {
+			pathQueries = append(pathQueries, filter.query)
+		}
+	}
+	if repoScoped {
+		replaced[groupRepo] = true
+		replaced[groupOwner] = true
+	}
+
+	terms := p.queryTerms
+	if len(terms) == 0 && p.Query != "" {
+		terms = []searchQueryTerm{{query: p.Query}}
+	}
+	kept := xslices.Filter(terms, func(term searchQueryTerm) bool {
+		return !term.grouped || !replaced[term.key]
+	})
+
+	// Insert exact path qualifiers before any remaining generated OR scope.
+	// This preserves the query shape GitHub already accepts from buildSearchQuery.
+	insertAt := len(kept)
+	for i, term := range kept {
+		if strings.HasPrefix(term.query, "(") && strings.Contains(term.query, " OR ") {
+			insertAt = i
+			break
+		}
+	}
+	queries := make([]string, 0, len(kept)+len(pathQueries))
+	queries = append(queries, xslices.Map(kept[:insertAt], func(term searchQueryTerm) string {
+		return term.query
+	})...)
+	queries = append(queries, pathQueries...)
+	queries = append(queries, xslices.Map(kept[insertAt:], func(term searchQueryTerm) string {
+		return term.query
+	})...)
+	return strings.Join(queries, " ")
 }
 
 // buildSearchQuery constructs a GitHub search query and parameters.
 func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
-	var qualifiers []string
-	qualifiers = append(qualifiers, "is:pr")
+	var terms []searchQueryTerm
+	add := func(queries ...string) {
+		for _, query := range queries {
+			if query != "" {
+				terms = append(terms, searchQueryTerm{query: query})
+			}
+		}
+	}
+	addGroup := func(key groupKey, queries ...string) {
+		for _, query := range queries {
+			if query != "" {
+				terms = append(terms, searchQueryTerm{
+					query:   query,
+					key:     key,
+					grouped: true,
+				})
+			}
+		}
+	}
+
+	add("is:pr")
 	if !cli.Archived {
-		qualifiers = append(qualifiers, "archived:false")
+		add("archived:false")
 	}
 
 	state := cli.PRState()
 	switch state {
 	case StateOpen, StateReady:
-		qualifiers = append(qualifiers, "state:open")
+		addGroup(groupState, "state:open")
 	case StateClosed:
-		qualifiers = append(qualifiers, "state:closed")
+		addGroup(groupState, "state:closed")
 	case StateMerged:
-		qualifiers = append(qualifiers, "is:merged")
+		addGroup(groupState, "is:merged")
 	case StateAll:
 		// no state filter
 	}
@@ -66,10 +147,13 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		negativeRepos = xslices.Map(negativeRepos, qualify)
 		positiveRepos, negativeRepos = removeOpposingValues(positiveRepos, negativeRepos)
 		if q := buildORQualifier("repo", positiveRepos); q != "" {
-			qualifiers = append(qualifiers, q)
+			addGroup(groupRepo, q)
+			if len(positiveRepos) == 1 && strings.Contains(positiveRepos[0], "/") {
+				terms[len(terms)-1].repo = positiveRepos[0]
+			}
 		}
 		for _, r := range negativeRepos {
-			qualifiers = append(qualifiers, "-repo:"+r)
+			addGroup(groupRepo, "-repo:"+r)
 		}
 	}
 
@@ -78,15 +162,15 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// still needs the owner qualifier, or the search is unbounded.
 	if len(positiveRepos) == 0 {
 		if q := buildOwnerQualifier(positiveOwners); q != "" {
-			qualifiers = append(qualifiers, q)
+			addGroup(groupOwner, q)
 		}
 	}
 	// Unlike a positive owner, an exclusion remains meaningful when explicit
 	// positive repositories are present (and may deliberately make the query empty).
-	qualifiers = append(qualifiers, buildExcludedOwnerQualifiers(negativeOwners)...)
+	addGroup(groupOwner, buildExcludedOwnerQualifiers(negativeOwners)...)
 
 	// Ignored owners (config-only, always applied)
-	qualifiers = append(qualifiers, buildExcludedOwnerQualifiers(cfg.IgnoredOwners)...)
+	add(buildExcludedOwnerQualifiers(cfg.IgnoredOwners)...)
 
 	// Date filters
 	if cli.Created != "" {
@@ -94,21 +178,21 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		if dErr != nil {
 			return nil, fmt.Errorf("invalid --created value: %w", dErr)
 		}
-		qualifiers = append(qualifiers, "created:"+d)
+		add("created:" + d)
 	}
 	if cli.Updated != "" {
 		d, dErr := parseDate(cli.Updated)
 		if dErr != nil {
 			return nil, fmt.Errorf("invalid --updated value: %w", dErr)
 		}
-		qualifiers = append(qualifiers, "updated:"+d)
+		add("updated:" + d)
 	}
 	if cli.Merged != "" {
 		d, dErr := parseDate(cli.Merged)
 		if dErr != nil {
 			return nil, fmt.Errorf("invalid --merged value: %w", dErr)
 		}
-		qualifiers = append(qualifiers, "merged:"+d)
+		add("merged:" + d)
 	}
 
 	// Review filter - review:required only makes sense for open PRs (it means
@@ -120,7 +204,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 			review = valueReviewFilterRequired
 		}
 		if review != valueReviewFilterRequired || state == StateOpen || state == StateReady {
-			qualifiers = append(qualifiers, "review:"+review)
+			add("review:" + review)
 		}
 	}
 
@@ -133,15 +217,15 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 
 	// Commenter filter
 	commenterVals := filterAllValue(cli.Commenter.Values)
-	qualifiers = append(qualifiers, buildFilterQualifiers("commenter", commenterVals)...)
+	add(buildFilterQualifiers("commenter", commenterVals)...)
 
 	// Involves filter
 	involvesVals := filterAllValue(cli.Involves.Values)
-	qualifiers = append(qualifiers, buildFilterQualifiers("involves", involvesVals)...)
+	add(buildFilterQualifiers("involves", involvesVals)...)
 
 	// Reviewed-by filter
 	reviewedByVals := filterAllValue(cli.ReviewedBy.Values)
-	qualifiers = append(qualifiers, buildFilterQualifiers("reviewed-by", reviewedByVals)...)
+	add(buildFilterQualifiers("reviewed-by", reviewedByVals)...)
 
 	// Review-requested: split into user and team while preserving negation.
 	reqVals := filterAllValue(cli.ReviewRequested.Values)
@@ -161,12 +245,10 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 				userReqs = append(userReqs, prefix+v)
 			}
 		}
-		qualifiers = append(
-			qualifiers,
+		add(
 			buildFilterQualifiers("user-review-requested", userReqs)...,
 		)
-		qualifiers = append(
-			qualifiers,
+		add(
 			buildFilterQualifiers("team-review-requested", teamReqs)...,
 		)
 	}
@@ -198,10 +280,10 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	}
 	authorPositive, authorNegative = removeOpposingValues(authorPositive, authorNegative)
 	if q := buildORQualifier("author", authorPositive); q != "" {
-		qualifiers = append(qualifiers, q)
+		addGroup(groupAuthor, q)
 	}
 	for _, a := range authorNegative {
-		qualifiers = append(qualifiers, "-author:"+a)
+		addGroup(groupAuthor, "-author:"+a)
 	}
 
 	// Topic filter: resolve repos and add as repo OR filter
@@ -210,44 +292,47 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		if err != nil {
 			return nil, err
 		}
-		qualifiers = append(qualifiers, buildORQualifier("repo", qualifiedRepos))
+		addGroup(groupRepo, buildORQualifier("repo", qualifiedRepos))
+		if len(qualifiedRepos) == 1 && strings.Contains(qualifiedRepos[0], "/") {
+			terms[len(terms)-1].repo = qualifiedRepos[0]
+		}
 	}
 
 	// Draft filter
 	if cli.Draft != nil {
 		if *cli.Draft {
-			qualifiers = append(qualifiers, "draft:true")
+			addGroup(groupDraft, "draft:true")
 		} else {
-			qualifiers = append(qualifiers, "draft:false")
+			addGroup(groupDraft, "draft:false")
 		}
 	}
 
 	// Comments filter
 	if cli.Comments != "" {
-		qualifiers = append(qualifiers, "comments:"+cli.Comments)
+		add("comments:" + cli.Comments)
 	}
 
 	// Language filter
 	if cli.Language != "" {
-		qualifiers = append(qualifiers, "language:"+cli.Language)
+		add("language:" + cli.Language)
 	}
 
 	// Explicit filter values
-	qualifiers = append(qualifiers, cli.Filter...)
+	add(cli.Filter...)
 
 	// Approve implicit filter: -review:approved when --approve is used and --review is NOT set
 	if cli.Approve && cli.Review == "" {
-		qualifiers = append(qualifiers, "-review:approved")
+		add("-review:approved")
 		clog.Debug().Msg("--approve implied -review:approved filter")
 	}
 
 	// Unsubscribe implicit filters: default to --requested=@me and exclude own PRs.
 	if cli.Unsubscribe {
 		if len(reqVals) == 0 {
-			qualifiers = append(qualifiers, "user-review-requested:@me")
+			add("user-review-requested:@me")
 			clog.Debug().Msg("--unsubscribe implied --requested=@me")
 		}
-		qualifiers = append(qualifiers, "-author:@me")
+		addGroup(groupAuthor, "-author:@me")
 		clog.Debug().Msg("--unsubscribe implied -author:@me filter")
 	}
 
@@ -256,7 +341,7 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// mark-ready uses draft:true to find draft PRs that can be marked as ready for review.
 	// force-merge uses draft:false because draft PRs cannot be merged.
 	if cli.MarkDraft || cli.ForceMerge {
-		qualifiers = append(qualifiers, "draft:false")
+		addGroup(groupDraft, "draft:false")
 		if cli.MarkDraft {
 			clog.Debug().Msg("--mark-draft implied --no-draft filter")
 		} else {
@@ -264,16 +349,16 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		}
 	}
 	if cli.MarkReady {
-		qualifiers = append(qualifiers, "draft:true")
+		addGroup(groupDraft, "draft:true")
 		clog.Debug().Msg("--mark-ready implied --draft filter")
 	}
 
 	// Match (only when there's a query string)
 	query := cli.QueryString()
 	if query != "" {
-		qualifiers = append(qualifiers, query)
+		add(query)
 		if cli.Match != "" {
-			qualifiers = append(qualifiers, "in:"+cli.Match)
+			add("in:" + cli.Match)
 		}
 	}
 
@@ -301,11 +386,14 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	perPage := min(limit, maxPerPage)
 
 	return &SearchParams{
-		Query:      strings.Join(qualifiers, " "),
+		Query: strings.Join(xslices.Map(terms, func(term searchQueryTerm) string {
+			return term.query
+		}), " "),
 		Sort:       sortField,
 		Order:      order,
 		PerPage:    perPage,
 		TotalLimit: limit,
+		queryTerms: slices.Clone(terms),
 	}, nil
 }
 
@@ -738,8 +826,22 @@ func executeCount(rest *api.RESTClient, params *SearchParams) (int, error) {
 
 // executeWebSearch opens the GitHub search in the browser.
 func executeWebSearch(params *SearchParams) error {
-	u := "https://github.com/search?q=" + url.QueryEscape(params.Query) + "&type=pullrequests"
-	return openBrowser(u)
+	return openBrowser(githubSearchURL(params.Query))
+}
+
+// githubSearchURL returns the GitHub pull-request search page for query.
+func githubSearchURL(query string) string {
+	return "https://github.com/search?q=" + url.QueryEscape(query) + "&type=pullrequests"
+}
+
+// githubRepoPullsURL returns a repository-local pull-request search page.
+func githubRepoPullsURL(repo, query string) string {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return githubSearchURL(query)
+	}
+	return "https://github.com/" + url.PathEscape(owner) + "/" + url.PathEscape(name) +
+		"/pulls?q=" + url.QueryEscape(query)
 }
 
 // buildDryRunOutput returns the search query string for dry-run display.
