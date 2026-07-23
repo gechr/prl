@@ -487,7 +487,7 @@ func TestBuildSearchQuery_NegatedTeamCancelsOverlappingPositiveAuthor(t *testing
 	)
 }
 
-func TestBuildSearchQuery_MixedTeamsKeepDefaultAuthorScope(t *testing.T) {
+func TestBuildSearchQuery_MixedTeamsOverrideDefaultAuthorScope(t *testing.T) {
 	dir := t.TempDir()
 	pluginPath := writeExecutable(t, dir, "prl-plugin-example", "#!/bin/sh\nexit 1\n")
 	resetPluginCacheForTest(t)
@@ -508,7 +508,7 @@ func TestBuildSearchQuery_MixedTeamsKeepDefaultAuthorScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(
 		t,
-		"is:pr archived:false state:open (author:@me OR author:alice) -author:bob",
+		"is:pr archived:false state:open author:alice -author:bob",
 		params.Query,
 	)
 }

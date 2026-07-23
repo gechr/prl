@@ -452,15 +452,13 @@ func (c *CLI) Normalize(cfg *Config) {
 
 	// Author defaults
 	// User-oriented filters imply --author=any (don't restrict to self)
-	positiveTeams, negativeTeams := splitNegated(c.Team.Values)
-	onlyNegatedTeams := len(positiveTeams) == 0 && len(negativeTeams) > 0
 	hasUserFilter := len(c.ReviewRequested.Values) > 0 ||
 		len(c.Involves.Values) > 0 ||
 		len(c.Commenter.Values) > 0 ||
 		len(c.ReviewedBy.Values) > 0 ||
 		len(c.ClosedBy.Values) > 0 ||
 		len(c.MergedBy.Values) > 0 ||
-		onlyNegatedTeams ||
+		len(c.Team.Values) > 0 ||
 		c.Unsubscribe ||
 		c.Approve
 	if c.Author == nil && hasUserFilter {

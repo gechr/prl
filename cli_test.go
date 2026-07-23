@@ -15,18 +15,18 @@ func TestNormalize_NegatedTeamImpliesAuthorAny(t *testing.T) {
 	require.Equal(t, []string{valueAll}, c.Author.Values)
 }
 
-func TestNormalize_PositiveTeamDoesNotImplyAuthorAny(t *testing.T) {
+func TestNormalize_PositiveTeamOverridesDefaultAuthors(t *testing.T) {
 	c := &CLI{Team: CSVFlag{Values: []string{"ops"}}}
 	c.Normalize(&Config{Default: Defaults{Authors: []string{"@me"}}})
 	require.NotNil(t, c.Author)
-	require.Equal(t, []string{"@me"}, c.Author.Values)
+	require.Equal(t, []string{valueAll}, c.Author.Values)
 }
 
-func TestNormalize_MixedTeamsDoNotDiscardDefaultAuthors(t *testing.T) {
+func TestNormalize_MixedTeamsOverrideDefaultAuthors(t *testing.T) {
 	c := &CLI{Team: CSVFlag{Values: []string{"ops", "!frontend"}}}
 	c.Normalize(&Config{Default: Defaults{Authors: []string{"@me"}}})
 	require.NotNil(t, c.Author)
-	require.Equal(t, []string{"@me"}, c.Author.Values)
+	require.Equal(t, []string{valueAll}, c.Author.Values)
 }
 
 func TestNormalize_PreservesNegationWhenResolvingTeamAlias(t *testing.T) {
