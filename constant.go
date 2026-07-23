@@ -30,6 +30,7 @@ const (
 	valueCreated  = "created"
 	valueDeleted  = "deleted"
 	valueDesc     = "desc"
+	valueDraft    = "draft"
 	valueHide     = "hide"
 	valueMerged   = "merged"
 	valueName     = "name"
@@ -140,8 +141,12 @@ const (
 	defaultLimit   = 30
 	maxConcurrency = 10
 	maxPerPage     = 100
-	maxTitleLen    = 100
-	daysPerWeek    = 7
+	// maxGroupResults caps how many PRs a --group breakdown fetches when
+	// no explicit --limit is given. GitHub's search API returns at most 1000
+	// results, so paging beyond this is pointless.
+	maxGroupResults = 1000
+	maxTitleLen     = 100
+	daysPerWeek     = 7
 )
 
 // GitHub API pacing and rate-limit backoff.
@@ -328,7 +333,7 @@ const (
 	tuiHelpDismiss      = "dismiss"
 	tuiHelpFilter       = "filter"
 	tuiHelpHelp         = "help"
-	tuiHelpMarkDraft    = "draft"
+	tuiHelpMarkDraft    = valueDraft
 	tuiHelpMarkReady    = "ready"
 	tuiHelpMerge        = "merge"
 	tuiHelpNext         = "next"

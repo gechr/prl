@@ -79,12 +79,13 @@ type CLI struct {
 	Yes          bool   `help:"Skip interactive confirmation prompt"                            clib:"terse='Skip confirmation',group='Interactive/2'"                      short:"y"`
 
 	// Action flags
-	Clone bool `help:"Clone unique repos from results (parallel)" clib:"terse='Clone repos',group='Actions/1'"`
-	Copy  bool `help:"Copy output to clipboard"                   clib:"terse='Copy clipboard',group='Actions/1'"  short:"C"`
-	Count bool `help:"Print total result count"                   clib:"terse='Print count',group='Actions/1'"     short:"N"`
-	Dry   bool `help:"Show search query without executing"        clib:"terse='Dry run',group='Actions/1'"         short:"n" aliases:"dry-run,dryrun"`
-	Open  bool `help:"Open each PR in browser"                    clib:"terse='Open in browser',group='Actions/1'" short:"P"`
-	Web   bool `help:"Open GitHub search in browser"              clib:"terse='Web search',group='Actions/1'"      short:"w"`
+	Clone bool    `help:"Clone unique repos from results (parallel)"                                      clib:"terse='Clone repos',group='Actions/1'"`
+	Copy  bool    `help:"Copy output to clipboard"                                                        clib:"terse='Copy clipboard',group='Actions/1'"                                                       short:"C"`
+	Count bool    `help:"Print total result count"                                                        clib:"terse='Print count',group='Actions/1'"                                                          short:"N"`
+	Group CSVFlag `help:"Break down result counts by field(s) [author, repo, owner, state, draft, label]" clib:"terse='Group by',complete='values=author repo owner state draft label,comma',group='Actions/1'" short:"G" aliases:"group-by,by,breakdown" placeholder:"<field>"`
+	Dry   bool    `help:"Show search query without executing"                                             clib:"terse='Dry run',group='Actions/1'"                                                              short:"n" aliases:"dry-run,dryrun"`
+	Open  bool    `help:"Open each PR in browser"                                                         clib:"terse='Open in browser',group='Actions/1'"                                                      short:"P"`
+	Web   bool    `help:"Open GitHub search in browser"                                                   clib:"terse='Web search',group='Actions/1'"                                                           short:"w"`
 
 	Send   bool   `help:"Send PRs to Slack via plugin"                      clib:"terse='Send to Slack',group='Actions/2'"`
 	SendTo string `help:"Override Slack recipient (#channel, @user, email)" clib:"terse='Override Slack recipient',complete='predictor=slack-recipient',group='Actions/2'" placeholder:"<recipient>"`
@@ -106,14 +107,15 @@ type CLI struct {
 	Verbose bool           `help:"Enable verbose logging"                     clib:"terse='Verbose',group='Miscellaneous/1'"                                                   short:"v"`
 	Version bool           `help:"Print version"                              clib:"terse='Version',group='Miscellaneous/2'"                                                   short:"V"`
 
-	stateExplicit    bool `kong:"-"`
-	draftExplicit    bool `kong:"-"`
-	noBotExplicit    bool `kong:"-"`
 	archivedExplicit bool `kong:"-"`
 	ciExplicit       bool `kong:"-"`
+	draftExplicit    bool `kong:"-"`
+	limitExplicit    bool `kong:"-"`
+	noBotExplicit    bool `kong:"-"`
+	outputExplicit   bool `kong:"-"`
 	reviewExplicit   bool `kong:"-"`
 	sortExplicit     bool `kong:"-"`
-	outputExplicit   bool `kong:"-"`
+	stateExplicit    bool `kong:"-"`
 
 	prl *prl    `kong:"-"`
 	cfg *Config `kong:"-"`
@@ -262,6 +264,33 @@ func (c *CLI) Validate() error {
 		return fmt.Errorf("--watch and --web are mutually exclusive")
 	}
 
+	// --count overrides --group: just print the total.
+	if c.Count {
+		c.Group.Values = nil
+	}
+
+	if c.GroupActive() {
+		if _, err := c.GroupKeys(); err != nil {
+			return err
+		}
+		switch {
+		case c.Interactive:
+			return fmt.Errorf("--group and --interactive are mutually exclusive")
+		case c.Watch:
+			return fmt.Errorf("--group and --watch are mutually exclusive")
+		case sending:
+			return fmt.Errorf("--group and --send are mutually exclusive")
+		case c.Clone:
+			return fmt.Errorf("--group and --clone are mutually exclusive")
+		case c.Open:
+			return fmt.Errorf("--group and --open are mutually exclusive")
+		case c.Web:
+			return fmt.Errorf("--group and --web are mutually exclusive")
+		case c.HasAction():
+			return fmt.Errorf("--group cannot be combined with action flags")
+		}
+	}
+
 	for _, f := range c.Filter {
 		lower := strings.ToLower(f)
 		if strings.HasPrefix(lower, "type:") || strings.HasPrefix(lower, "-type:") {
@@ -376,8 +405,17 @@ func (c *CLI) Normalize(cfg *Config) {
 	if len(c.Owner.Values) == 0 && len(cfg.Default.Owners) > 0 {
 		c.Owner.Values = cfg.Default.Owners
 	}
+	c.limitExplicit = c.Limit != nil
 	if c.Limit == nil {
-		c.Limit = &cfg.Default.Limit
+		// A --group breakdown defaults to the full result set (bounded by
+		// GitHub's 1000-result cap), not the small table default, so the counts
+		// aren't silently truncated. An explicit --limit still wins.
+		if c.GroupActive() {
+			limit := maxGroupResults
+			c.Limit = &limit
+		} else {
+			c.Limit = &cfg.Default.Limit
+		}
 	}
 	if c.Match == "" {
 		c.Match = cfg.Default.Match
@@ -571,12 +609,39 @@ func (c *CLI) ReviewSelfRequired() bool {
 	return c.Review == valueReviewFilterSelfRequired
 }
 
-// LimitValue returns the effective limit value.
+// LimitValue returns the effective limit value. Normalize resolves the default
+// (including the raised --group default) into c.Limit before this is called.
 func (c *CLI) LimitValue() int {
 	if c.Limit == nil {
+		if c.GroupActive() {
+			// A breakdown should reflect the full result set by default, not the
+			// small table default. Bounded by GitHub's 1000-result search cap.
+			return maxGroupResults
+		}
 		return defaultLimit
 	}
 	return *c.Limit
+}
+
+// GroupActive reports whether a --group breakdown was requested.
+func (c *CLI) GroupActive() bool {
+	return len(c.Group.Values) > 0
+}
+
+// GroupKeys returns the parsed --group fields in the order given.
+func (c *CLI) GroupKeys() ([]groupKey, error) {
+	keys := make([]groupKey, 0, len(c.Group.Values))
+	for _, v := range c.Group.Values {
+		k, ok := parseGroupKey(v)
+		if !ok {
+			return nil, fmt.Errorf(
+				"invalid --group value %q (valid: author, repo, owner, state, draft, label)",
+				v,
+			)
+		}
+		keys = append(keys, k)
+	}
+	return keys, nil
 }
 
 // QueryString joins positional arguments into a search query.

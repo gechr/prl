@@ -71,6 +71,12 @@ prl --watch --interval 30s
 # Print only the total count
 prl --count
 
+# Break down the results by author
+prl --group author
+
+# Break down by repo, then author within each repo
+prl --group repo,author
+
 # Approve selected PRs
 prl --approve
 
@@ -144,16 +150,17 @@ prl -o json
 
 ### Actions
 
-| Flag        | Short | Description                                |
-| ----------- | ----- | ------------------------------------------ |
-| `--clone`   |       | Clone unique repos from the results        |
-| `--copy`    | `-C`  | Copy rendered output to the clipboard      |
-| `--count`   | `-N`  | Print only the total result count          |
-| `--dry`     | `-n`  | Show the query without executing it        |
-| `--open`    | `-P`  | Open each PR in the browser                |
-| `--web`     | `-w`  | Open the GitHub search page in the browser |
-| `--send`    |       | Send PRs to Slack via plugin               |
-| `--send-to` |       | Override the Slack recipient               |
+| Flag        | Short | Description                                                                                                                        |
+| ----------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `--clone`   |       | Clone unique repos from the results                                                                                                |
+| `--copy`    | `-C`  | Copy rendered output to the clipboard                                                                                              |
+| `--count`   | `-N`  | Print only the total result count                                                                                                  |
+| `--group`   | `-G`  | Break down result counts by field(s): `author`, `repo`, `owner`, `state`, `draft`, `label` (comma-separated for nested breakdowns) |
+| `--dry`     | `-n`  | Show the query without executing it                                                                                                |
+| `--open`    | `-P`  | Open each PR in the browser                                                                                                        |
+| `--web`     | `-w`  | Open the GitHub search page in the browser                                                                                         |
+| `--send`    |       | Send PRs to Slack via plugin                                                                                                       |
+| `--send-to` |       | Override the Slack recipient                                                                                                       |
 
 ### Output
 

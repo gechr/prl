@@ -628,8 +628,11 @@ func buildOutput(
 	ready := cli.PRState() == StateReady
 	ciFilter := cli.CIStatus()
 	needsEnrich := ready || ciFilter != CINone
+	// A --group breakdown only needs fields already present in search
+	// results, so skip merge-status enrichment unless a filter (--ci,
+	// --state=ready) genuinely requires it.
 	needMergeStatus := (!cli.Quick || needsEnrich) &&
-		(cli.OutputFormat() == OutputTable || needsEnrich)
+		((cli.OutputFormat() == OutputTable && !cli.GroupActive()) || needsEnrich)
 	prs, searchHydrated, err := executeListSearch(rest, getGQL, params, needMergeStatus)
 	if err != nil {
 		return "", nil, err
@@ -702,6 +705,27 @@ func buildOutput(
 	return out, prs, rErr
 }
 
+// groupCapSuffix returns a blank-line-separated notice to append after a
+// --group breakdown when the match set exceeds GitHub's 1000-result search cap,
+// so a recency-biased sample is not read as exhaustive. Returns "" when the
+// results fit, an explicit --limit was set, or the true total can't be read.
+func groupCapSuffix(
+	rest *api.RESTClient,
+	cli *CLI,
+	params *SearchParams,
+	rawFetched int,
+	tty bool,
+) string {
+	if cli.limitExplicit || rawFetched < maxGroupResults {
+		return ""
+	}
+	total, err := executeCount(rest, params)
+	if err != nil || total <= rawFetched {
+		return ""
+	}
+	return nl + nl + groupCapNotice(rawFetched, total, tty)
+}
+
 // renderOutput renders PRs in the requested output format.
 func renderOutput(
 	p *prl,
@@ -759,12 +783,16 @@ func runOnce(
 	ready := cli.PRState() == StateReady
 	ciFilter := cli.CIStatus()
 	needsEnrich := ready || ciFilter != CINone
+	// A --group breakdown only needs fields already present in search
+	// results, so skip merge-status enrichment unless a filter (--ci,
+	// --state=ready) genuinely requires it.
 	needMergeStatus := (!cli.Quick || needsEnrich) &&
-		(cli.OutputFormat() == OutputTable || needsEnrich)
+		((cli.OutputFormat() == OutputTable && !cli.GroupActive()) || needsEnrich)
 	prs, searchHydrated, err := executeListSearch(rest, getGQL, params, needMergeStatus)
 	if err != nil {
 		return "", err
 	}
+	rawFetched := len(prs)
 
 	// Apply filters
 	prs, err = applyFilters(cli, prs)
@@ -830,6 +858,36 @@ func runOnce(
 		if len(prs) == 0 {
 			return "", nil
 		}
+	}
+
+	// Group-by breakdown: bucket the fetched results locally (no extra API
+	// calls) instead of rendering the usual output.
+	if cli.GroupActive() {
+		keys, keyErr := cli.GroupKeys()
+		if keyErr != nil {
+			return "", keyErr
+		}
+		asJSON := cli.OutputFormat() == OutputJSON
+		groupWidth, groupHeight := 0, 0
+		if tty {
+			groupWidth, groupHeight = terminal.Size(os.Stdout)
+		}
+		out, gErr := renderGroup(
+			prs,
+			keys,
+			asJSON,
+			tty,
+			prl.AssignEntityColor,
+			groupWidth,
+			groupHeight,
+		)
+		if gErr != nil {
+			return "", gErr
+		}
+		if !asJSON {
+			out += groupCapSuffix(rest, cli, params, rawFetched, tty)
+		}
+		return out, nil
 	}
 
 	// Render output

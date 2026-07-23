@@ -208,6 +208,7 @@ func New() *prl {
 	return &prl{
 		theme: th.With(
 			theme.WithEnumStyle(theme.EnumStyleHighlightBoth),
+			theme.WithTrueColor(),
 		),
 		entityColors: make(map[string]int),
 	}

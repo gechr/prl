@@ -88,6 +88,89 @@ func TestValidate_RejectsNegatedRequestedForUnsubscribe(t *testing.T) {
 	}
 }
 
+func TestValidate_GroupRejectsInvalidKey(t *testing.T) {
+	cli := &CLI{Group: CSVFlag{Values: []string{"author", "bogus"}}}
+	require.EqualError(
+		t,
+		cli.Validate(),
+		`invalid --group value "bogus" (valid: author, repo, owner, state, draft, label)`,
+	)
+}
+
+func TestValidate_GroupMutualExclusion(t *testing.T) {
+	tests := map[string]struct {
+		mutate func(*CLI)
+		want   string
+	}{
+		"interactive": {
+			func(c *CLI) { c.Interactive = true },
+			"--group and --interactive are mutually exclusive",
+		},
+		"watch": {
+			func(c *CLI) { c.Watch = true },
+			"--group and --watch are mutually exclusive",
+		},
+		"send": {
+			func(c *CLI) { c.Send = true },
+			"--group and --send are mutually exclusive",
+		},
+		"clone": {
+			func(c *CLI) { c.Clone = true },
+			"--group and --clone are mutually exclusive",
+		},
+		"action": {
+			func(c *CLI) { c.Approve = true },
+			"--group cannot be combined with action flags",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			cli := &CLI{Group: CSVFlag{Values: []string{"author"}}}
+			tt.mutate(cli)
+			require.EqualError(t, cli.Validate(), tt.want)
+		})
+	}
+}
+
+func TestValidate_CountOverridesGroup(t *testing.T) {
+	cli := &CLI{
+		Group: CSVFlag{Values: []string{"author"}},
+		Count: true,
+	}
+	require.NoError(t, cli.Validate())
+	require.False(t, cli.GroupActive())
+	require.True(t, cli.Count)
+}
+
+func TestValidate_AllowsGroupWithFilters(t *testing.T) {
+	cli := &CLI{
+		Group: CSVFlag{Values: []string{"author", "repo"}},
+		State: valueAll,
+		NoBot: true,
+	}
+	require.NoError(t, cli.Validate())
+}
+
+func TestNormalize_GroupRaisesLimitDefault(t *testing.T) {
+	cfg := &Config{Default: Defaults{Limit: defaultLimit}}
+
+	grouped := &CLI{Group: CSVFlag{Values: []string{"author"}}}
+	grouped.Normalize(cfg)
+	require.NotNil(t, grouped.Limit)
+	require.Equal(t, maxGroupResults, *grouped.Limit)
+	require.False(t, grouped.limitExplicit)
+
+	plain := &CLI{}
+	plain.Normalize(cfg)
+	require.Equal(t, defaultLimit, *plain.Limit)
+
+	explicit := 5
+	override := &CLI{Group: CSVFlag{Values: []string{"author"}}, Limit: &explicit}
+	override.Normalize(cfg)
+	require.Equal(t, 5, *override.Limit)
+	require.True(t, override.limitExplicit)
+}
+
 func TestValidate_IntervalRequiresInteractiveOrWatch(t *testing.T) {
 	interval := 30 * time.Second
 	cli := &CLI{Interval: &interval}
