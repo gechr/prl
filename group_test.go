@@ -235,11 +235,11 @@ func TestRenderGroup_TextNested(t *testing.T) {
 	require.NoError(t, err)
 
 	want := "api (2)\n" +
-		"  1 alice\n" +
-		"  1 bob\n" +
+		"├─ 1 alice\n" +
+		"└─ 1 bob\n" +
 		"\n" +
 		"web (1)\n" +
-		"  1 alice"
+		"└─ 1 alice"
 	require.Equal(t, want, out)
 }
 
@@ -257,9 +257,9 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	want := "api (2)     web (1)\n" +
-		"  1 alice     1 alice\n" +
-		"  1 bob"
+	want := "api (2)      web (1)\n" +
+		"├─ 1 alice   └─ 1 alice\n" +
+		"└─ 1 bob"
 	require.Equal(t, want, out)
 }
 

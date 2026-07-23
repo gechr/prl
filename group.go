@@ -187,17 +187,23 @@ func sortGroupNodes(nodes []groupNode) {
 // groupColGap is the number of spaces between grid columns.
 const groupColGap = 3
 
-// groupIndent is the number of spaces each nesting level indents by.
-const groupIndent = 2
+// Tree guide glyphs prefixed to nested buckets; dimmed on a TTY.
+const (
+	groupTreeBranch = "├─ "
+	groupTreeLast   = "└─ "
+	groupTreePipe   = "│  "
+	groupTreeSpace  = "   "
+)
 
 // renderGroup renders a breakdown of prs bucketed by keys. When asJSON is true
 // it emits the nested node tree as JSON. Otherwise each top-level group becomes
 // a block - a header followed by its indented members, one per line - and the
 // blocks stack in a single column when they fit the terminal height, or flow
 // column-major (read down, then across) into as many side-by-side columns as
-// fit termWidth when they would overflow it. On a TTY, leaf buckets use prl's
-// stable per-entity colouring via entityColor (nil disables all colour) with
-// bold counts; header buckets render as bold "name (count)" with a dim count.
+// fit termWidth when they would overflow it. On a TTY, every bucket except a
+// top-level header is coloured - state and draft buckets with prl's semantic
+// state colours, the rest via entityColor (nil disables entity colour) - and
+// headers render as bold "name (count)" with a dim count.
 func renderGroup(
 	prs []PullRequest,
 	keys []groupKey,
@@ -221,30 +227,39 @@ func renderGroup(
 
 	blocks := make([][]string, len(nodes))
 	for i, n := range nodes {
-		blocks[i] = groupBlock(n, countWidth, tty, entityColor)
+		blocks[i] = groupBlock(n, keys, countWidth, tty, entityColor)
 	}
 
 	return strings.Join(groupGrid(blocks, nested, termWidth, termHeight), nl), nil
 }
 
-// groupBlock flattens a top-level group into its display lines: a "count name"
-// header followed by each descendant on its own line, deepest last and indented
-// by depth.
+// groupBlock flattens a top-level group into its display lines: a header
+// followed by each descendant on its own line, deepest last, connected by
+// tree guides (dimmed on a TTY).
 func groupBlock(
 	n groupNode,
+	keys []groupKey,
 	countWidth int,
 	tty bool,
 	entityColor func(string) color.Color,
 ) []string {
 	var lines []string
-	var walk func(node groupNode, depth int)
-	walk = func(node groupNode, depth int) {
-		lines = append(lines, groupNodeLabel(node, depth, countWidth, tty, entityColor))
-		for _, c := range node.Children {
-			walk(c, depth+1)
+	var walk func(node groupNode, depth int, prefix, childPrefix string)
+	walk = func(node groupNode, depth int, prefix, childPrefix string) {
+		guide := prefix
+		if tty && guide != "" {
+			guide = styleDim.Render(guide)
+		}
+		lines = append(lines, guide+groupNodeLabel(node, depth, countWidth, keys, tty, entityColor))
+		for i, c := range node.Children {
+			if i == len(node.Children)-1 {
+				walk(c, depth+1, childPrefix+groupTreeLast, childPrefix+groupTreeSpace)
+			} else {
+				walk(c, depth+1, childPrefix+groupTreeBranch, childPrefix+groupTreePipe)
+			}
 		}
 	}
-	walk(n, 0)
+	walk(n, 0, "", "")
 	return lines
 }
 
@@ -263,55 +278,97 @@ func groupMaxLeafCount(nodes []groupNode) int {
 	return count
 }
 
-// groupNodeLabel renders a bucket, indented two spaces per nesting level.
+// groupNodeLabel renders a bucket (the caller prepends any tree guides).
 // Header buckets (those with children) render as "name (count)" - the name
 // bold, the count dim. Leaf buckets render as "count name" - the count
-// right-aligned to countWidth and bold, both in the bucket's per-entity
-// colour.
+// right-aligned to countWidth and bold. Every bucket except a top-level
+// header is coloured: state and draft buckets use prl's semantic state
+// colours, everything else the stable per-entity colour.
 func groupNodeLabel(
 	n groupNode,
 	depth, countWidth int,
+	keys []groupKey,
 	tty bool,
 	entityColor func(string) color.Color,
 ) string {
-	indent := strings.Repeat(" ", groupIndent*depth)
+	var bucketColor color.Color
+	if tty && depth < len(keys) {
+		bucketColor = groupBucketColor(keys[depth], n.Value, entityColor)
+	}
 	if len(n.Children) > 0 {
 		name := n.Value
 		count := "(" + strconv.Itoa(n.Count) + ")"
 		if tty {
-			name = styleText.Bold(true).Render(name)
+			style := styleText.Bold(true)
+			if depth > 0 && bucketColor != nil { // top-level headers stay plain
+				style = lg.NewStyle().Bold(true).Foreground(bucketColor)
+			}
+			name = style.Render(name)
 			count = styleDim.Render(count)
 		}
-		return indent + name + " " + count
+		return name + " " + count
 	}
 	name := n.Value
 	count := strconv.Itoa(n.Count)
 	pad := strings.Repeat(" ", max(0, countWidth-len(count)))
 	if tty {
-		name = styleGroupName(name, n.Value, entityColor)
-		count = styleGroupCount(count, n.Value, entityColor)
+		name = styleGroupName(name, bucketColor)
+		count = styleGroupCount(count, bucketColor)
 	}
-	return indent + pad + count + " " + name
+	return pad + count + " " + name
 }
 
-// styleGroupName colours a bucket name with prl's stable per-entity colour.
-// key is the raw value used for the colour lookup.
-func styleGroupName(name, key string, entityColor func(string) color.Color) string {
-	if entityColor != nil {
-		if c := entityColor(key); c != nil {
-			return lg.NewStyle().Foreground(c).Render(name)
+// groupBucketColor resolves the colour for a bucket value: prl's semantic
+// state colours for state and draft keys, the stable per-entity colour for
+// everything else.
+func groupBucketColor(
+	key groupKey,
+	value string,
+	entityColor func(string) color.Color,
+) color.Color {
+	switch key {
+	case groupState, groupDraft:
+		return groupStateColor(value)
+	case groupAuthor, groupRepo, groupOwner, groupLabel:
+		fallthrough
+	default:
+		if entityColor != nil {
+			return entityColor(value)
 		}
+		return nil
+	}
+}
+
+// groupStateColor maps a state or draft bucket value to the colour prl uses
+// for that state elsewhere (see prMergeStyle).
+func groupStateColor(value string) color.Color {
+	switch value {
+	case valueMerged:
+		return colorMerged
+	case valueClosed:
+		return colorRed
+	case valueOpen, valueReady:
+		return colorGreen
+	case valueDraft:
+		return colorDraft
+	default:
+		return nil
+	}
+}
+
+// styleGroupName renders a bucket name in its resolved colour.
+func styleGroupName(name string, c color.Color) string {
+	if c != nil {
+		return lg.NewStyle().Foreground(c).Render(name)
 	}
 	return name
 }
 
-// styleGroupCount renders a bucket count in bold in the bucket's entity
-// colour, falling back to plain bold when no colour is assigned.
-func styleGroupCount(count, key string, entityColor func(string) color.Color) string {
-	if entityColor != nil {
-		if c := entityColor(key); c != nil {
-			return lg.NewStyle().Foreground(c).Bold(true).Render(count)
-		}
+// styleGroupCount renders a bucket count in bold in its resolved colour,
+// falling back to plain bold when no colour is assigned.
+func styleGroupCount(count string, c color.Color) string {
+	if c != nil {
+		return lg.NewStyle().Foreground(c).Bold(true).Render(count)
 	}
 	return styleText.Bold(true).Render(count)
 }
