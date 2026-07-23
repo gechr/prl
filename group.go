@@ -169,23 +169,42 @@ func buildGroupNodes(prs []PullRequest, keys []groupKey, stripRepoOwner bool) []
 			Children: buildGroupNodes(sub, rest, stripRepoOwner),
 		})
 	}
-	sortGroupNodes(nodes)
+	sortGroupNodes(nodes, key)
 	return nodes
 }
 
-// sortGroupNodes orders buckets by descending count, breaking ties with a
-// natural comparison on the value so output is stable and readable.
-func sortGroupNodes(nodes []groupNode) {
+// sortGroupNodes orders buckets by descending count. State and draft buckets
+// break ties by lifecycle (merged, open, closed; ready before draft),
+// everything else with a natural comparison on the value so output is stable
+// and readable.
+func sortGroupNodes(nodes []groupNode, key groupKey) {
 	slices.SortStableFunc(nodes, func(a, b groupNode) int {
 		if a.Count != b.Count {
 			return cmp.Compare(b.Count, a.Count)
+		}
+		if key == groupState || key == groupDraft {
+			if r := cmp.Compare(groupStateRank(a.Value), groupStateRank(b.Value)); r != 0 {
+				return r
+			}
 		}
 		return xstrings.CompareNatural(a.Value, b.Value)
 	})
 }
 
+// groupStateOrder is the tie-break order for state and draft bucket values;
+// unknown values sort after all of these.
+var groupStateOrder = []string{valueMerged, valueOpen, valueReady, valueClosed, valueDraft}
+
+// groupStateRank returns a value's position in groupStateOrder.
+func groupStateRank(value string) int {
+	if i := slices.Index(groupStateOrder, value); i >= 0 {
+		return i
+	}
+	return len(groupStateOrder)
+}
+
 // groupColGap is the number of spaces between grid columns.
-const groupColGap = 3
+const groupColGap = 2
 
 // Tree guide glyphs prefixed to nested buckets; dimmed on a TTY.
 const (
@@ -200,10 +219,11 @@ const (
 // a block - a header followed by its indented members, one per line - and the
 // blocks stack in a single column when they fit the terminal height, or flow
 // column-major (read down, then across) into as many side-by-side columns as
-// fit termWidth when they would overflow it. On a TTY, every bucket except a
-// top-level header is coloured - state and draft buckets with prl's semantic
-// state colours, the rest via entityColor (nil disables entity colour) - and
-// headers render as bold "name (count)" with a dim count.
+// fit termWidth when they would overflow it. Every bucket renders as
+// "name (count)"; on a TTY the count is dim, headers are bold, and every
+// bucket except a top-level header is coloured - state and draft buckets with
+// prl's semantic state colours, the rest via entityColor (nil disables entity
+// colour).
 func renderGroup(
 	prs []PullRequest,
 	keys []groupKey,
@@ -223,11 +243,9 @@ func renderGroup(
 
 	nested := len(keys) > 1
 
-	countWidth := len(strconv.Itoa(groupMaxLeafCount(nodes)))
-
 	blocks := make([][]string, len(nodes))
 	for i, n := range nodes {
-		blocks[i] = groupBlock(n, keys, countWidth, tty, entityColor)
+		blocks[i] = groupBlock(n, keys, tty, entityColor)
 	}
 
 	return strings.Join(groupGrid(blocks, nested, termWidth, termHeight), nl), nil
@@ -239,7 +257,6 @@ func renderGroup(
 func groupBlock(
 	n groupNode,
 	keys []groupKey,
-	countWidth int,
 	tty bool,
 	entityColor func(string) color.Color,
 ) []string {
@@ -250,7 +267,7 @@ func groupBlock(
 		if tty && guide != "" {
 			guide = styleDim.Render(guide)
 		}
-		lines = append(lines, guide+groupNodeLabel(node, depth, countWidth, keys, tty, entityColor))
+		lines = append(lines, guide+groupNodeLabel(node, depth, keys, tty, entityColor))
 		for i, c := range node.Children {
 			if i == len(node.Children)-1 {
 				walk(c, depth+1, childPrefix+groupTreeLast, childPrefix+groupTreeSpace)
@@ -263,30 +280,14 @@ func groupBlock(
 	return lines
 }
 
-// groupMaxLeafCount returns the largest count among leaf buckets - the widest
-// count the "count name" leaf rows right-align to (headers render their count
-// as a suffix instead).
-func groupMaxLeafCount(nodes []groupNode) int {
-	count := 0
-	for _, n := range nodes {
-		if len(n.Children) == 0 {
-			count = max(count, n.Count)
-		} else {
-			count = max(count, groupMaxLeafCount(n.Children))
-		}
-	}
-	return count
-}
-
-// groupNodeLabel renders a bucket (the caller prepends any tree guides).
-// Header buckets (those with children) render as "name (count)" - the name
-// bold, the count dim. Leaf buckets render as "count name" - the count
-// right-aligned to countWidth and bold. Every bucket except a top-level
-// header is coloured: state and draft buckets use prl's semantic state
-// colours, everything else the stable per-entity colour.
+// groupNodeLabel renders a bucket as "name (count)" (the caller prepends any
+// tree guides), with the count dim. Header buckets (those with children)
+// render the name bold. Every bucket except a top-level header is coloured:
+// state and draft buckets use prl's semantic state colours, everything else
+// the stable per-entity colour.
 func groupNodeLabel(
 	n groupNode,
-	depth, countWidth int,
+	depth int,
 	keys []groupKey,
 	tty bool,
 	entityColor func(string) color.Color,
@@ -295,27 +296,21 @@ func groupNodeLabel(
 	if tty && depth < len(keys) {
 		bucketColor = groupBucketColor(keys[depth], n.Value, entityColor)
 	}
-	if len(n.Children) > 0 {
-		name := n.Value
-		count := "(" + strconv.Itoa(n.Count) + ")"
-		if tty {
+	name := n.Value
+	count := "(" + strconv.Itoa(n.Count) + ")"
+	if tty {
+		if len(n.Children) > 0 {
 			style := styleText.Bold(true)
 			if depth > 0 && bucketColor != nil { // top-level headers stay plain
 				style = lg.NewStyle().Bold(true).Foreground(bucketColor)
 			}
 			name = style.Render(name)
-			count = styleDim.Render(count)
+		} else {
+			name = styleGroupName(name, bucketColor)
 		}
-		return name + " " + count
+		count = styleDim.Render(count)
 	}
-	name := n.Value
-	count := strconv.Itoa(n.Count)
-	pad := strings.Repeat(" ", max(0, countWidth-len(count)))
-	if tty {
-		name = styleGroupName(name, bucketColor)
-		count = styleGroupCount(count, bucketColor)
-	}
-	return pad + count + " " + name
+	return name + " " + count
 }
 
 // groupBucketColor resolves the colour for a bucket value: prl's semantic
@@ -364,15 +359,6 @@ func styleGroupName(name string, c color.Color) string {
 	return name
 }
 
-// styleGroupCount renders a bucket count in bold in its resolved colour,
-// falling back to plain bold when no colour is assigned.
-func styleGroupCount(count string, c color.Color) string {
-	if c != nil {
-		return lg.NewStyle().Foreground(c).Bold(true).Render(count)
-	}
-	return styleText.Bold(true).Render(count)
-}
-
 // groupStack lays blocks out in one column, with a blank line between groups
 // when nested.
 func groupStack(blocks [][]string, nested bool) []string {
@@ -419,9 +405,28 @@ func groupGrid(blocks [][]string, nested bool, termWidth, termHeight int) []stri
 	for ; ; limit++ {
 		cols := groupSplit(blocks, sep, limit)
 		if len(cols) == 1 || limit >= total || groupGridWidth(cols) <= termWidth {
-			return groupJoin(cols)
+			return groupJoin(groupBalance(blocks, sep, limit, termWidth, cols))
 		}
 	}
+}
+
+// groupBalance re-cuts blocks using the smallest height limit that still
+// yields no more columns than the given split, evening out column heights so
+// a trailing block doesn't tuck under an earlier column that happens to have
+// room beneath it. Keeps the original split when no shorter cut fits the
+// terminal width.
+func groupBalance(blocks [][]string, sep, limit, termWidth int, cols [][]string) [][]string {
+	if len(cols) <= 1 {
+		return cols
+	}
+	for h := 1; h <= limit; h++ {
+		balanced := groupSplit(blocks, sep, h)
+		if len(balanced) <= len(cols) &&
+			(termWidth <= 0 || groupGridWidth(balanced) <= termWidth) {
+			return balanced
+		}
+	}
+	return cols
 }
 
 // groupSplit cuts blocks into contiguous columns, each rendered no taller than

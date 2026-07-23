@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -107,6 +108,21 @@ func TestBuildGroupNodes_LabelFansOut(t *testing.T) {
 	}, nodes)
 }
 
+func TestBuildGroupNodes_StateTieBreaksByLifecycle(t *testing.T) {
+	prs := []PullRequest{
+		{State: valueClosed},
+		{State: valueOpen},
+		{State: valueMerged},
+	}
+	nodes := buildGroupNodes(prs, []groupKey{groupState}, false)
+
+	require.Equal(t, []groupNode{
+		{Value: valueMerged, Count: 1},
+		{Value: valueOpen, Count: 1},
+		{Value: valueClosed, Count: 1},
+	}, nodes)
+}
+
 func TestBuildGroupNodes_DraftAndTie(t *testing.T) {
 	nodes := buildGroupNodes(groupTestPRs(), []groupKey{groupDraft}, false)
 
@@ -141,23 +157,43 @@ func TestRenderGroup_Text(t *testing.T) {
 	out, err := renderGroup(groupTestPRs(), []groupKey{groupAuthor}, false, false, nil, 0, 0)
 	require.NoError(t, err)
 
-	want := "2 alice\n" +
-		"1 bob"
+	want := "alice (2)\n" +
+		"bob (1)"
 	require.Equal(t, want, out)
 }
 
 func TestGroupGrid_ColumnMajor(t *testing.T) {
 	blocks := [][]string{
-		{"5 alice"}, {"4 bob"}, {"3 carol"}, {"2 dave"}, {"1 erin"},
+		{"alice (5)"}, {"bob (4)"}, {"carol (3)"}, {"dave (2)"}, {"erin (1)"},
 	}
 	// One row per block won't fit 30 columns, so the grid settles on
 	// two-tall columns, read top-to-bottom then across.
 	lines := groupGrid(blocks, false, 30, 0)
 
 	require.Equal(t, []string{
-		"5 alice   3 carol   1 erin",
-		"4 bob     2 dave",
+		"alice (5)  carol (3)  erin (1)",
+		"bob (4)    dave (2)",
 	}, lines)
+}
+
+func TestGroupGrid_BalancesColumns(t *testing.T) {
+	mk := func(prefix string, n int) []string {
+		lines := make([]string, 0, n)
+		for i := range n {
+			lines = append(lines, fmt.Sprintf("%s%d", prefix, i))
+		}
+		return lines
+	}
+	blocks := [][]string{mk("a", 10), mk("b", 8), mk("c", 9), mk("d", 4), mk("e", 3)}
+	// Greedy filling to the 13-line height limit would tuck block d under c
+	// and give e its own column; balancing re-cuts at the smallest height
+	// that still yields four columns, pairing d+e in the last one instead.
+	lines := groupGrid(blocks, false, 80, 13)
+
+	require.Len(t, lines, 10)
+	require.Equal(t, "a0  b0  c0  d0", lines[0])
+	require.Equal(t, "a4  b4  c4  e0", lines[4])
+	require.Equal(t, "a9", lines[9])
 }
 
 func TestRenderGroup_GridFillsWidth(t *testing.T) {
@@ -175,7 +211,7 @@ func TestRenderGroup_GridFillsWidth(t *testing.T) {
 	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 0)
 	require.NoError(t, err)
 
-	want := "4 alice   3 bob   2 carol   1 dave"
+	want := "alice (4)  bob (3)  carol (2)  dave (1)"
 	require.Equal(t, want, out)
 }
 
@@ -194,10 +230,10 @@ func TestRenderGroup_FitsHeightStacks(t *testing.T) {
 	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 80, 40)
 	require.NoError(t, err)
 
-	want := "4 alice\n" +
-		"3 bob\n" +
-		"2 carol\n" +
-		"1 dave"
+	want := "alice (4)\n" +
+		"bob (3)\n" +
+		"carol (2)\n" +
+		"dave (1)"
 	require.Equal(t, want, out)
 }
 
@@ -215,10 +251,10 @@ func TestRenderGroup_NoWidthStacks(t *testing.T) {
 	out, err := renderGroup(prs, []groupKey{groupAuthor}, false, false, nil, 0, 0)
 	require.NoError(t, err)
 
-	want := "4 alice\n" +
-		"3 bob\n" +
-		"2 carol\n" +
-		"1 dave"
+	want := "alice (4)\n" +
+		"bob (3)\n" +
+		"carol (2)\n" +
+		"dave (1)"
 	require.Equal(t, want, out)
 }
 
@@ -235,11 +271,11 @@ func TestRenderGroup_TextNested(t *testing.T) {
 	require.NoError(t, err)
 
 	want := "api (2)\n" +
-		"├─ 1 alice\n" +
-		"└─ 1 bob\n" +
+		"├─ alice (1)\n" +
+		"└─ bob (1)\n" +
 		"\n" +
 		"web (1)\n" +
-		"└─ 1 alice"
+		"└─ alice (1)"
 	require.Equal(t, want, out)
 }
 
@@ -252,14 +288,14 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 		false,
 		false,
 		nil,
-		24,
+		30,
 		0,
 	)
 	require.NoError(t, err)
 
-	want := "api (2)      web (1)\n" +
-		"├─ 1 alice   └─ 1 alice\n" +
-		"└─ 1 bob"
+	want := "api (2)       web (1)\n" +
+		"├─ alice (1)  └─ alice (1)\n" +
+		"└─ bob (1)"
 	require.Equal(t, want, out)
 }
 
