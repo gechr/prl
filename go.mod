@@ -14,11 +14,11 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/cli/go-gh/v2 v2.13.0
-	github.com/gechr/clib v0.7.10
-	github.com/gechr/clive v0.4.8
+	github.com/gechr/clib v0.7.11
+	github.com/gechr/clive v0.4.9
 	github.com/gechr/clog v0.15.5
 	github.com/gechr/primer v0.1.3
-	github.com/gechr/x v0.5.4
+	github.com/gechr/x v0.5.6
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/confmap v1.0.0
@@ -102,7 +102,7 @@ require (
 	github.com/firefart/nonamedreturns v1.0.6 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
-	github.com/gechr/conductor v0.1.14
+	github.com/gechr/conductor v0.1.15
 	github.com/gechr/gorules v0.0.3
 	github.com/ghostiam/protogetter v0.3.20 // indirect
 	github.com/go-critic/go-critic v0.14.3 // indirect
@@ -269,5 +269,3 @@ require (
 	mvdan.cc/gofumpt v0.9.2 // indirect
 	mvdan.cc/unparam v0.0.0-20251027182757-5beb8c8f8f15 // indirect
 )
-
-replace github.com/gechr/x => ../x
