@@ -14,11 +14,11 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/cli/go-gh/v2 v2.13.0
-	github.com/gechr/clib v0.7.9
+	github.com/gechr/clib v0.7.10
 	github.com/gechr/clive v0.4.7
 	github.com/gechr/clog v0.15.5
 	github.com/gechr/primer v0.1.3
-	github.com/gechr/x v0.5.1
+	github.com/gechr/x v0.5.3
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/confmap v1.0.0
