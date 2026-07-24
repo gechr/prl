@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"slices"
 	"strings"
 	"testing"
@@ -350,6 +351,28 @@ func TestGroupNodeLabel_HyperlinksNestedSearch(t *testing.T) {
 			nil,
 		),
 	)
+}
+
+func TestGroupNodeLabel_TopLevelHeaderDoesNotConsumeEntityColor(t *testing.T) {
+	header := groupNode{
+		Value: "api",
+		Count: 1,
+		Children: []groupNode{{
+			Value: "alice",
+			Count: 1,
+		}},
+	}
+	var assigned []string
+	assign := func(key string) color.Color {
+		assigned = append(assigned, key)
+		return colorRed
+	}
+
+	groupNodeLabel(header, 0, []groupKey{groupRepo, groupAuthor}, true, assign)
+	require.Empty(t, assigned)
+
+	groupNodeLabel(header.Children[0], 1, []groupKey{groupRepo, groupAuthor}, true, assign)
+	require.Equal(t, []string{"alice"}, assigned)
 }
 
 func TestRenderGroup_Text(t *testing.T) {

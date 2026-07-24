@@ -498,7 +498,9 @@ func groupNodeLabel(
 	}
 
 	var bucketColor color.Color
-	if depth < len(keys) {
+	// Top-level headers are intentionally uncoloured, so do not consume an
+	// entity colour that will never be rendered.
+	if depth < len(keys) && (depth > 0 || len(n.Children) == 0) {
 		colorKey := n.Value
 		if n.colorKey != "" {
 			colorKey = n.colorKey
