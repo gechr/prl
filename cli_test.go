@@ -97,6 +97,17 @@ func TestValidate_GroupRejectsInvalidKey(t *testing.T) {
 	)
 }
 
+func TestGroupKeys_DeduplicatesInFirstSeenOrder(t *testing.T) {
+	cli := &CLI{
+		Group: CSVFlag{Values: []string{"author", "state", "repo", "repo", "author"}},
+	}
+
+	keys, err := cli.GroupKeys()
+
+	require.NoError(t, err)
+	require.Equal(t, []groupKey{groupAuthor, groupState, groupRepo}, keys)
+}
+
 func TestValidate_GroupMutualExclusion(t *testing.T) {
 	tests := map[string]struct {
 		mutate func(*CLI)

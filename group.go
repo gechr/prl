@@ -580,13 +580,14 @@ func groupStack(blocks [][]string, nested bool) []string {
 	return lines
 }
 
-// groupGrid lays blocks out column-major - read down one column, then continue
-// at the top of the next. Columns are as tall as the terminal allows (so a
-// breakdown that fits the height stays a single stacked column) and only grow
-// taller when more columns than fit termWidth would otherwise be needed.
-// Blocks stay whole within a column, blank-separated when nested. Falls back
-// to a single stacked column when the width is unknown, or to the fewest rows
-// that fit the width when only the height is unknown.
+// groupGrid lays blocks out in columns. Columns are as tall as the terminal
+// allows (so a breakdown that fits the height stays a single stacked column)
+// and only grow taller when more columns than fit termWidth would otherwise be
+// needed. When flowing blocks left-to-right produces a shorter grid, that
+// layout wins over the initial column-major split. Blocks stay whole within a
+// column, blank-separated when nested. Falls back to a single stacked column
+// when the width is unknown, or to the fewest rows that fit the width when only
+// the height is unknown.
 func groupGrid(blocks [][]string, nested bool, termWidth, termHeight int) []string {
 	if len(blocks) == 0 {
 		return nil
@@ -613,7 +614,8 @@ func groupGrid(blocks [][]string, nested bool, termWidth, termHeight int) []stri
 	for ; ; limit++ {
 		cols := groupSplit(blocks, sep, limit)
 		if len(cols) == 1 || limit >= total || groupGridWidth(cols) <= termWidth {
-			return groupJoin(groupBalance(blocks, sep, limit, termWidth, cols))
+			cols = groupBalance(blocks, sep, limit, termWidth, cols)
+			return groupJoin(groupBestFit(blocks, sep, termWidth, cols))
 		}
 	}
 }
@@ -654,6 +656,54 @@ func groupSplit(blocks [][]string, sep, limit int) [][]string {
 		cur = append(cur, b...)
 	}
 	return append(cols, cur)
+}
+
+// groupBestFit compares the column-major split with left-to-right flows and
+// returns the shortest layout that fits the terminal width. A single stacked
+// column remains stacked because it already fits the terminal height.
+func groupBestFit(blocks [][]string, sep, termWidth int, cols [][]string) [][]string {
+	if len(cols) <= 1 {
+		return cols
+	}
+	best := cols
+	bestHeight := groupGridHeight(best)
+	for count := 2; count <= len(blocks); count++ {
+		flowed := groupFlow(blocks, sep, count)
+		height := groupGridHeight(flowed)
+		if height < bestHeight && groupGridWidth(flowed) <= termWidth {
+			best = flowed
+			bestHeight = height
+		}
+	}
+	return best
+}
+
+// groupFlow starts columns from left to right, then places each remaining
+// block beneath the shortest column. Ties prefer the leftmost column.
+func groupFlow(blocks [][]string, sep, count int) [][]string {
+	cols := make([][]string, count)
+	for _, block := range blocks {
+		shortest := 0
+		for i := 1; i < len(cols); i++ {
+			if len(cols[i]) < len(cols[shortest]) {
+				shortest = i
+			}
+		}
+		if len(cols[shortest]) > 0 && sep > 0 {
+			cols[shortest] = append(cols[shortest], "")
+		}
+		cols[shortest] = append(cols[shortest], block...)
+	}
+	return cols
+}
+
+// groupGridHeight is the height of the tallest rendered column.
+func groupGridHeight(cols [][]string) int {
+	height := 0
+	for _, col := range cols {
+		height = max(height, len(col))
+	}
+	return height
 }
 
 // groupColWidth is the width of a column's widest line.

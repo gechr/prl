@@ -458,6 +458,32 @@ func TestGroupGrid_BalancesColumns(t *testing.T) {
 	require.Equal(t, "a9", lines[9])
 }
 
+func TestGroupGrid_FlowsLeftToRightWhenShorter(t *testing.T) {
+	mk := func(prefix string, n int) []string {
+		lines := make([]string, 0, n)
+		for i := range n {
+			lines = append(lines, fmt.Sprintf("%s-%d", prefix, i))
+		}
+		return lines
+	}
+	blocks := [][]string{
+		mk("item-a", 10),
+		mk("item-b", 8),
+		mk("item-c", 7),
+		mk("item-d", 3),
+		mk("item-e", 2),
+	}
+
+	lines := groupGrid(blocks, true, 28, 10)
+
+	require.Len(t, lines, 11)
+	require.Equal(t, "item-a-0  item-b-0  item-c-0", lines[0])
+	require.Equal(t, "item-a-7  item-b-7", lines[7])
+	require.Equal(t, "item-a-8            item-d-0", lines[8])
+	require.Equal(t, "item-a-9  item-e-0  item-d-1", lines[9])
+	require.Equal(t, "          item-e-1  item-d-2", lines[10])
+}
+
 func TestRenderGroup_GridFillsWidth(t *testing.T) {
 	// All four buckets fit side by side in an 80-column terminal, so the
 	// breakdown collapses to a single row.

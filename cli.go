@@ -9,6 +9,7 @@ import (
 	"github.com/gechr/clog"
 	"github.com/gechr/conductor"
 	cli "github.com/gechr/conductor/cli/kong"
+	xslices "github.com/gechr/x/slices"
 	xstrings "github.com/gechr/x/strings"
 )
 
@@ -639,7 +640,7 @@ func (c *CLI) GroupKeys() ([]groupKey, error) {
 		}
 		keys = append(keys, k)
 	}
-	return keys, nil
+	return xslices.Unique(keys), nil
 }
 
 // QueryString joins positional arguments into a search query.
