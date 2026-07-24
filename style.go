@@ -3,10 +3,10 @@ package main
 import (
 	"image/color"
 	"strings"
-	"sync"
 
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/clib/theme"
+	xpalette "github.com/gechr/x/palette"
 )
 
 // Color palette. Each entry adapts to the terminal background and is populated
@@ -194,9 +194,8 @@ func initPalette(isLight bool) {
 type prl struct {
 	theme *theme.Theme
 
-	entityColorMu sync.Mutex
-	entityColors  map[string]int
-	nextColor     int
+	// entityAssigner hands out stable, distinct colors per entity key.
+	entityAssigner *xpalette.Assigner
 }
 
 // New creates a new prl with a background-adaptive theme. theme.Auto detects
@@ -205,12 +204,14 @@ type prl struct {
 func New() *prl {
 	th := theme.Auto()
 	initPalette(th.Background == theme.BackgroundLight)
+
+	entityPalette := xpalette.TrueColorDark()
+	if th.Background == theme.BackgroundLight {
+		entityPalette = xpalette.TrueColorLight()
+	}
 	return &prl{
-		theme: th.With(
-			theme.WithEnumStyle(theme.EnumStyleHighlightBoth),
-			theme.WithTrueColor(),
-		),
-		entityColors: make(map[string]int),
+		theme:          th.With(theme.WithEnumStyle(theme.EnumStyleHighlightBoth)),
+		entityAssigner: xpalette.NewAssigner(entityPalette...),
 	}
 }
 
@@ -220,29 +221,15 @@ func (p *prl) RenderBold(s string) string { return p.theme.Bold.Render(s) }
 // RenderDim renders text in dim using the theme.
 func (p *prl) RenderDim(s string) string { return p.theme.Dim.Render(s) }
 
-// EntityColors returns the theme's entity color palette.
-func (p *prl) EntityColors() []color.Color { return p.theme.EntityColors }
+// EntityColors returns the entity color palette. It satisfies the
+// primer/table.Theme interface consumed by the table renderer.
+func (p *prl) EntityColors() []color.Color { return p.entityAssigner.Palette() }
 
-// AssignEntityColor returns a stable session-scoped color for the given key.
+// AssignEntityColor returns a stable, distinct color for the given key: distinct
+// keys receive distinct colors until the palette is exhausted, and a key keeps
+// its color for the session.
 func (p *prl) AssignEntityColor(key string) color.Color {
-	colors := p.EntityColors()
-	if len(colors) == 0 {
-		return nil
-	}
-
-	key = strings.ToLower(key)
-
-	p.entityColorMu.Lock()
-	defer p.entityColorMu.Unlock()
-
-	if idx, ok := p.entityColors[key]; ok {
-		return colors[idx]
-	}
-
-	idx := p.nextColor % len(colors)
-	p.entityColors[key] = idx
-	p.nextColor++
-	return colors[idx]
+	return p.entityAssigner.Assign(strings.ToLower(key))
 }
 
 // prMergeStyle returns the lipgloss style for an open PR based on its merge readiness.
