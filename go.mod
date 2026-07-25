@@ -16,9 +16,9 @@ require (
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/gechr/clib v0.7.11
 	github.com/gechr/clive v0.4.9
-	github.com/gechr/clog v0.15.5
-	github.com/gechr/primer v0.1.3
-	github.com/gechr/x v0.5.6
+	github.com/gechr/clog v0.15.6
+	github.com/gechr/primer v0.1.4
+	github.com/gechr/x v0.5.7
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/confmap v1.0.0
@@ -27,6 +27,8 @@ require (
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/stretchr/testify v1.11.1
 )
+
+require github.com/gechr/forge v0.0.4
 
 require (
 	4d63.com/gocheckcompilerdirectives v1.3.0 // indirect
