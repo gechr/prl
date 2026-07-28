@@ -9,6 +9,7 @@ import (
 	"github.com/gechr/clog"
 	"github.com/gechr/conductor"
 	cli "github.com/gechr/conductor/cli/kong"
+	xfilepath "github.com/gechr/x/filepath"
 	xslices "github.com/gechr/x/slices"
 	xstrings "github.com/gechr/x/strings"
 )
@@ -133,7 +134,7 @@ func (c *CLI) Validate() error {
 
 	// Resolve filesystem paths to their GitHub remote owner/repo.
 	for i, v := range c.Repo.Values {
-		if !isPathLike(v) {
+		if !xfilepath.LooksLikePath(v) {
 			continue
 		}
 		owner, repo, err := gitRemoteOwnerRepo(v)
@@ -143,7 +144,7 @@ func (c *CLI) Validate() error {
 		c.Repo.Values[i] = owner + "/" + repo
 	}
 	for i, v := range c.Owner.Values {
-		if !isPathLike(v) {
+		if !xfilepath.LooksLikePath(v) {
 			continue
 		}
 		owner, _, err := gitRemoteOwnerRepo(v)

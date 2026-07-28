@@ -145,16 +145,3 @@ func splitOwnerRepo(path string) (string, string, error) {
 	}
 	return "", "", fmt.Errorf("could not parse owner/repo from remote path %q", path)
 }
-
-// isPathLike reports whether a CLI repo/owner value should be interpreted as
-// a filesystem path rather than a GitHub owner or owner/repo slug. GitHub
-// owners cannot begin with "." or "/" or "~", so these prefixes unambiguously
-// signal a path.
-func isPathLike(s string) bool {
-	for _, p := range []string{".", "/", "~"} {
-		if strings.HasPrefix(s, p) {
-			return true
-		}
-	}
-	return false
-}
