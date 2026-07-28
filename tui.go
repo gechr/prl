@@ -3022,7 +3022,14 @@ func runTui(
 	}
 
 	cache := newListMetadataCache()
-	cachedPRs, cachedOK, cachedErr := loadListResultCache(cli, params)
+	// Old results are misleading during the background refresh (for example,
+	// already-closed PRs remain visible), so only seed the TUI from a recent
+	// snapshot.
+	cachedPRs, cachedOK, cachedErr := loadListResultCache(
+		cli,
+		params,
+		tuiListResultCacheMaxAge,
+	)
 	if cachedErr != nil {
 		clog.Debug().Err(cachedErr).Msg("list cache load failed")
 	}

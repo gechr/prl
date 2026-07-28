@@ -368,7 +368,9 @@ func runWatch(
 		initialCLI = cloneCLI(cli)
 		initialCLI.Quick = true
 	}
-	cachedPRs, cachedOK, cachedErr := loadListResultCache(cli, params)
+	// Watch mode keeps its previous startup behaviour and can render any saved
+	// result immediately while it refreshes in the background.
+	cachedPRs, cachedOK, cachedErr := loadListResultCache(cli, params, 0)
 	if cachedErr != nil {
 		clog.Debug().Err(cachedErr).Msg("list cache load failed")
 	}

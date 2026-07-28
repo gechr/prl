@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	listResultCacheVersion  = 2
-	listResultCacheDirPerm  = 0o755
-	listResultCacheFilePerm = 0o600
+	listResultCacheVersion   = 2
+	listResultCacheDirPerm   = 0o755
+	listResultCacheFilePerm  = 0o600
+	tuiListResultCacheMaxAge = 15 * time.Minute
 )
 
 type listResultCacheFile struct {
@@ -156,7 +157,11 @@ func saveListResultCache(cli *CLI, params *SearchParams, prs []PullRequest) erro
 	return xos.AtomicWrite(path, data, listResultCacheFilePerm)
 }
 
-func loadListResultCache(cli *CLI, params *SearchParams) ([]PullRequest, bool, error) {
+func loadListResultCache(
+	cli *CLI,
+	params *SearchParams,
+	maxAge time.Duration,
+) ([]PullRequest, bool, error) {
 	path, key, err := listResultCachePath(cli, params)
 	if err != nil {
 		return nil, false, err
@@ -173,6 +178,9 @@ func loadListResultCache(cli *CLI, params *SearchParams) ([]PullRequest, bool, e
 		return nil, false, fmt.Errorf("parsing list cache: %w", err)
 	}
 	if cache.Version != listResultCacheVersion || cache.Key != key {
+		return nil, false, nil
+	}
+	if maxAge > 0 && (cache.SavedAt.IsZero() || time.Since(cache.SavedAt) > maxAge) {
 		return nil, false, nil
 	}
 	prs := make([]PullRequest, len(cache.PRs))
