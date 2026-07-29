@@ -35,6 +35,33 @@ func TestNormalize_PreservesNegationWhenResolvingTeamAlias(t *testing.T) {
 	require.Equal(t, []string{"!acme/operations"}, c.Team.Values)
 }
 
+func TestNormalize_CopilotUserAlias(t *testing.T) {
+	author := CSVFlag{Values: []string{"Copilot"}}
+	c := &CLI{
+		Author:          &author,
+		Commenter:       CSVFlag{Values: []string{"copilot"}},
+		Involves:        CSVFlag{Values: []string{"!COPILOT"}},
+		ReviewRequested: CSVFlag{Values: []string{"copilot", "team:copilot"}},
+		ReviewedBy:      CSVFlag{Values: []string{"-copilot"}},
+		ClosedBy:        CSVFlag{Values: []string{"copilot"}},
+		MergedBy:        CSVFlag{Values: []string{"alice"}},
+	}
+
+	c.Normalize(&Config{})
+
+	require.Equal(t, []string{copilotReviewer}, c.Author.Values)
+	require.Equal(t, []string{copilotReviewer}, c.Commenter.Values)
+	require.Equal(t, []string{"!" + copilotReviewer}, c.Involves.Values)
+	require.Equal(
+		t,
+		[]string{copilotReviewer, "team:copilot"},
+		c.ReviewRequested.Values,
+	)
+	require.Equal(t, []string{"-" + copilotReviewer}, c.ReviewedBy.Values)
+	require.Equal(t, []string{copilotReviewer}, c.ClosedBy.Values)
+	require.Equal(t, []string{"alice"}, c.MergedBy.Values)
+}
+
 func TestQueryString(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -128,6 +128,8 @@ prl -o json
 | `--archived`             |       | Include archived repos                                      |
 | `--draft` / `--no-draft` |       | Filter by draft state                                       |
 
+For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-request-reviewer[bot]`.
+
 ### Interactive Actions
 
 | Flag                     | Short | Description                                  |

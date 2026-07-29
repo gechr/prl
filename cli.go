@@ -26,6 +26,18 @@ func normalizeReviewFilterValue(value string) string {
 	return strings.ReplaceAll(strings.ToLower(value), "-", "_")
 }
 
+func normalizeUserAlias(value string) string {
+	prefix := ""
+	user := value
+	if strings.HasPrefix(user, "!") || strings.HasPrefix(user, "-") {
+		prefix, user = user[:1], user[1:]
+	}
+	if strings.EqualFold(user, "copilot") {
+		return prefix + copilotReviewer
+	}
+	return value
+}
+
 // CLI represents the command-line interface.
 type CLI struct {
 	// Embedded flags (hidden)
@@ -381,6 +393,8 @@ func (c *CLI) Normalize(cfg *Config) {
 		for i, v := range c.Author.Values {
 			if strings.ToLower(v) == valueAny {
 				c.Author.Values[i] = valueAll
+			} else {
+				c.Author.Values[i] = normalizeUserAlias(v)
 			}
 		}
 	}
@@ -397,6 +411,18 @@ func (c *CLI) Normalize(cfg *Config) {
 	c.Involves.Values = normalizeCSV(c.Involves.Values)
 	c.ReviewRequested.Values = normalizeCSV(c.ReviewRequested.Values)
 	c.ReviewedBy.Values = normalizeCSV(c.ReviewedBy.Values)
+	for _, values := range [][]string{
+		c.Commenter.Values,
+		c.Involves.Values,
+		c.ReviewRequested.Values,
+		c.ReviewedBy.Values,
+		c.ClosedBy.Values,
+		c.MergedBy.Values,
+	} {
+		for i, value := range values {
+			values[i] = normalizeUserAlias(value)
+		}
+	}
 
 	// Normalize owner
 	c.Owner.Values = normalizeCSV(c.Owner.Values)
