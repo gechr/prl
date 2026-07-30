@@ -35,6 +35,20 @@ func TestNormalize_PreservesNegationWhenResolvingTeamAlias(t *testing.T) {
 	require.Equal(t, []string{"!acme/operations"}, c.Team.Values)
 }
 
+func TestNormalizeUserAlias_Me(t *testing.T) {
+	tests := map[string]string{
+		"me":  "@me",
+		"ME":  "@me",
+		"!me": "!@me",
+		"-Me": "-@me",
+	}
+	for input, expected := range tests {
+		t.Run(input, func(t *testing.T) {
+			require.Equal(t, expected, normalizeUserAlias(input))
+		})
+	}
+}
+
 func TestNormalize_CopilotUserAlias(t *testing.T) {
 	author := CSVFlag{Values: []string{"Copilot"}}
 	c := &CLI{

@@ -26,14 +26,19 @@ func normalizeReviewFilterValue(value string) string {
 	return strings.ReplaceAll(strings.ToLower(value), "-", "_")
 }
 
+var userAliases = map[string]string{
+	valueCopilot: copilotReviewer,
+	"me":         valueAtMe,
+}
+
 func normalizeUserAlias(value string) string {
 	prefix := ""
 	user := value
 	if strings.HasPrefix(user, "!") || strings.HasPrefix(user, "-") {
 		prefix, user = user[:1], user[1:]
 	}
-	if strings.EqualFold(user, "copilot") {
-		return prefix + copilotReviewer
+	if resolved, ok := userAliases[strings.ToLower(user)]; ok {
+		return prefix + resolved
 	}
 	return value
 }

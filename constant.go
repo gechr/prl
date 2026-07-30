@@ -27,6 +27,7 @@ const (
 	valueChannel  = "channel"
 	valueClosed   = "closed"
 	valueConflict = "conflict"
+	valueCopilot  = "copilot"
 	valueCreated  = "created"
 	valueDeleted  = "deleted"
 	valueDesc     = "desc"
@@ -328,7 +329,7 @@ const (
 	tuiHelpAutomerge    = "automerge"
 	tuiHelpClose        = "close"
 	tuiHelpComment      = "comment"
-	tuiHelpCopilot      = "copilot"
+	tuiHelpCopilot      = valueCopilot
 	tuiHelpCopy         = "copy"
 	tuiHelpDiff         = "diff"
 	tuiHelpDismiss      = "dismiss"
