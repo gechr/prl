@@ -2387,7 +2387,7 @@ func (m tuiModel) listHelpPairs() []key.Hint {
 		key.Hint{Key: tuiKeybindOpen, Desc: tuiHelpOpen},
 		key.Hint{Key: tuiKeybindCopyURL, Desc: tuiHelpCopy},
 	)
-	if actionable && !ctx.draft && hasAIReviewLauncher() {
+	if actionable && hasAIReviewLauncher() {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindReview, Desc: tuiHelpReview})
 	}
 	if m.autoRefresh {
@@ -2484,7 +2484,7 @@ func (m tuiModel) diffHelpPairs() []key.Hint {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindSlack, Desc: tuiHelpSlack})
 	}
 
-	if actionable && !ctx.draft && hasAIReviewLauncher() {
+	if actionable && hasAIReviewLauncher() {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindReview, Desc: tuiHelpReview})
 	}
 	if actionable && !ctx.draft {
@@ -2533,7 +2533,7 @@ func (m tuiModel) detailHelpPairs() []key.Hint {
 	if actionable && m.detail.MergeableState == valueBehind {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindUpdateBranch, Desc: tuiHelpUpdateBranch})
 	}
-	if actionable && !ctx.draft && hasAIReviewLauncher() {
+	if actionable && hasAIReviewLauncher() {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindReview, Desc: tuiHelpReview})
 	}
 	if actionable && !ctx.draft {

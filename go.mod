@@ -16,15 +16,15 @@ require (
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/gechr/clib v0.7.16
 	github.com/gechr/clive v0.4.9
-	github.com/gechr/clog v0.15.6
+	github.com/gechr/clog v0.15.9
 	github.com/gechr/primer v0.1.4
-	github.com/gechr/x v0.5.11
+	github.com/gechr/x v0.5.15
 	github.com/goccy/go-yaml v1.19.2
-	github.com/knadh/koanf/parsers/yaml v1.1.0
-	github.com/knadh/koanf/providers/confmap v1.0.0
+	github.com/knadh/koanf/parsers/yaml v1.1.1
+	github.com/knadh/koanf/providers/confmap v1.0.1
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.1
-	github.com/knadh/koanf/v2 v2.3.5
+	github.com/knadh/koanf/v2 v2.3.6
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -165,7 +165,7 @@ require (
 	github.com/ldez/tagliatelle v0.7.2 // indirect
 	github.com/ldez/usetesting v0.5.0 // indirect
 	github.com/leonklingele/grouper v1.1.2 // indirect
-	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/macabu/inamedparam v0.2.0 // indirect
 	github.com/magiconair/properties v1.8.6 // indirect
 	github.com/manuelarte/embeddedstructfieldcheck v0.4.0 // indirect
