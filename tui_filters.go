@@ -123,7 +123,7 @@ var filterOptionDefs = [...]filterOptionDef{
 	},
 	{"Review", []filterChoice{
 		{valueReviewFilterRequired, valueReviewFilterRequired},
-		{"self req", valueReviewFilterSelfRequired},
+		{"self", valueReviewFilterSelfRequired},
 		{valueReviewFilterApproved, valueReviewFilterApproved},
 		{"changes", valueReviewFilterChanges},
 		{valueReviewFilterNone, valueReviewFilterNone},
@@ -373,6 +373,10 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 
 	m.persistFilterState()
 
+	// Hide rows that clearly no longer match so the list updates immediately;
+	// the background refresh replaces this with authoritative results.
+	m.filterHidden = m.locallyFilteredKeys()
+
 	// Recompute cursor/offset since viewport may change (filter indicator line).
 	m.resyncCursorAndOffset()
 
@@ -411,6 +415,92 @@ func (m tuiModel) persistFilterState() {
 	if err := saveTUIState(m.cfg); err != nil {
 		warnStateSaveErr(err, "filter settings")
 	}
+}
+
+// locallyFilteredKeys returns the keys of loaded rows that no longer match the
+// active filters, judged from data already in memory. It is deliberately
+// one-directional and conservative: it only ever hides rows, and skips any
+// criterion it can't evaluate offline (archived repos, unhydrated review
+// decisions), leaving those rows visible until the refresh settles it.
+func (m tuiModel) locallyFilteredKeys() prKeys {
+	if m.cli == nil {
+		return nil
+	}
+	hidden := make(prKeys)
+	for i := range m.rows {
+		if !m.matchesLocalFilters(m.rows[i].Item) {
+			hidden[m.rowKeyAt(i)] = true
+		}
+	}
+	if len(hidden) == 0 {
+		return nil
+	}
+	return hidden
+}
+
+// matchesLocalFilters reports whether a loaded row still satisfies the filters
+// that can be evaluated without hitting the API.
+func (m tuiModel) matchesLocalFilters(item PRRowModel) bool {
+	pr := item.PR
+	switch m.cli.PRState() {
+	case StateOpen:
+		if !strings.EqualFold(pr.State, valueOpen) {
+			return false
+		}
+	case StateClosed:
+		if !strings.EqualFold(pr.State, valueClosed) {
+			return false
+		}
+	case StateMerged:
+		if !strings.EqualFold(pr.State, valueMerged) {
+			return false
+		}
+	case StateReady:
+		if pr.MergeStatus != MergeStatusReady {
+			return false
+		}
+	case StateAll:
+	}
+	if m.cli.Draft != nil && !*m.cli.Draft && pr.IsDraft {
+		return false
+	}
+	if m.cli.NoBot && item.Author.IsBot {
+		return false
+	}
+	if ci := m.cli.CIStatus(); ci != CINone && !matchesCI(pr, ci) {
+		return false
+	}
+	return m.matchesLocalReviewFilter(pr)
+}
+
+// matchesLocalReviewFilter maps the review filter onto the PR's cached review
+// decision. PRs without a hydrated decision are kept, since we can't tell.
+func (m tuiModel) matchesLocalReviewFilter(pr PullRequest) bool {
+	if m.cli.Review == "" || !pr.reviewDecisionLoaded {
+		return true
+	}
+	switch m.cli.Review {
+	case valueReviewFilterApproved:
+		return pr.ReviewDecision == valueReviewApproved
+	case valueReviewFilterChanges:
+		return pr.ReviewDecision == valueReviewChanges
+	case valueReviewFilterNone:
+		return pr.ReviewDecision != valueReviewApproved && pr.ReviewDecision != valueReviewChanges
+	case valueReviewFilterRequired, valueReviewFilterSelfRequired:
+		if pr.ReviewDecision != valueReviewRequired {
+			return false
+		}
+		if m.cli.Review != valueReviewFilterSelfRequired {
+			return true
+		}
+		// Self-required additionally drops PRs the viewer authored or has
+		// already approved.
+		if m.isCurrentUserPR(pr) {
+			return false
+		}
+		return !pr.viewerApprovalLoaded || !pr.viewerApproved
+	}
+	return true
 }
 
 func (m tuiModel) renderOptionsOverlay() string {

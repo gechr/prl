@@ -1149,24 +1149,26 @@ const maxEnrichCount = 50
 func filterByCI(prs []PullRequest, ci CIStatus) []PullRequest {
 	result := make([]PullRequest, 0, len(prs))
 	for _, pr := range prs {
-		switch ci {
-		case CISuccess:
-			if pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusBlocked {
-				result = append(result, pr)
-			}
-		case CIFailure:
-			if pr.MergeStatus == MergeStatusCIFailed {
-				result = append(result, pr)
-			}
-		case CIPending:
-			if pr.MergeStatus == MergeStatusCIPending {
-				result = append(result, pr)
-			}
-		case CINone:
-			break
+		if matchesCI(pr, ci) {
+			result = append(result, pr)
 		}
 	}
 	return result
+}
+
+// matchesCI reports whether a PR's enriched MergeStatus satisfies the CI filter.
+func matchesCI(pr PullRequest, ci CIStatus) bool {
+	switch ci {
+	case CISuccess:
+		return pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusBlocked
+	case CIFailure:
+		return pr.MergeStatus == MergeStatusCIFailed
+	case CIPending:
+		return pr.MergeStatus == MergeStatusCIPending
+	case CINone:
+		return false
+	}
+	return false
 }
 
 // filterReady keeps only PRs with MergeStatusReady (CI passing + approved).

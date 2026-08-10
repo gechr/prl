@@ -438,6 +438,10 @@ type tuiModel struct {
 	// Filter options overlay.
 	showOptions   bool
 	optionsPicker picker.Model
+	// filterHidden holds rows hidden client-side because they no longer match
+	// the filters just applied via the overlay. It keeps the list responsive
+	// while the authoritative refresh runs, and is dropped once it lands.
+	filterHidden prKeys
 
 	// Diff queue for sequential multi-PR review.
 	diffQueue      []prKey // remaining PR keys to diff through
@@ -1286,6 +1290,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastRefreshAt = time.Now()
 		m.dismissedEmpty = false
+		// Fresh results are authoritative; drop the optimistic client-side
+		// filtering before recomputing cursor/offset against the new rows.
+		m.filterHidden = nil
 		// Re-apply sort to fresh rows before merging state.
 		rows := msg.rows
 		if m.sortColumn != "" {
@@ -2158,12 +2165,19 @@ func advanceDiffQueue(m *tuiModel) tea.Cmd {
 	return nil
 }
 
+// isRowHidden reports whether a row is excluded from the list, either because
+// it was acted on (removed) or because it no longer matches the filters applied
+// while a refresh is still in flight.
+func (m tuiModel) isRowHidden(key prKey) bool {
+	return m.removed[key] || m.filterHidden[key]
+}
+
 func (m tuiModel) visibleIndices() []int {
 	indices := make([]int, 0, len(m.rows))
 	f := strings.TrimSpace(m.filterInput.Value())
 	if f == "" {
 		for i := range m.rows {
-			if !m.removed[m.rowKeyAt(i)] {
+			if !m.isRowHidden(m.rowKeyAt(i)) {
 				indices = append(indices, i)
 			}
 		}
@@ -2172,7 +2186,7 @@ func (m tuiModel) visibleIndices() []int {
 
 	term := filter.Parse(f)
 	for i := range m.rows {
-		if m.removed[m.rowKeyAt(i)] {
+		if m.isRowHidden(m.rowKeyAt(i)) {
 			continue
 		}
 		text := rowFilterText(m.rows[i])
@@ -2329,7 +2343,7 @@ func (m tuiModel) rerender() (string, []TableRow, []int) {
 }
 
 func (m tuiModel) currentPR() *PullRequest {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.removed[m.rowKeyAt(m.cursor)] {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) {
 		return nil
 	}
 	pr := m.rows[m.cursor].Item.PR
@@ -2337,7 +2351,7 @@ func (m tuiModel) currentPR() *PullRequest {
 }
 
 func (m *tuiModel) toggleCurrentSelection() bool {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.removed[m.rowKeyAt(m.cursor)] {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) {
 		return false
 	}
 	key := m.rowKeyAt(m.cursor)
@@ -2350,7 +2364,7 @@ func (m *tuiModel) toggleCurrentSelection() bool {
 }
 
 func (m *tuiModel) extendSelectionAndMove(dir int) {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.removed[m.rowKeyAt(m.cursor)] {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) {
 		return
 	}
 	m.selected[m.rowKeyAt(m.cursor)] = true

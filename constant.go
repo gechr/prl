@@ -128,6 +128,7 @@ const (
 	valueReviewApproved  = "APPROVED"
 	valueReviewChanges   = "CHANGES_REQUESTED"
 	valueReviewDismissed = "DISMISSED"
+	valueReviewRequired  = "REVIEW_REQUIRED"
 )
 
 const (

@@ -2057,7 +2057,7 @@ func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
 
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m    \x1b[2m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2;38;5;240mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2;38;5;240mready\x1b[m  \x1b[2;38;5;240mall\x1b[m\x1b[2m  (CLI)\x1b[m           \x1b[38;5;198m│\x1b[m",
+		"\x1b[38;5;198m│\x1b[m    \x1b[2m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2;38;5;240mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2;38;5;240mready\x1b[m  \x1b[2;38;5;240mall\x1b[m\x1b[2m  (CLI)\x1b[m       \x1b[38;5;198m│\x1b[m",
 		strings.Split(overlay, nl)[2],
 	)
 }
@@ -2075,7 +2075,7 @@ func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
 
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m  \x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m❯ \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m  Drafts  \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;218m\x1b[48;2;40;10;30mshow\x1b[m\x1b[48;2;40;10;30m  \x1b[2m\x1b[48;2;40;10;30mhide\x1b[m\x1b[48;2;40;10;30m                                      \x1b[0m  \x1b[38;5;198m│\x1b[m",
+		"\x1b[38;5;198m│\x1b[m  \x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m❯ \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m  Drafts  \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;218m\x1b[48;2;40;10;30mshow\x1b[m\x1b[48;2;40;10;30m  \x1b[2m\x1b[48;2;40;10;30mhide\x1b[m\x1b[48;2;40;10;30m                                  \x1b[0m  \x1b[38;5;198m│\x1b[m",
 		strings.Split(overlay, nl)[3],
 	)
 }
@@ -2099,7 +2099,7 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 	m.optionsPicker.Cursor = int(filterRowDraft)
 
 	// Default state (open) renders bold as the selected choice.
-	boldStateRow := "\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[1;38;5;218mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                  \x1b[38;5;198m│\x1b[m"
+	boldStateRow := "\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[1;38;5;218mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m              \x1b[38;5;198m│\x1b[m"
 
 	overlay := m.renderOptionsOverlay()
 	require.Equal(t, boldStateRow, strings.Split(overlay, nl)[2])
@@ -2115,7 +2115,7 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 	// With closed selected, the default (open) uses the muted default-choice style.
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[1;38;5;218mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                  \x1b[38;5;198m│\x1b[m",
+		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[1;38;5;218mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m              \x1b[38;5;198m│\x1b[m",
 		strings.Split(overlay, nl)[2],
 	)
 }
@@ -2467,6 +2467,115 @@ func TestApplyTUIFilterDefaultsIgnoresLegacyDraftTrue(t *testing.T) {
 
 	require.False(t, changed)
 	require.Nil(t, cli.Draft)
+}
+
+func testFilterRow(number int, mutate func(*PRRowModel)) TableRow {
+	item := PRRowModel{
+		PR: PullRequest{
+			Number:     number,
+			State:      valueOpen,
+			Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"},
+		},
+	}
+	if mutate != nil {
+		mutate(&item)
+	}
+	return TableRow{Item: item}
+}
+
+func TestApplyFilterOptionsHidesNonMatchingRowsImmediately(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	human := testFilterRow(1, nil)
+	bot := testFilterRow(2, func(item *PRRowModel) {
+		item.Author.IsBot = true
+	})
+	draft := testFilterRow(3, func(item *PRRowModel) {
+		item.PR.IsDraft = true
+	})
+
+	m := tuiModel{
+		cli:         testCLI(),
+		cfg:         &Config{},
+		styles:      newTuiStyles(),
+		rows:        []TableRow{human, bot, draft},
+		items:       []PRRowModel{human.Item, bot.Item, draft.Item},
+		height:      20,
+		width:       120,
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		p:           testPRL,
+	}
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Values[filterRowBots] = filterChoiceIndex(filterRowBots, filterChoiceTrue)
+	m.optionsPicker.Values[filterRowDraft] = filterChoiceIndex(filterRowDraft, filterChoiceFalse)
+
+	model, cmd := m.applyFilterOptions()
+	require.NotNil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+
+	// Rows stay loaded, but the bot and draft PRs drop out of view right away.
+	require.Len(t, bm.rows, 3)
+	require.Equal(t, []int{0}, bm.visibleIndices())
+	require.True(t, bm.filterHidden[makePRKey(bot.Item.PR)])
+	require.True(t, bm.filterHidden[makePRKey(draft.Item.PR)])
+}
+
+func TestRefreshResultClearsLocalFilterHiding(t *testing.T) {
+	row := testFilterRow(1, func(item *PRRowModel) {
+		item.Author.IsBot = true
+	})
+
+	m := tuiModel{
+		cli:         testCLI(),
+		cfg:         &Config{},
+		styles:      newTuiStyles(),
+		rows:        []TableRow{row},
+		items:       []PRRowModel{row.Item},
+		height:      20,
+		width:       120,
+		filterInput: textinput.New(),
+		removed:     make(prKeys),
+		selected:    make(prKeys),
+		filterHidden: prKeys{
+			makePRKey(row.Item.PR): true,
+		},
+		p: testPRL,
+	}
+	require.Empty(t, m.visibleIndices())
+
+	model, _ := m.Update(refreshResultMsg{
+		rows:  []TableRow{row},
+		items: []PRRowModel{row.Item},
+	})
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+
+	require.Empty(t, bm.filterHidden)
+	require.Equal(t, []int{0}, bm.visibleIndices())
+}
+
+func TestMatchesLocalFiltersKeepsUnknownReviewDecision(t *testing.T) {
+	cli := testCLI()
+	cli.Review = valueReviewFilterApproved
+	m := tuiModel{cli: cli}
+
+	unhydrated := testFilterRow(1, nil).Item
+	require.True(t, m.matchesLocalFilters(unhydrated))
+
+	approved := testFilterRow(2, func(item *PRRowModel) {
+		item.PR.ReviewDecision = valueReviewApproved
+		item.PR.reviewDecisionLoaded = true
+	}).Item
+	require.True(t, m.matchesLocalFilters(approved))
+
+	changes := testFilterRow(3, func(item *PRRowModel) {
+		item.PR.ReviewDecision = valueReviewChanges
+		item.PR.reviewDecisionLoaded = true
+	}).Item
+	require.False(t, m.matchesLocalFilters(changes))
 }
 
 func TestApplyFilterOptionsResetClearsOverridesAndRestoresDefaults(t *testing.T) {
