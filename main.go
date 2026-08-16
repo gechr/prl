@@ -55,6 +55,9 @@ func main() {
 	if err != nil {
 		clog.Fatal().Err(err).Msg("Failed to load config")
 	}
+	mode, _ := parseIconMode(cfg.Icons)
+	useIcons(iconsFor(resolveIconMode(mode)))
+	applyLogSymbols()
 
 	root := CLI{prl: prl, cfg: cfg}
 	prog, err := cli.New(app, &root,
@@ -91,8 +94,12 @@ func exitCode(err error) int {
 // configureClog layers prl's voice over conductor's defaults; conductor runs
 // it via App.ConfigureLog.
 func configureClog() {
+	applyLogSymbols()
+}
+
+func applyLogSymbols() {
 	symbols := clog.DefaultSymbols()
-	symbols[clog.LevelInfo] = "✅"
+	symbols[clog.LevelInfo] = activeIcons.Approved
 	clog.SetSymbols(symbols)
 }
 

@@ -287,9 +287,15 @@ const (
 )
 
 const (
-	ciStatusSuccess = "success"
-	ciStatusFailure = "failure"
-	ciStatusPending = "pending"
+	ciConclusionActionRequired = "action_required"
+	ciConclusionCancelled      = "cancelled"
+	ciConclusionNeutral        = "neutral"
+	ciConclusionSkipped        = "skipped"
+	ciConclusionStale          = "stale"
+	ciConclusionTimedOut       = "timed_out"
+	ciStatusFailure            = "failure"
+	ciStatusPending            = "pending"
+	ciStatusSuccess            = "success"
 )
 
 func parseCIStatus(s string) (CIStatus, bool) {

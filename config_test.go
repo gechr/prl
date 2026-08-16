@@ -30,6 +30,7 @@ func TestSaveConfigKeyClearsPersistedSortWithoutPanic(t *testing.T) {
 	data, err := os.ReadFile(cp)
 	require.NoError(t, err)
 	content := string(data)
+	require.Equal(t, 1, strings.Count(content, "icons: auto"+nl))
 
 	sortIdx := strings.Index(content, "  sort:"+nl)
 	require.NotEqual(t, -1, sortIdx)
@@ -38,6 +39,22 @@ func TestSaveConfigKeyClearsPersistedSortWithoutPanic(t *testing.T) {
 
 	tail := "team_aliases: {}" + nl
 	require.Equal(t, tail, content[len(content)-len(tail):])
+}
+
+func TestLoadConfigRejectsInvalidIcons(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(t, os.WriteFile(cp, []byte("icons: bogus"+nl), 0o600))
+
+	_, err = loadConfig()
+	require.EqualError(
+		t,
+		err,
+		`invalid icons "bogus" (expected "auto", "unicode", or "nerd")`,
+	)
 }
 
 func TestLoadConfigRejectsInvalidAIReviewPromptPlaceholder(t *testing.T) {

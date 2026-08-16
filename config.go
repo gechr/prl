@@ -44,6 +44,7 @@ const (
 	keyDefaultReverse        = "default.reverse"
 	keyDefaultSort           = "default.sort"
 	keyDefaultState          = "default.state"
+	keyIcons                 = "icons"
 	keyPlugin                = "plugin"
 	keyIgnoredOwners         = "ignored_owners"
 	keyTeamAliases           = "team_aliases"
@@ -162,6 +163,9 @@ type Config struct {
 	// Defaults
 	Default Defaults `koanf:"default"`
 
+	// Icon settings
+	Icons string `koanf:"icons"`
+
 	// Clone settings
 	VCS string `koanf:"vcs"`
 
@@ -191,6 +195,7 @@ type Config struct {
 func defaultConfig() map[string]any {
 	return map[string]any{
 		keyAuthors:            map[string]string{},
+		keyIcons:              valueAuto,
 		keyVCS:                vcsGit,
 		keyDefaultAuthors:     []string{valueAtMe},
 		keyDefaultBots:        true,
@@ -425,7 +430,19 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("invalid tui.review.providers.gemini.prompt: %w", err)
 	}
 
-	// Validate VCS
+	// Validate icons and VCS
+	iconMode, ok := parseIconMode(cfg.Icons)
+	if !ok {
+		return nil, fmt.Errorf(
+			"invalid icons %q (expected %q, %q, or %q)",
+			cfg.Icons,
+			valueAuto,
+			valueUnicode,
+			valueNerd,
+		)
+	}
+	cfg.Icons = iconMode.String()
+
 	switch strings.ToLower(cfg.VCS) {
 	case vcsGit, vcsJJ:
 		cfg.VCS = strings.ToLower(cfg.VCS)
@@ -721,6 +738,11 @@ tui:
     # key: title
     # order: asc
 
+# Icon style used throughout output.
+# Options: auto, unicode, nerd
+# auto uses nerd icons when NERD_FONTS is non-empty; otherwise it uses unicode.
+icons: %[13]s
+
 # VCS used for --clone.
 # Options: git, jj
 vcs: %[6]s
@@ -779,6 +801,7 @@ team_aliases: {}
 		"`{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`",
 		indentBlock(defaultReviewPromptTemplate(reviewProviderCodex), promptBlockIndent),
 		indentBlock(defaultReviewPromptTemplate(reviewProviderGemini), promptBlockIndent),
+		valueAuto,
 	)
 }()
 

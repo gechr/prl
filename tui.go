@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"image/color"
 	"math"
 	"os"
 	"slices"
@@ -94,22 +95,22 @@ func newTuiStyles() tuiStyles {
 			Border(lg.RoundedBorder()).
 			BorderForeground(colorAccent).
 			Padding(tuiConfirmPadY, tuiConfirmPadX),
-		confirmYes: lg.NewStyle().
+		confirmYes: pillButtonStyle(lg.NewStyle().
 			Background(colorOK).
 			Foreground(colorBlack).
 			Bold(true).
-			Padding(0, 1),
-		confirmYesDim: lg.NewStyle().
+			Padding(0, 1), colorOK, false),
+		confirmYesDim: pillButtonStyle(lg.NewStyle().
 			Foreground(colorOK).
-			Padding(0, 1),
-		confirmNo: lg.NewStyle().
+			Padding(0, 1), colorOK, true),
+		confirmNo: pillButtonStyle(lg.NewStyle().
 			Background(colorDanger).
 			Foreground(colorBlack).
 			Bold(true).
-			Padding(0, 1),
-		confirmNoDim: lg.NewStyle().
+			Padding(0, 1), colorDanger, false),
+		confirmNoDim: pillButtonStyle(lg.NewStyle().
 			Foreground(colorDanger).
-			Padding(0, 1),
+			Padding(0, 1), colorDanger, true),
 	}
 }
 
@@ -1975,17 +1976,17 @@ func (m tuiModel) renderDetailContent() []string {
 	if len(m.detail.Reviews) > 0 {
 		var parts []string
 		for _, r := range m.detail.Reviews {
-			icon := iconCommented
+			icon := activeIcons.Commented
 			switch r.State {
 			case valueReviewApproved:
-				icon = iconApproved
+				icon = activeIcons.Approved
 			case valueReviewChanges:
-				icon = iconRejected
+				icon = activeIcons.Rejected
 			case valueReviewDismissed:
-				icon = iconDismissed
+				icon = activeIcons.Dismissed
 			}
-			if isAuthorBot(r.User) && icon == iconCommented {
-				icon = iconCopilot
+			if isAuthorBot(r.User) && icon == activeIcons.Commented {
+				icon = activeIcons.Copilot
 			}
 			name := m.resolver.Resolve(r.User)
 			var link string
@@ -2013,28 +2014,40 @@ func (m tuiModel) renderDetailContent() []string {
 		lines = append(lines, "")
 		for _, c := range m.detail.Checks {
 			var icon string
+			var iconStyle lg.Style
 			switch {
 			case c.Status != ciStatusCompleted:
-				icon = "🔄"
+				icon = activeIcons.CIInProgress
+				iconStyle = styleWarning
 			case c.Conclusion == ciStatusSuccess:
-				icon = iconApproved
+				icon = activeIcons.Approved
+				iconStyle = styleOK
 			case c.Conclusion == ciStatusFailure:
-				icon = iconRejected
-			case c.Conclusion == "cancelled":
-				icon = iconDismissed
-			case c.Conclusion == "skipped":
-				icon = "⏭️"
-			case c.Conclusion == "timed_out":
-				icon = "⏱️"
-			case c.Conclusion == "action_required":
-				icon = "⚠️"
-			case c.Conclusion == "neutral":
-				icon = "➖"
-			case c.Conclusion == "stale":
-				icon = "💤"
+				icon = activeIcons.Rejected
+				iconStyle = styleDanger
+			case c.Conclusion == ciConclusionCancelled:
+				icon = activeIcons.Dismissed
+				iconStyle = styleDismiss
+			case c.Conclusion == ciConclusionSkipped:
+				icon = activeIcons.CISkipped
+				iconStyle = styleDim
+			case c.Conclusion == ciConclusionTimedOut:
+				icon = activeIcons.CITimedOut
+				iconStyle = styleDanger
+			case c.Conclusion == ciConclusionActionRequired:
+				icon = activeIcons.CIActionRequired
+				iconStyle = styleWarning
+			case c.Conclusion == ciConclusionNeutral:
+				icon = activeIcons.CINeutral
+				iconStyle = styleDim
+			case c.Conclusion == ciConclusionStale:
+				icon = activeIcons.CIStale
+				iconStyle = styleDim
 			default:
-				icon = "❓"
+				icon = activeIcons.CIUnknown
+				iconStyle = styleDim
 			}
+			icon = iconStyle.Render(icon)
 			line := fmt.Sprintf("%s%s %s", detailIndent, icon, c.Name)
 			if c.Duration > 0 {
 				line += " " + styleCheckDur.Render(
@@ -2087,36 +2100,65 @@ func (m tuiModel) renderDetailContent() []string {
 func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 	switch resolvePRStatus(pr) {
 	case resolvedDraft, resolvedDraftCIFail:
-		return styleDraftLbl.Render("Draft")
+		return statusBadge("Draft", activeIcons.StatusDraft, colorGitHubDraft, styleDraftLbl)
 	case resolvedMerged:
-		return styleMerged.Render("Merged")
+		return statusBadge("Merged", activeIcons.StatusMerged, colorGitHubDone, styleMerged)
 	case resolvedClosed:
-		return styleClosed.Render("Closed")
+		return statusBadge("Closed", activeIcons.StatusClosed, colorGitHubClosed, styleClosed)
 	case resolvedReady:
-		return styleGreen.Render("Ready to merge")
+		return statusBadge("Ready to merge", activeIcons.StatusReady, colorGitHubOpen, styleGreen)
 	case resolvedCIPending:
-		return styleWarning.Render("CI pending")
+		return statusBadge(
+			"CI pending",
+			activeIcons.StatusCIPending,
+			colorGitHubAttention,
+			styleWarning,
+		)
 	case resolvedCIFailed:
-		return styleClosed.Render("CI failed")
+		return statusBadge("CI failed", activeIcons.StatusCIFailed, colorGitHubClosed, styleClosed)
 	case resolvedBlocked:
-		return styleWarning.Render("Needs review")
+		return statusBadge(
+			"Needs review",
+			activeIcons.StatusNeedsReview,
+			colorGitHubAttention,
+			styleWarning,
+		)
 	case resolvedConflict:
-		return styleHeading.Render("Merge conflicts")
+		return statusBadge(
+			"Merge conflicts",
+			activeIcons.StatusConflict,
+			colorGitHubClosed,
+			styleHeading,
+		)
 	case resolvedUnknown:
-		return styleDim.Render("Unknown")
+		return statusBadge("Unknown", activeIcons.StatusUnknown, colorGitHubDraft, styleDim)
 	}
 	return ""
+}
+
+func statusBadge(label, glyph string, background color.Color, fallback lg.Style) string {
+	text := statusPrefix(glyph) + label
+	if activeIcons.PillLeft == "" {
+		return fallback.Render(text)
+	}
+	body := lg.NewStyle().
+		Foreground(colorGitHubOnEmphasis).
+		Background(background).
+		Bold(true).
+		Render(text)
+	return pillWrap(body, background, false)
+}
+
+func statusPrefix(glyph string) string {
+	if glyph == "" {
+		return ""
+	}
+	return glyph + " "
 }
 
 const (
 	detailIndent     = "  "
 	defaultTermWidth = 80
-
-	iconApproved  = "✅"
-	iconCopilot   = "🤖"
-	iconRejected  = "❌"
-	iconDismissed = "🥀"
-	iconCommented = "💬"
 )
 
 func (m tuiModel) renderMarkdown(body string) []string {

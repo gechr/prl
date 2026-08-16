@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/dialog"
 	"github.com/gechr/x/ansi"
@@ -121,6 +122,36 @@ func TestPlainConfirmDialogRendersPromptAndButtons(t *testing.T) {
 	require.Equal(t, 1, strings.Count(content, "Approve owner/repo#42?"))
 	require.Equal(t, 1, strings.Count(content, "No"))
 	require.Equal(t, 1, strings.Count(content, "Yes"))
+}
+
+func TestNerdConfirmDialogsRenderPillCapsWithoutShifting(t *testing.T) {
+	previous := activeIcons
+	useIcons(iconsFor(IconNerd))
+	t.Cleanup(func() { useIcons(previous) })
+
+	bm := openPlainConfirm(t, plainConfirmModel())
+	activeRow := strings.Split(bm.dialogs.Top().Content(bm.width), nl)[2]
+	require.Equal(t, 2, strings.Count(activeRow, activeIcons.PillLeft))
+	require.Equal(t, 2, strings.Count(activeRow, activeIcons.PillRight))
+
+	model, cmd := bm.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	require.Nil(t, cmd)
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	dimRow := strings.Split(bm.dialogs.Top().Content(bm.width), nl)[2]
+	require.Equal(t, lg.Width(activeRow), lg.Width(dimRow))
+
+	info := tuiModel{
+		confirmAction: tuiActionInfo,
+		confirmPrompt: "Approve failed",
+		styles:        newTuiStyles(),
+		width:         80,
+		height:        24,
+	}
+	info.syncConfirmDialog()
+	infoRow := strings.Split(info.dialogs.Top().Content(info.width), nl)[2]
+	require.Equal(t, 1, strings.Count(infoRow, activeIcons.PillLeft))
+	require.Equal(t, 1, strings.Count(infoRow, activeIcons.PillRight))
 }
 
 func TestInfoConfirmUsesDialog(t *testing.T) {

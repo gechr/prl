@@ -1,8 +1,11 @@
 package main
 
 import (
+	"image/color"
+
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/view"
 	"github.com/gechr/x/ansi"
@@ -305,6 +308,30 @@ func (m tuiModel) confirmInputWidth() int {
 		w = max(20, maxW) //nolint:mnd // minimum usable width
 	}
 	return w
+}
+
+// pillWrap adds powerline half-circle caps around solid-background content.
+// Caps are fg-coloured on the surrounding default background -- no content
+// background or padding is applied to them.
+func pillWrap(rendered string, capColor color.Color, dim bool) string {
+	if activeIcons.PillLeft == "" {
+		return rendered
+	}
+	capStyle := lg.NewStyle().Foreground(capColor).Faint(dim)
+	return capStyle.Render(activeIcons.PillLeft) + rendered +
+		capStyle.Render(activeIcons.PillRight)
+}
+
+// pillButtonStyle adapts a Primer button style so its label is rendered first,
+// then wrapped with separately styled caps. Keeping the wrapper as the outer
+// transform prevents the button background and padding from reaching the caps.
+func pillButtonStyle(body lg.Style, capColor color.Color, dim bool) lg.Style {
+	if activeIcons.PillLeft == "" {
+		return body
+	}
+	return lg.NewStyle().Transform(func(label string) string {
+		return pillWrap(body.Render(label), capColor, dim)
+	})
 }
 
 // confirmActionVerb maps confirm action names to in-progress verbs.

@@ -58,12 +58,16 @@ func (m *tuiModel) newConfirmDialog() dialog.Dialog {
 	case m.confirmCmd == nil && m.confirmCmdFn == nil:
 		return dialog.NewInfo(m.confirmPrompt, button.Button{
 			Label: "OK",
-			Focused: lg.NewStyle().
+			Focused: pillButtonStyle(lg.NewStyle().
 				Background(colorTitle).
 				Foreground(colorBlack).
 				Bold(true).
-				Padding(0, 1),
-			Blurred: lg.NewStyle().Foreground(colorTitle).Padding(0, 1),
+				Padding(0, 1), colorTitle, false),
+			Blurred: pillButtonStyle(
+				lg.NewStyle().Foreground(colorTitle).Padding(0, 1),
+				colorTitle,
+				true,
+			),
 		})
 	default:
 		return m.newConfirmButtonsDialog()

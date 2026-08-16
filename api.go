@@ -1434,13 +1434,16 @@ func (b *checkStateBatcher) wait(ctx context.Context, pr PullRequest, update *cl
 			}
 			if snapshot.prState == "MERGED" {
 				if update != nil {
-					update.Msg("PR already merged").SetSymbol("✔︎").Send()
+					update.Msg("PR already merged").SetSymbol(activeIcons.Check).Send()
 				}
 				return fmt.Errorf("PR already merged: %s", pr.URL)
 			}
 			if snapshot.prState == "CLOSED" {
 				if update != nil {
-					update.Msg("PR was closed").SetSymbol("✘").SetLevel(clog.LevelWarn).Send()
+					update.Msg("PR was closed").
+						SetSymbol(activeIcons.Cross).
+						SetLevel(clog.LevelWarn).
+						Send()
 				}
 				return fmt.Errorf("PR was closed: %s", pr.URL)
 			}
@@ -1453,7 +1456,10 @@ func (b *checkStateBatcher) wait(ctx context.Context, pr PullRequest, update *cl
 				return nil
 			case checksFailed:
 				if update != nil {
-					update.Msg("Checks failed").SetSymbol("✘").SetLevel(clog.LevelError).Send()
+					update.Msg("Checks failed").
+						SetSymbol(activeIcons.Cross).
+						SetLevel(clog.LevelError).
+						Send()
 				}
 				return fmt.Errorf("checks failed for %s", pr.URL)
 			case checksPending:
@@ -1639,11 +1645,12 @@ func checkSortOrder(c PRCheck) int {
 		return checkOrderInProgress
 	}
 	switch c.Conclusion {
-	case ciStatusFailure, "timed_out", "cancelled", "action_required", "stale":
+	case ciStatusFailure, ciConclusionTimedOut, ciConclusionCancelled,
+		ciConclusionActionRequired, ciConclusionStale:
 		return checkOrderFailure
 	case ciStatusSuccess:
 		return checkOrderSuccess
-	case "skipped", "neutral":
+	case ciConclusionSkipped, ciConclusionNeutral:
 		return checkOrderSkipped
 	default:
 		return checkOrderSuccess
@@ -1679,13 +1686,16 @@ func (a *ActionRunner) waitForChecks(
 		// Check if PR state changed
 		if prState == "MERGED" {
 			if update != nil {
-				update.Msg("PR already merged").SetSymbol("✔︎").Send()
+				update.Msg("PR already merged").SetSymbol(activeIcons.Check).Send()
 			}
 			return fmt.Errorf("PR already merged: %s", pr.URL)
 		}
 		if prState == "CLOSED" {
 			if update != nil {
-				update.Msg("PR was closed").SetSymbol("✘").SetLevel(clog.LevelWarn).Send()
+				update.Msg("PR was closed").
+					SetSymbol(activeIcons.Cross).
+					SetLevel(clog.LevelWarn).
+					Send()
 			}
 			return fmt.Errorf("PR was closed: %s", pr.URL)
 		}
@@ -1698,7 +1708,10 @@ func (a *ActionRunner) waitForChecks(
 			return nil
 		case checksFailed:
 			if update != nil {
-				update.Msg("Checks failed").SetSymbol("✘").SetLevel(clog.LevelError).Send()
+				update.Msg("Checks failed").
+					SetSymbol(activeIcons.Cross).
+					SetLevel(clog.LevelError).
+					Send()
 			}
 			return fmt.Errorf("checks failed for %s", pr.URL)
 		case checksPending:

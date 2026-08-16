@@ -72,7 +72,7 @@ func completeAuthors(cfg *Config) []string {
 	for _, username := range xmaps.KeysNatural(cfg.Authors) {
 		name := cfg.Authors[username]
 		if strings.EqualFold(name, BotName) {
-			name += " 🤖"
+			name += " " + activeIcons.Copilot
 		}
 		results = append(results, username+tab+name)
 	}

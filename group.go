@@ -784,7 +784,7 @@ func groupCapNotice(shown, total int, tty bool) string {
 		shown, total, maxGroupResults,
 	)
 	if tty {
-		return styleWarning.Render("⚠ " + msg)
+		return styleWarning.Render(activeIcons.Warning + " " + msg)
 	}
 	return msg
 }

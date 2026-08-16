@@ -15,22 +15,30 @@ import (
 // clib's theme.Auto uses, so prl's own palette and the clib theme stay in sync.
 var (
 	// Primary interactive palette.
-	colorAccent    color.Color // cursor, help keys, separators, borders
-	colorRef       color.Color // PR refs, hyperlinks
-	colorHighlight color.Color // selected index, on-state, additions
-	colorOK        color.Color // success, selected items, focused text
-	colorDanger    color.Color // errors, confirm No
-	colorOff       color.Color // off-state, closed, CI failed, deletions
-	colorWarning   color.Color // pending, CI pending, needs review
-	colorHeading   color.Color // headers, filter slash, syntax keys
-	colorTitle     color.Color // titles, selected choices, labels
-	colorLabel     color.Color // edit label, diff header, select cursor
-	colorHelpText  color.Color // help text, detail section headers
-	colorFilter    color.Color // filter input, syntax desc
-	colorDim       color.Color // dim/unavailable text
-	colorSubtle    color.Color // placeholders, blurred text
-	colorText      color.Color // normal value text
-	colorBlack     color.Color // button text on colored bg
+	colorAccent           color.Color // cursor, help keys, separators, borders
+	colorRef              color.Color // PR refs, hyperlinks
+	colorHighlight        color.Color // selected index, on-state, additions
+	colorOK               color.Color // success, selected items, focused text
+	colorDanger           color.Color // errors, confirm No
+	colorOff              color.Color // off-state, closed, CI failed, deletions
+	colorWarning          color.Color // pending, CI pending, needs review
+	colorHeading          color.Color // headers, filter slash, syntax keys
+	colorTitle            color.Color // titles, selected choices, labels
+	colorLabel            color.Color // edit label, diff header, select cursor
+	colorHelpText         color.Color // help text, detail section headers
+	colorFilter           color.Color // filter input, syntax desc
+	colorDim              color.Color // dim/unavailable text
+	colorSubtle           color.Color // placeholders, blurred text
+	colorText             color.Color // normal value text
+	colorBlack            color.Color // button text on colored bg
+	colorGitHubOnEmphasis color.Color // text on GitHub state-label backgrounds
+
+	// GitHub Primer state-label backgrounds.
+	colorGitHubAttention color.Color
+	colorGitHubClosed    color.Color
+	colorGitHubDone      color.Color
+	colorGitHubDraft     color.Color
+	colorGitHubOpen      color.Color
 
 	// Basic ANSI palette (terminal-themed; identical in both modes).
 	colorRed     color.Color
@@ -127,6 +135,12 @@ func initPalette(isLight bool) {
 	colorSubtle = ld(lg.Color("247"), lg.Color("242"))   // gray
 	colorText = ld(lg.Color("235"), lg.Color("255"))     // normal text
 	colorBlack = lg.Color("#000000")                     // button text on colored bg
+	colorGitHubOnEmphasis = lg.Color("#ffffff")
+	colorGitHubAttention = ld(lg.Color("#9a6700"), lg.Color("#9e6a03"))
+	colorGitHubClosed = ld(lg.Color("#cf222e"), lg.Color("#da3633"))
+	colorGitHubDone = ld(lg.Color("#8250df"), lg.Color("#8957e5"))
+	colorGitHubDraft = ld(lg.Color("#59636e"), lg.Color("#656c76"))
+	colorGitHubOpen = ld(lg.Color("#1f883d"), lg.Color("#238636"))
 
 	// Basic ANSI palette.
 	colorRed = lg.Color("1")

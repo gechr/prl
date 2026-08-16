@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"image/color"
 	"math"
 	"os"
 	"path/filepath"
@@ -849,6 +850,186 @@ func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 			"  Reviews: 🤖 Copilot\n   Status: Unknown\n\nNo description provided.",
 		stripped,
 	)
+}
+
+func TestRenderDetailContentUsesNerdReviewAndStatusIcons(t *testing.T) {
+	previous := activeIcons
+	useIcons(iconsFor(IconNerd))
+	t.Cleanup(func() { useIcons(previous) })
+
+	pr := testReviewPullRequest()
+	pr.Author.Login = "alice"
+	pr.State = valueMerged
+	m := tuiModel{
+		p:         testPRL,
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		detailKey: makePRKey(pr),
+		detail: PRDetail{
+			Reviews: []PRReview{{
+				User:  copilotReviewer,
+				State: "COMMENTED",
+			}},
+		},
+		resolver: NewAuthorResolver(&Config{}),
+		width:    80,
+	}
+
+	rendered := ansi.Strip(strings.Join(m.renderDetailContent(), nl))
+	require.Equal(
+		t,
+		"Overview\n\n    Title: \n   Author: @alice\n      URL: https://github.com/owner/repo/pull/42\n"+
+			"  Reviews:  Copilot\n   Status:  Merged\n\nNo description provided.",
+		rendered,
+	)
+}
+
+func TestRenderDetailStatusUsesGitHubPillsInNerdMode(t *testing.T) {
+	previous := activeIcons
+	useIcons(iconsFor(IconNerd))
+	t.Cleanup(func() { useIcons(previous) })
+
+	tests := []struct {
+		name       string
+		pr         PullRequest
+		label      string
+		glyph      string
+		background color.Color
+	}{
+		{
+			"draft",
+			PullRequest{State: valueOpen, IsDraft: true},
+			"Draft",
+			activeIcons.StatusDraft,
+			colorGitHubDraft,
+		},
+		{
+			"merged",
+			PullRequest{State: valueMerged},
+			"Merged",
+			activeIcons.StatusMerged,
+			colorGitHubDone,
+		},
+		{
+			"closed",
+			PullRequest{State: valueClosed},
+			"Closed",
+			activeIcons.StatusClosed,
+			colorGitHubClosed,
+		},
+		{
+			"ready",
+			PullRequest{State: valueOpen, MergeStatus: MergeStatusReady},
+			"Ready to merge",
+			activeIcons.StatusReady,
+			colorGitHubOpen,
+		},
+		{
+			"ci pending",
+			PullRequest{State: valueOpen, MergeStatus: MergeStatusCIPending},
+			"CI pending",
+			activeIcons.StatusCIPending,
+			colorGitHubAttention,
+		},
+		{
+			"ci failed",
+			PullRequest{State: valueOpen, MergeStatus: MergeStatusCIFailed},
+			"CI failed",
+			activeIcons.StatusCIFailed,
+			colorGitHubClosed,
+		},
+		{
+			"needs review",
+			PullRequest{State: valueOpen, MergeStatus: MergeStatusBlocked},
+			"Needs review",
+			activeIcons.StatusNeedsReview,
+			colorGitHubAttention,
+		},
+		{
+			"conflict",
+			PullRequest{State: valueOpen, MergeStatus: MergeStatusConflict},
+			"Merge conflicts",
+			activeIcons.StatusConflict,
+			colorGitHubClosed,
+		},
+		{valueUnknown, PullRequest{}, "Unknown", activeIcons.StatusUnknown, colorGitHubDraft},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := lg.NewStyle().
+				Foreground(colorGitHubOnEmphasis).
+				Background(tt.background).
+				Bold(true).
+				Render(statusPrefix(tt.glyph) + tt.label)
+			want := pillWrap(body, tt.background, false)
+			require.Equal(t, want, (tuiModel{}).renderDetailStatus(tt.pr))
+		})
+	}
+}
+
+func TestRenderDetailStatusKeepsUnicodeLabelsPlain(t *testing.T) {
+	previous := activeIcons
+	useIcons(iconsFor(IconUnicode))
+	t.Cleanup(func() { useIcons(previous) })
+
+	require.Equal(
+		t,
+		styleClosed.Render("Closed"),
+		(tuiModel{}).renderDetailStatus(PullRequest{State: valueClosed}),
+	)
+}
+
+func TestRenderDetailContentStylesCheckIcons(t *testing.T) {
+	pr := testReviewPullRequest()
+	pr.Author.Login = "alice"
+	checks := []PRCheck{
+		{Name: "pending", Status: ciStatusPending},
+		{
+			Name:       "success",
+			Status:     ciStatusCompleted,
+			Conclusion: ciStatusSuccess,
+			Duration:   5 * time.Second,
+		},
+		{Name: "failure", Status: ciStatusCompleted, Conclusion: ciStatusFailure},
+		{Name: ciConclusionCancelled, Status: ciStatusCompleted, Conclusion: ciConclusionCancelled},
+		{Name: ciConclusionSkipped, Status: ciStatusCompleted, Conclusion: ciConclusionSkipped},
+		{Name: "timed out", Status: ciStatusCompleted, Conclusion: ciConclusionTimedOut},
+		{
+			Name:       "action required",
+			Status:     ciStatusCompleted,
+			Conclusion: ciConclusionActionRequired,
+		},
+		{Name: ciConclusionNeutral, Status: ciStatusCompleted, Conclusion: ciConclusionNeutral},
+		{Name: ciConclusionStale, Status: ciStatusCompleted, Conclusion: ciConclusionStale},
+		{Name: valueUnknown, Status: ciStatusCompleted, Conclusion: valueUnknown},
+	}
+	m := tuiModel{
+		p:         testPRL,
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		detailKey: makePRKey(pr),
+		detail:    PRDetail{Checks: checks},
+		resolver:  NewAuthorResolver(&Config{}),
+		width:     80,
+	}
+
+	lines := m.renderDetailContent()
+	want := []string{
+		detailIndent + styleWarning.Render(activeIcons.CIInProgress) + " pending",
+		detailIndent + styleOK.Render(
+			activeIcons.Approved,
+		) + " success " + styleCheckDur.Render(
+			"[5s]",
+		),
+		detailIndent + styleDanger.Render(activeIcons.Rejected) + " failure",
+		detailIndent + styleDismiss.Render(activeIcons.Dismissed) + " cancelled",
+		detailIndent + styleDim.Render(activeIcons.CISkipped) + " skipped",
+		detailIndent + styleDanger.Render(activeIcons.CITimedOut) + " timed out",
+		detailIndent + styleWarning.Render(activeIcons.CIActionRequired) + " action required",
+		detailIndent + styleDim.Render(activeIcons.CINeutral) + " neutral",
+		detailIndent + styleDim.Render(activeIcons.CIStale) + " stale",
+		detailIndent + styleDim.Render(activeIcons.CIUnknown) + " unknown",
+	}
+	require.Equal(t, want, lines[9:9+len(want)])
 }
 
 func TestViewDiffHandlesTinyViewport(t *testing.T) {
