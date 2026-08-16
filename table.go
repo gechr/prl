@@ -71,13 +71,13 @@ func (p *prl) newTableRenderer(
 	}
 
 	renderOpts := []table.Option{
+		table.WithGridOptions(table.WithWidthMethod(p.widthMethod())),
 		// prl default: newest at top -> clib reverse=true.
 		// --reverse flag means oldest at top -> clib reverse=false.
 		// Non-TTY / interactive multi-select: always newest at top.
 		table.WithReverse(cli.Interactive || cli.IsInteractive() || !cli.Reverse || !tty),
 		table.WithShowIndex(showIndex),
 		table.WithTermWidth(termWidth),
-		table.WithTTY(tty),
 	}
 	renderOpts = append(renderOpts, opts...)
 
@@ -149,7 +149,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {
 				title := truncateTitle(row.Title)
 				if ctx.Ansi.Terminal() {
-					displayTitle := normalizeTUIDisplayText(title)
+					displayTitle := p.displayText(title)
 					if rendered := p.theme.RenderMarkdown(displayTitle); rendered != "" {
 						return table.StyledCell(rendered, title)
 					}
@@ -245,9 +245,30 @@ func truncateTitle(title string) string {
 	return title
 }
 
+// widthMethod returns the display-width measurement that matches how the
+// terminal draws text.
+func (p *prl) widthMethod() ansi.Method {
+	if p.grapheme {
+		return ansi.GraphemeWidth
+	}
+	return ansi.WcWidth
+}
+
+// displayText prepares text for display, compensating for variation-selector
+// sequences only where the measurement calls for it.
+func (p *prl) displayText(text string) string {
+	if p.grapheme {
+		return text
+	}
+	return normalizeTUIDisplayText(text)
+}
+
 // normalizeTUIDisplayText preserves emoji presentation while compensating for
 // variation-selector sequences that some TUI renderers/font combinations draw
 // a cell wider than their measured width, visually eating the following space.
+// It applies under wcwidth measurement only: a terminal that clusters
+// graphemes already counts the emoji as two cells, so the extra space would
+// show up as a real gap.
 func normalizeTUIDisplayText(text string) string {
 	return strings.ReplaceAll(text, "\ufe0f ", "\ufe0f  ")
 }

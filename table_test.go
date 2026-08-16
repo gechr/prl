@@ -15,11 +15,6 @@ import (
 
 var testPRL = New()
 
-// sgr8spaces replicates the grid's unexported spaces() for test assertions.
-func sgr8spaces(n int) string {
-	return "\x1b[8m" + strings.Repeat(" ", n) + "\x1b[28m"
-}
-
 func TestMain(m *testing.M) {
 	lipgloss.Writer.Profile = colorprofile.ANSI256
 	m.Run()
@@ -87,7 +82,7 @@ func newTestRendererWithTTY(
 	}
 	ctx := table.NewRenderContext(testPRL, ansi.New(ansiOpts...))
 	// prl default: newest at top -> clib WithReverse(true).
-	allOpts := []table.Option{table.WithReverse(true), table.WithTTY(tty)}
+	allOpts := []table.Option{table.WithReverse(true)}
 	allOpts = append(allOpts, opts...)
 	return table.NewRenderer[PRRowModel](columns, ctx, allOpts...)
 }
@@ -236,8 +231,8 @@ func TestRender_IndexContainsDimStyle(t *testing.T) {
 	rt := r.Render(models)
 
 	// Default order: newest first. Row 0 = newest = index 1.
-	// Display line starts with dim-styled index, followed by SGR8-wrapped gap.
-	parts := strings.SplitN(rt.Rows[0].Display, sgr8spaces(2), 2)
+	// Display line starts with dim-styled index, followed by the column gap.
+	parts := strings.SplitN(rt.Rows[0].Display, "  ", 2)
 	require.Equal(t, testPRL.theme.Dim.Render("1"), parts[0])
 }
 
@@ -259,6 +254,18 @@ func TestTitleColumnPreservesEmojiVariationSelectorInTTY(t *testing.T) {
 	require.Equal(t, "⬆️  Bump tar from 7.5.7 to 7.5.11", ansi.Strip(cell.Text))
 }
 
+func TestTitleColumnKeepsSingleSpaceUnderGraphemeWidth(t *testing.T) {
+	pr := testPRs()[0]
+	pr.Title = "⬆️ Bump tar from 7.5.7 to 7.5.11"
+	row := testModelsFrom([]PullRequest{pr}, "owner")[0]
+	ctx := table.NewRenderContext(testPRL, ansi.New(ansi.WithTerminal(true)))
+	graphemePRL := testPRL.withGraphemeWidth()
+
+	cell := graphemePRL.allColumnDefs(tableLayout{})[colTitle].Render(row, ctx)
+
+	require.Equal(t, pr.Title, ansi.Strip(cell.Text))
+}
+
 func TestRender_HeaderContainsBoldStyle(t *testing.T) {
 	models := testModels("owner")[:1]
 	r := newTestRenderer(simpleColumns())
@@ -271,7 +278,7 @@ func TestRender_HeaderContainsBoldStyle(t *testing.T) {
 	// Col widths: max(vw("REPO")=4, vw("alpha")=5)=5, max(vw("NUMBER")=6, vw("#1")=2)=6
 	// Header: bold("REPO") + pad(1) + gap(2) + bold("NUMBER")
 	expectedHeader := testPRL.theme.Bold.Render("REPO") +
-		sgr8spaces(1) + sgr8spaces(2) +
+		strings.Repeat(" ", 3) +
 		testPRL.theme.Bold.Render("NUMBER")
 	require.Equal(t, expectedHeader, rt.Header)
 }
@@ -427,7 +434,7 @@ func TestRender_HeaderPresent(t *testing.T) {
 	// Col widths: max(vw("REPO")=4, vw("alpha")=5)=5, max(vw("NUMBER")=6, vw("#1")=2)=6
 	// Header: bold("REPO") + pad(1) + gap(2) + bold("NUMBER")
 	expectedHeader := testPRL.theme.Bold.Render("REPO") +
-		sgr8spaces(1) + sgr8spaces(2) +
+		strings.Repeat(" ", 3) +
 		testPRL.theme.Bold.Render("NUMBER")
 	require.Equal(t, expectedHeader, rt.Header)
 }

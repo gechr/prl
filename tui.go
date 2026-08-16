@@ -15,6 +15,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
 	"github.com/gechr/primer/filter"
@@ -988,6 +989,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyWindowSize(msg.Width, msg.Height)
 		return m, nil
 
+	case tea.ModeReportMsg:
+		return m.applyModeReport(msg), nil
+
 	case tea.MouseClickMsg:
 		m.touchInteraction()
 		if msg.Button == tea.MouseLeft && m.handleScrollbarPress(msg.Mouse()) {
@@ -1763,7 +1767,7 @@ func (m tuiModel) viewDiff() tea.View {
 		ref := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
 		headerLine += xansi.Force().Hyperlink(pr.URL,
 			headerStyle.Render(ref)+styleText.Render(" » ")+
-				styleTitle.Render(normalizeTUIDisplayText(pr.Title)))
+				styleTitle.Render(m.p.displayText(pr.Title)))
 		if m.width > 0 && lg.Width(headerLine) > m.width {
 			headerLine = xansi.Truncate(headerLine, m.width-1, valueEllipsis)
 		}
@@ -1911,6 +1915,24 @@ func (m *tuiModel) refreshTerminalSize() {
 	m.applyWindowSize(width, height)
 }
 
+// applyModeReport follows bubbletea's own reaction to a mode 2027 report: once
+// the terminal answers, bubbletea measures its cells in grapheme clusters, so
+// prl has to pad rows the same way or every VS16 emoji shifts its row by a
+// cell. The values accepted here mirror bubbletea's.
+func (m tuiModel) applyModeReport(msg tea.ModeReportMsg) tuiModel {
+	if msg.Mode != cansi.ModeUnicodeCore || m.p.grapheme {
+		return m
+	}
+	if msg.Value != cansi.ModeReset &&
+		msg.Value != cansi.ModeSet &&
+		msg.Value != cansi.ModePermanentlySet {
+		return m
+	}
+	m.p = m.p.withGraphemeWidth()
+	m.header, m.rows, m.colWidths = m.rerender()
+	return m
+}
+
 func (m *tuiModel) applyWindowSize(width, height int) {
 	m.width = width
 	m.height = height
@@ -1958,7 +1980,7 @@ func (m tuiModel) renderDetailContent() []string {
 		detailIndent+labelStyle.Render(
 			"  Title: ",
 		)+xansi.Force().Hyperlink(pr.URL, styleText.Render(
-			normalizeTUIDisplayText(pr.Title),
+			m.p.displayText(pr.Title),
 		)),
 	)
 	lines = append(lines, detailIndent+labelStyle.Render(" Author: ")+styledAuthor)
@@ -2033,7 +2055,7 @@ func (m tuiModel) renderDetailContent() []string {
 					fmt.Sprintf("[%s]", c.Duration.Round(time.Second)),
 				)
 			}
-			lines = append(lines, normalizeTUIDisplayText(line))
+			lines = append(lines, m.p.displayText(line))
 		}
 		lines = append(lines, "")
 	}

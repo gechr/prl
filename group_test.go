@@ -377,7 +377,17 @@ func TestGroupNodeLabel_TopLevelHeaderDoesNotConsumeEntityColor(t *testing.T) {
 
 func TestRenderGroup_Text(t *testing.T) {
 	out, err := renderGroup(
-		groupTestPRs(), []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true,
+		groupTestPRs(),
+		[]groupKey{groupAuthor},
+		false,
+		false,
+		nil,
+		0,
+		0,
+		nil,
+		nil,
+		true,
+		xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -404,6 +414,7 @@ func TestRenderGroup_ResolvesAuthorNames(t *testing.T) {
 		resolver,
 		nil,
 		true,
+		xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -431,6 +442,7 @@ func TestRenderGroup_JSONResolvesAuthorNames(t *testing.T) {
 		resolver,
 		nil,
 		true,
+		xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -447,13 +459,38 @@ func TestRenderGroup_JSONResolvesAuthorNames(t *testing.T) {
 	require.Equal(t, want, out)
 }
 
+func TestGroupJoin_PadsWithWidthMethod(t *testing.T) {
+	// A VS16 emoji measures one cell under wcwidth and two under grapheme
+	// clustering, so the padding that aligns the next column differs.
+	cols := [][]string{{"⬆️ a", "bbbbb"}, {"x", "y"}}
+
+	for _, tc := range []struct {
+		name   string
+		method xansi.Method
+	}{
+		{"wcwidth", xansi.WcWidth},
+		{"grapheme", xansi.GraphemeWidth},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lines := groupJoin(cols, tc.method)
+
+			emojiRow, _, _ := strings.Cut(lines[0], "x")
+			plainRow, _, _ := strings.Cut(lines[1], "y")
+			require.Equal(t,
+				tc.method.StringWidth(plainRow),
+				tc.method.StringWidth(emojiRow),
+			)
+		})
+	}
+}
+
 func TestGroupGrid_ColumnMajor(t *testing.T) {
 	blocks := [][]string{
 		{"alice (5)"}, {"bob (4)"}, {"carol (3)"}, {"dave (2)"}, {"erin (1)"},
 	}
 	// One row per block won't fit 30 columns, so the grid settles on
 	// two-tall columns, read top-to-bottom then across.
-	lines := groupGrid(blocks, false, 30, 0)
+	lines := groupGrid(blocks, false, 30, 0, xansi.WcWidth)
 
 	require.Equal(t, []string{
 		"alice (5)  carol (3)  erin (1)",
@@ -473,7 +510,7 @@ func TestGroupGrid_BalancesColumns(t *testing.T) {
 	// Greedy filling to the 13-line height limit would tuck block d under c
 	// and give e its own column; balancing re-cuts at the smallest height
 	// that still yields four columns, pairing d+e in the last one instead.
-	lines := groupGrid(blocks, false, 80, 13)
+	lines := groupGrid(blocks, false, 80, 13, xansi.WcWidth)
 
 	require.Len(t, lines, 10)
 	require.Equal(t, "a0  b0  c0  d0", lines[0])
@@ -497,7 +534,7 @@ func TestGroupGrid_FlowsLeftToRightWhenShorter(t *testing.T) {
 		mk("item-e", 2),
 	}
 
-	lines := groupGrid(blocks, true, 28, 10)
+	lines := groupGrid(blocks, true, 28, 10, xansi.WcWidth)
 
 	require.Len(t, lines, 11)
 	require.Equal(t, "item-a-0  item-b-0  item-c-0", lines[0])
@@ -520,7 +557,7 @@ func TestRenderGroup_GridFillsWidth(t *testing.T) {
 		}
 	}
 	out, err := renderGroup(
-		prs, []groupKey{groupAuthor}, false, false, nil, 80, 0, nil, nil, true,
+		prs, []groupKey{groupAuthor}, false, false, nil, 80, 0, nil, nil, true, xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -541,7 +578,7 @@ func TestRenderGroup_FitsHeightStacks(t *testing.T) {
 		}
 	}
 	out, err := renderGroup(
-		prs, []groupKey{groupAuthor}, false, false, nil, 80, 40, nil, nil, true,
+		prs, []groupKey{groupAuthor}, false, false, nil, 80, 40, nil, nil, true, xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -564,7 +601,7 @@ func TestRenderGroup_NoWidthStacks(t *testing.T) {
 		}
 	}
 	out, err := renderGroup(
-		prs, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true,
+		prs, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true, xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -587,6 +624,7 @@ func TestRenderGroup_TextNested(t *testing.T) {
 		nil,
 		nil,
 		true,
+		xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -613,6 +651,7 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 		nil,
 		nil,
 		true,
+		xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -624,7 +663,17 @@ func TestRenderGroup_NestedGrid(t *testing.T) {
 
 func TestRenderGroup_JSON(t *testing.T) {
 	out, err := renderGroup(
-		groupTestPRs(), []groupKey{groupState}, true, false, nil, 0, 0, nil, nil, true,
+		groupTestPRs(),
+		[]groupKey{groupState},
+		true,
+		false,
+		nil,
+		0,
+		0,
+		nil,
+		nil,
+		true,
+		xansi.WcWidth,
 	)
 	require.NoError(t, err)
 
@@ -643,7 +692,7 @@ func TestRenderGroup_JSON(t *testing.T) {
 
 func TestRenderGroup_Empty(t *testing.T) {
 	out, err := renderGroup(
-		nil, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true,
+		nil, []groupKey{groupAuthor}, false, false, nil, 0, 0, nil, nil, true, xansi.WcWidth,
 	)
 	require.NoError(t, err)
 

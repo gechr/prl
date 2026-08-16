@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
@@ -519,6 +520,41 @@ func TestTuiTableRendererSuppressesIndexColumn(t *testing.T) {
 	require.NotEmpty(t, rt.Rows)
 	display := ansi.Strip(rt.Rows[0].Display)
 	require.Equal(t, "newest PR", display[:len("newest PR")])
+}
+
+func TestApplyModeReportSwitchesToGraphemeWidth(t *testing.T) {
+	m := tuiModel{
+		p:     New(),
+		cli:   testCLI(),
+		width: 120,
+	}
+	require.Equal(t, ansi.WcWidth, m.p.widthMethod())
+
+	m = m.applyModeReport(tea.ModeReportMsg{
+		Mode:  cansi.ModeUnicodeCore,
+		Value: cansi.ModeReset,
+	})
+
+	require.Equal(t, ansi.GraphemeWidth, m.p.widthMethod())
+}
+
+func TestApplyModeReportIgnoresUnrecognizedMode(t *testing.T) {
+	m := tuiModel{
+		p:     New(),
+		cli:   testCLI(),
+		width: 120,
+	}
+
+	m = m.applyModeReport(tea.ModeReportMsg{
+		Mode:  cansi.ModeUnicodeCore,
+		Value: cansi.ModeNotRecognized,
+	})
+	m = m.applyModeReport(tea.ModeReportMsg{
+		Mode:  cansi.ModeSynchronizedOutput,
+		Value: cansi.ModeSet,
+	})
+
+	require.Equal(t, ansi.WcWidth, m.p.widthMethod())
 }
 
 func TestRerenderShowsEstimatedHeaderWithoutRows(t *testing.T) {
@@ -1040,6 +1076,7 @@ func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 	pr.Author.Login = "alice"
 	resolver := NewAuthorResolver(&Config{})
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		detailKey: makePRKey(pr),
 		detail: PRDetail{
@@ -1067,6 +1104,7 @@ func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 func TestViewDiffHandlesTinyViewport(t *testing.T) {
 	pr := testReviewPullRequest()
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diffKey:   makePRKey(pr),
 		diffLines: []string{"@@ -1 +1 @@", "+small"},
@@ -1087,6 +1125,7 @@ func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
 		diffLines[i] = fmt.Sprintf("line %d", i)
 	}
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diffKey:   makePRKey(pr),
 		diffLines: diffLines,
@@ -1135,6 +1174,7 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 	pr := testReviewPullRequest()
 	diff := styleDanger.Render("+abcdef")
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diff:      diff,
 		diffKey:   makePRKey(pr),
@@ -1144,7 +1184,6 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 		height:    8,
 		width:     4,
 		styles:    newTuiStyles(),
-		p:         testPRL,
 		cli:       testCLI(),
 	}
 	m.syncDiffView()
@@ -1171,6 +1210,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	width := 80
 	diffLines := layout.WrapLines(diff, width-tuiScrollbarWidth)
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diff:      diff,
 		diffKey:   makePRKey(pr),
@@ -1211,6 +1251,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 func TestViewDiffFillsTerminalRectangle(t *testing.T) {
 	pr := testReviewPullRequest()
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diffKey:   makePRKey(pr),
 		diffLines: []string{"+small"},
@@ -1227,6 +1268,7 @@ func TestViewDiffFillsTerminalRectangle(t *testing.T) {
 func TestViewDiffEnablesMouseTracking(t *testing.T) {
 	pr := testReviewPullRequest()
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diffKey:   makePRKey(pr),
 		diffLines: []string{"+small"},
@@ -1430,6 +1472,7 @@ func TestScrollbarTrackClickJumpsDiffViewport(t *testing.T) {
 		diffLines[i] = fmt.Sprintf("line %d", i)
 	}
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diffKey:   makePRKey(pr),
 		diffLines: diffLines,
@@ -1463,6 +1506,7 @@ func TestScrollbarThumbDragMovesDiffViewport(t *testing.T) {
 		diffLines[i] = fmt.Sprintf("line %d", i)
 	}
 	m := tuiModel{
+		p:         testPRL,
 		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
 		diffKey:   makePRKey(pr),
 		diffLines: diffLines,

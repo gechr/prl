@@ -736,6 +736,7 @@ func renderOutput(
 	tty bool,
 	prs []PullRequest,
 ) (string, error) {
+	p = p.forTerminal(tty)
 	switch cli.OutputFormat() {
 	case OutputTable:
 		resolver := NewAuthorResolver(cfg)
@@ -769,6 +770,8 @@ func runOnce(
 	params *SearchParams,
 	stopSpinner func(),
 ) (string, error) {
+	prl = prl.forTerminal(tty)
+
 	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
 	var gql *api.GraphQLClient
 	getGQL := func() (*api.GraphQLClient, error) {
@@ -885,6 +888,7 @@ func runOnce(
 			groupAuthorResolver(keys, cfg),
 			params,
 			shouldStripGroupRepoOwner(prs, cli.Owner.Values),
+			prl.widthMethod(),
 		)
 		if gErr != nil {
 			return "", gErr

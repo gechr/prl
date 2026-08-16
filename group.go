@@ -423,6 +423,7 @@ func renderGroup(
 	authorResolver *AuthorResolver,
 	params *SearchParams,
 	stripRepoOwner bool,
+	method xansi.Method,
 ) (string, error) {
 	nodes := buildGroupNodesWithLinks(
 		prs,
@@ -447,7 +448,7 @@ func renderGroup(
 		blocks[i] = groupBlock(n, keys, tty, entityColor)
 	}
 
-	return strings.Join(groupGrid(blocks, nested, termWidth, termHeight), nl), nil
+	return strings.Join(groupGrid(blocks, nested, termWidth, termHeight, method), nl), nil
 }
 
 // groupBlock flattens a top-level group into its display lines: a header
@@ -590,7 +591,12 @@ func groupStack(blocks [][]string, nested bool) []string {
 // column, blank-separated when nested. Falls back to a single stacked column
 // when the width is unknown, or to the fewest rows that fit the width when only
 // the height is unknown.
-func groupGrid(blocks [][]string, nested bool, termWidth, termHeight int) []string {
+func groupGrid(
+	blocks [][]string,
+	nested bool,
+	termWidth, termHeight int,
+	method xansi.Method,
+) []string {
 	if len(blocks) == 0 {
 		return nil
 	}
@@ -615,9 +621,9 @@ func groupGrid(blocks [][]string, nested bool, termWidth, termHeight int) []stri
 	limit := max(tallest, termHeight)
 	for ; ; limit++ {
 		cols := groupSplit(blocks, sep, limit)
-		if len(cols) == 1 || limit >= total || groupGridWidth(cols) <= termWidth {
-			cols = groupBalance(blocks, sep, limit, termWidth, cols)
-			return groupJoin(groupBestFit(blocks, sep, termWidth, cols))
+		if len(cols) == 1 || limit >= total || groupGridWidth(cols, method) <= termWidth {
+			cols = groupBalance(blocks, sep, limit, termWidth, cols, method)
+			return groupJoin(groupBestFit(blocks, sep, termWidth, cols, method), method)
 		}
 	}
 }
@@ -627,14 +633,19 @@ func groupGrid(blocks [][]string, nested bool, termWidth, termHeight int) []stri
 // a trailing block doesn't tuck under an earlier column that happens to have
 // room beneath it. Keeps the original split when no shorter cut fits the
 // terminal width.
-func groupBalance(blocks [][]string, sep, limit, termWidth int, cols [][]string) [][]string {
+func groupBalance(
+	blocks [][]string,
+	sep, limit, termWidth int,
+	cols [][]string,
+	method xansi.Method,
+) [][]string {
 	if len(cols) <= 1 {
 		return cols
 	}
 	for h := 1; h <= limit; h++ {
 		balanced := groupSplit(blocks, sep, h)
 		if len(balanced) <= len(cols) &&
-			(termWidth <= 0 || groupGridWidth(balanced) <= termWidth) {
+			(termWidth <= 0 || groupGridWidth(balanced, method) <= termWidth) {
 			return balanced
 		}
 	}
@@ -663,7 +674,12 @@ func groupSplit(blocks [][]string, sep, limit int) [][]string {
 // groupBestFit compares the column-major split with left-to-right flows and
 // returns the shortest layout that fits the terminal width. A single stacked
 // column remains stacked because it already fits the terminal height.
-func groupBestFit(blocks [][]string, sep, termWidth int, cols [][]string) [][]string {
+func groupBestFit(
+	blocks [][]string,
+	sep, termWidth int,
+	cols [][]string,
+	method xansi.Method,
+) [][]string {
 	if len(cols) <= 1 {
 		return cols
 	}
@@ -672,7 +688,7 @@ func groupBestFit(blocks [][]string, sep, termWidth int, cols [][]string) [][]st
 	for count := 2; count <= len(blocks); count++ {
 		flowed := groupFlow(blocks, sep, count)
 		height := groupGridHeight(flowed)
-		if height < bestHeight && groupGridWidth(flowed) <= termWidth {
+		if height < bestHeight && groupGridWidth(flowed, method) <= termWidth {
 			best = flowed
 			bestHeight = height
 		}
@@ -709,36 +725,36 @@ func groupGridHeight(cols [][]string) int {
 }
 
 // groupColWidth is the width of a column's widest line.
-func groupColWidth(lines []string) int {
+func groupColWidth(lines []string, method xansi.Method) int {
 	width := 0
 	for _, l := range lines {
-		width = max(width, xansi.StringWidth(l))
+		width = max(width, method.StringWidth(l))
 	}
 	return width
 }
 
 // groupGridWidth is the rendered width of columns laid side by side.
-func groupGridWidth(cols [][]string) int {
+func groupGridWidth(cols [][]string, method xansi.Method) int {
 	width := 0
 	for i, c := range cols {
 		if i > 0 {
 			width += groupColGap
 		}
-		width += groupColWidth(c)
+		width += groupColWidth(c, method)
 	}
 	return width
 }
 
 // groupJoin renders columns side by side, padding every column but the last to
 // its widest line.
-func groupJoin(cols [][]string) []string {
+func groupJoin(cols [][]string, method xansi.Method) []string {
 	if len(cols) == 1 {
 		return cols[0]
 	}
 	widths := make([]int, len(cols))
 	height := 0
 	for i, c := range cols {
-		widths[i] = groupColWidth(c)
+		widths[i] = groupColWidth(c, method)
 		height = max(height, len(c))
 	}
 	gap := strings.Repeat(" ", groupColGap)
@@ -751,7 +767,7 @@ func groupJoin(cols [][]string) []string {
 				cell = c[r]
 			}
 			if i < len(cols)-1 { // pad all but the last column so the next aligns
-				cell += strings.Repeat(" ", widths[i]-xansi.StringWidth(cell))
+				cell += strings.Repeat(" ", widths[i]-method.StringWidth(cell))
 			}
 			parts = append(parts, cell)
 		}

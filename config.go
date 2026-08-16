@@ -260,7 +260,7 @@ func loadConfig() (*Config, error) {
 	}
 	if strings.EqualFold(k.String(keyDefaultOutput), "slack") {
 		clog.Warn().Msg(
-			`default.output=slack has been removed; using "table" (use --send to post via plugin)`,
+			"default.output=slack has been removed; using \"table\" (use `--send` to post via plugin)",
 		)
 		if err := k.Set(keyDefaultOutput, valueTable); err != nil {
 			return nil, fmt.Errorf("migrating default.output: %w", err)

@@ -7,6 +7,7 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/clib/theme"
 	xpalette "github.com/gechr/x/palette"
+	"github.com/gechr/x/terminal/emulator"
 )
 
 // Color palette. Each entry adapts to the terminal background and is populated
@@ -196,6 +197,11 @@ type prl struct {
 
 	// entityAssigner hands out stable, distinct colors per entity key.
 	entityAssigner *xpalette.Assigner
+
+	// grapheme is true when the terminal measures text in grapheme clusters
+	// (mode 2027) rather than per-codepoint wcwidth, which makes VS16 emoji
+	// sequences two cells wide instead of one.
+	grapheme bool
 }
 
 // New creates a new prl with a background-adaptive theme. theme.Auto detects
@@ -212,7 +218,27 @@ func New() *prl {
 	return &prl{
 		theme:          th.With(theme.WithEnumStyle(theme.EnumStyleHighlightBoth)),
 		entityAssigner: xpalette.NewAssigner(entityPalette...),
+		grapheme:       false,
 	}
+}
+
+// withGraphemeWidth returns a copy that measures text in grapheme clusters.
+// Rendering runs on background goroutines, so callers take a copy rather than
+// flipping the flag under a render in flight.
+func (p *prl) withGraphemeWidth() *prl {
+	clone := *p
+	clone.grapheme = true
+	return &clone
+}
+
+// forTerminal returns a prl that measures text the way the output terminal
+// draws it. Outside the TUI nothing negotiates mode 2027, so what the emulator
+// is known to do is the only signal available.
+func (p *prl) forTerminal(tty bool) *prl {
+	if !tty || p.grapheme || !emulator.SupportsGraphemes() {
+		return p
+	}
+	return p.withGraphemeWidth()
 }
 
 // RenderBold renders text in bold using the theme.
