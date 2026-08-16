@@ -263,11 +263,10 @@ const (
 	tuiActionUpdateBranch  = "update-branch"
 
 	tuiAIReviewUnsupported = "AI review is only supported in Herdr, Ghostty, iTerm2, and Kitty for now!"
+	tuiCommentPlaceholder  = "Leave blank to close without comment"
 
 	tuiConfirmInputWidth       = 70
 	tuiAIReviewConfirmInputWid = 90
-	tuiConfirmInputMinHeight   = 2
-	tuiConfirmInputMaxHeight   = 30
 	tuiConfirmPadX             = 4
 	tuiConfirmPadY             = 2
 	tuiScrollbarWidth          = 1

@@ -495,14 +495,6 @@ func configuredReviewEffort(cfg *Config, provider reviewProvider, model string) 
 	return normalizeReviewEffort(cfg, provider, model, cfg.TUI.Review.Default.Effort)
 }
 
-func (m tuiModel) selectedReviewProvider() reviewProvider {
-	provider := normalizeReviewProvider(m.selectedConfirmOptionValue(0))
-	if provider != reviewProviderUnknown {
-		return provider
-	}
-	return configuredReviewProvider(m.cfg)
-}
-
 func reviewProviderHasEffort(cfg *Config, provider reviewProvider, model string) bool {
 	model = normalizeReviewModel(cfg, provider, model)
 	if model == "" {
@@ -545,61 +537,19 @@ func reviewConfirmOptValues(cfg *Config, provider reviewProvider, model, effort 
 	return vals
 }
 
-func (m tuiModel) syncReviewConfirmOptions(previousProvider reviewProvider) tuiModel {
-	if m.confirmAction != tuiActionReview || len(m.confirmOptions) < 2 {
-		return m
-	}
-
-	currentProvider := m.selectedReviewProvider()
-	currentModel := m.selectedConfirmOptionValue(reviewModelOptionRow)
-	currentEffort := ""
-	if reviewProviderHasEffort(m.cfg, previousProvider, currentModel) &&
-		len(m.confirmOptions) > reviewEffortOptionRow {
-		currentEffort = m.selectedConfirmOptionValue(reviewEffortOptionRow)
-	}
-
-	m.confirmOptions = reviewConfirmOptions(m.cfg, currentProvider, currentModel)
-	m.confirmState.OptValues = reviewConfirmOptValues(
-		m.cfg,
-		currentProvider,
-		normalizeReviewModel(m.cfg, currentProvider, currentModel),
-		normalizeReviewEffort(m.cfg, currentProvider, currentModel, currentEffort),
-	)
-
-	// Clamp cursor to new option count.
-	if m.confirmState.OptCursor >= len(m.confirmOptions) {
-		m.confirmState.OptCursor = len(m.confirmOptions) - 1
-	}
-
-	if m.confirmReviewPR != nil && previousProvider != reviewProviderUnknown &&
-		previousProvider != currentProvider {
-		oldPrompt := reviewPrompt(*m.confirmReviewPR, m.cfg, previousProvider)
-		if m.confirmInput.Value() == oldPrompt {
-			m.confirmInput.SetValue(reviewPrompt(*m.confirmReviewPR, m.cfg, currentProvider))
-		}
-	}
-
-	return m
-}
-
 func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	prCopy := pr
 	provider := configuredReviewProvider(m.cfg)
 	model := configuredReviewModel(m.cfg, provider)
 	effort := configuredReviewEffort(m.cfg, provider, model)
 	m.confirmAction = tuiActionReview
-	m.confirmState.Yes = true
 	m.confirmHasInput = true
-	m = m.prepareConfirmInput()
 	m.confirmInputLabel = "Prompt"
 	m.confirmOptions = reviewConfirmOptions(m.cfg, provider, model)
-	m.confirmState.OptValues = reviewConfirmOptValues(m.cfg, provider, model, effort)
-	m.confirmState.OptCursor = 0
-	m.confirmState.OptFocus = true
+	m.confirmOptionValues = reviewConfirmOptValues(m.cfg, provider, model, effort)
 	m.confirmReviewPR = &prCopy
-	m = m.setConfirmInputPlaceholder("Leave blank to use the default prompt")
-	m.confirmInput.Blur()
-	m.confirmInput.SetValue(reviewPrompt(pr, m.cfg, provider))
+	m.confirmInputPlaceholder = "Leave blank to use the default prompt"
+	m.confirmInputValue = reviewPrompt(pr, m.cfg, provider)
 	m.confirmPrompt = "Launch AI review for " + styledRef(&prCopy) + "?"
 	m.confirmCmdFn = func(submission confirmSubmission) tea.Cmd {
 		prompt := submission.Input

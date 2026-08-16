@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -18,6 +17,7 @@ import (
 	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
+	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/flash"
 	"github.com/gechr/primer/helpbar"
@@ -26,7 +26,6 @@ import (
 	"github.com/gechr/primer/layout"
 	"github.com/gechr/primer/overlay"
 	"github.com/gechr/primer/picker"
-	"github.com/gechr/primer/prompt"
 	"github.com/gechr/primer/render"
 	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/scrollwheel"
@@ -462,20 +461,21 @@ type tuiModel struct {
 	jumpID    int // timeout generation
 
 	// Pending confirmation (e.g. close/merge).
-	confirmAction     string  // "close", "merge", "diff"
-	confirmPrompt     string  // prompt text for modal
-	confirmSubject    string  // target description for progress (e.g. "data-team#8", "3 PRs")
-	confirmURL        string  // optional URL for hyperlinking the subject in progress
-	confirmCmd        tea.Cmd // command to run on confirmation
-	confirmCmdFn      func(confirmSubmission) tea.Cmd
-	confirmState      prompt.State      // generic prompt interaction state (yes/no, option focus/cursor/values)
-	confirmHasInput   bool              // true when modal includes a text input
-	confirmInputLabel string            // label above the textarea (default: "Comment")
-	confirmInput      textarea.Model    // optional text input (e.g. close comment)
-	confirmOptions    []filterOptionDef // optional selectable rows shown in confirm modal
-	confirmReviewPR   *PullRequest      // selected PR when the confirm modal is for AI review
-	confirmView       viewport.Model    // scrollable viewport for overflowing confirm modals
-	scrollDrag        scrollbarDragState
+	confirmAction           string  // "close", "merge", "diff"
+	confirmPrompt           string  // prompt text for modal
+	confirmSubject          string  // target description for progress (e.g. "data-team#8", "3 PRs")
+	confirmURL              string  // optional URL for hyperlinking the subject in progress
+	confirmCmd              tea.Cmd // command to run on confirmation
+	confirmCmdFn            func(confirmSubmission) tea.Cmd
+	confirmOptionValues     []int             // initially selected value for each option row
+	confirmHasInput         bool              // true when the dialog includes a text input
+	confirmInputLabel       string            // label above the textarea (default: "Comment")
+	confirmInputValue       string            // initial text input value
+	confirmInputPlaceholder string            // empty text input hint
+	confirmOptions          []filterOptionDef // optional selectable rows shown in the dialog
+	confirmReviewPR         *PullRequest      // selected PR when the dialog is for AI review
+	dialogs                 *dialog.Stack     // primer stack for confirmations, information, and forms
+	scrollDrag              scrollbarDragState
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -695,8 +695,6 @@ func choiceIndex(choices []filterChoice, value string) int {
 	return 0
 }
 
-func (m tuiModel) hasConfirmOptions() bool { return len(m.confirmOptions) > 0 }
-
 func (m tuiModel) selectedConfirmOptionValue(row int) string {
 	if row < 0 || row >= len(m.confirmOptions) {
 		return ""
@@ -706,25 +704,10 @@ func (m tuiModel) selectedConfirmOptionValue(row int) string {
 		return ""
 	}
 	idx := 0
-	if row < len(m.confirmState.OptValues) {
-		idx = min(max(m.confirmState.OptValues[row], 0), len(choices)-1)
+	if row < len(m.confirmOptionValues) {
+		idx = min(max(m.confirmOptionValues[row], 0), len(choices)-1)
 	}
 	return choices[idx].value
-}
-
-func (m tuiModel) buildConfirmSubmission() confirmSubmission {
-	submission := confirmSubmission{
-		Input: strings.TrimSpace(m.confirmInput.Value()),
-	}
-	if !m.hasConfirmOptions() {
-		return submission
-	}
-
-	submission.Options = make(map[string]string, len(m.confirmOptions))
-	for i, def := range m.confirmOptions {
-		submission.Options[def.label] = m.selectedConfirmOptionValue(i)
-	}
-	return submission
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -966,7 +949,18 @@ func (m *tuiModel) exitDiffView() tea.Cmd {
 	return m.refreshOrReschedule()
 }
 
+// Update runs the real update, then reconciles the dialog stack so a dialog
+// set up (or cleared) anywhere opens or closes before the next View.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	if tm, ok := model.(tuiModel); ok {
+		tm.syncConfirmDialog()
+		return tm, cmd
+	}
+	return model, cmd
+}
+
+func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
 		(keyMsg.String() == key.CtrlC || keyMsg.String() == key.CtrlD) &&
 		!m.filterInput.Focused() {
@@ -994,6 +988,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.touchInteraction()
+		// A dialog-stack confirm is modal: left clicks go to its scrollbar or
+		// content (translated into ClickMsg); other buttons are swallowed.
+		if m.confirmUsesDialog() && m.dialogs != nil {
+			if msg.Button == tea.MouseLeft {
+				if m.handleScrollbarPress(msg.Mouse()) {
+					return m, nil
+				}
+				return m.updateConfirmDialog(msg)
+			}
+			return m, nil
+		}
 		if msg.Button == tea.MouseLeft && m.handleScrollbarPress(msg.Mouse()) {
 			return m, nil
 		}
@@ -1101,7 +1106,6 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		status := fmt.Sprintf("%d/%d", msg.count-msg.failed, msg.count)
 		if msg.failed > 0 {
 			m.confirmAction = tuiActionInfo
-			m.confirmState.Yes = true
 			m.confirmPrompt = renderBatchFailurePrompt(msg)
 			m.confirmCmd = nil
 			return m, flashResult(
@@ -1343,6 +1347,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) doPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.confirmUsesDialog() {
+		return m.updateConfirmDialog(msg)
+	}
 	if m.filterInput.Focused() {
 		prev := m.filterInput.Value()
 		var cmd tea.Cmd
@@ -1353,11 +1360,6 @@ func (m tuiModel) doPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 			}
 			m.offset = 0
 		}
-		return m, cmd
-	}
-	if m.confirmAction != "" && m.confirmHasInput && m.confirmInput.Focused() {
-		var cmd tea.Cmd
-		m.confirmInput, cmd = m.confirmInput.Update(msg)
 		return m, cmd
 	}
 	return m, nil
@@ -1402,7 +1404,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle pending confirmation.
 	if m.confirmAction != "" {
-		return m.updateConfirmOverlay(msg)
+		return m.updateConfirmDialog(msg)
 	}
 
 	// Freeze interactions while a view is loading in the background.
@@ -1647,14 +1649,8 @@ func (m tuiModel) View() tea.View {
 			m.height,
 			overlay.Center,
 		)
-	case m.confirmAction != "":
-		v.Content = overlay.Place(
-			v.Content,
-			m.renderConfirmModal(),
-			m.width,
-			m.height,
-			overlay.Center,
-		)
+	case m.confirmUsesDialog():
+		v.Content = m.viewConfirmDialog(v.Content)
 	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.flash.Msg == "":
 		v.Content = overlay.Place(
 			v.Content,
@@ -1876,14 +1872,8 @@ func (m tuiModel) renderFullScreenView(
 	}))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
-	if m.confirmAction != "" {
-		v.Content = overlay.Place(
-			v.Content,
-			m.renderConfirmModal(),
-			m.width,
-			m.height,
-			overlay.Center,
-		)
+	if m.confirmUsesDialog() {
+		v.Content = m.viewConfirmDialog(v.Content)
 	}
 	m.applyRepaintMarker(&v)
 	return v
@@ -1944,10 +1934,6 @@ func (m *tuiModel) applyWindowSize(width, height int) {
 	if m.view == tuiViewDetail && len(m.detailLines) > 0 {
 		m.detailLines = m.renderDetailContent()
 		m.syncDetailView()
-	}
-	if m.confirmAction != "" {
-		m.confirmInput.SetWidth(m.confirmInputWidth())
-		m.confirmInput.MaxHeight = m.confirmTextareaMaxHeight()
 	}
 }
 
@@ -2785,13 +2771,10 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmHasInput = false
 	m.confirmInputLabel = ""
 	m.confirmOptions = nil
-	m.confirmState = prompt.State{}
+	m.confirmOptionValues = nil
 	m.confirmReviewPR = nil
-	m.confirmView.GotoTop()
-	m.confirmInput.SetWidth(tuiConfirmInputWidth)
-	m.confirmInput.MaxHeight = tuiConfirmInputMaxHeight
-	m.confirmInput.Blur()
-	m.confirmInput.SetValue("")
+	m.confirmInputValue = ""
+	m.confirmInputPlaceholder = ""
 	return m
 }
 
@@ -3117,8 +3100,6 @@ func runTui(
 	fiStyles.Cursor.Color = colorFilter
 	fi.SetStyles(fiStyles)
 
-	ci := newConfirmInput()
-
 	// Resolve current user login eagerly so it's cached for View calls.
 	login, _ := getCurrentLogin(rest)
 
@@ -3137,10 +3118,8 @@ func runTui(
 		removed:         make(prKeys),
 		selected:        make(prKeys),
 		filterInput:     fi,
-		confirmInput:    ci,
 		diffView:        newScrollView(),
 		detailView:      newScrollView(),
-		confirmView:     newScrollViewSoftWrap(),
 		p:               p,
 		cli:             cli,
 		cfg:             cfg,

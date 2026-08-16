@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	cansi "github.com/charmbracelet/x/ansi"
+	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
@@ -26,42 +27,6 @@ import (
 	"github.com/gechr/x/shell"
 	"github.com/stretchr/testify/require"
 )
-
-func TestRenderConfirmOptionsHeaderStyleOmitsCaret(t *testing.T) {
-	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-	}
-	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-
-	rendered := m.confirmOptionsHeader()
-
-	label := m.styles.helpKey
-	faint := lg.NewStyle().Faint(true)
-	sel := styleTitle.Bold(true)
-	active := styleHighlight.Faint(true)
-	selActive := styleHighlight.Bold(true)
-	g := "  "
-	require.Equal(
-		t,
-		label.Render("Provider")+nl+
-			selActive.Render(string(reviewProviderClaude))+g+
-			active.Render(string(reviewProviderCodex))+g+
-			active.Render(string(reviewProviderGemini))+nl+nl+
-			label.Render("Model")+nl+
-			faint.Render(claudeReviewModelSonnet)+g+
-			sel.Render(claudeReviewModelOpus)+g+
-			faint.Render(claudeReviewModelFable)+nl+nl+
-			label.Render("Effort")+nl+
-			faint.Render(claudeReviewEffortLow)+g+
-			faint.Render(claudeReviewEffortMedium)+g+
-			sel.Render(claudeReviewEffortHigh)+g+
-			faint.Render(claudeReviewEffortXHigh)+g+
-			faint.Render(claudeReviewEffortMax)+g+
-			faint.Render(claudeReviewEffortAuto)+nl+nl,
-		rendered,
-	)
-}
 
 func TestShellSingleQuoteEscapesSingleQuotes(t *testing.T) {
 	require.Equal(t, `'it'"'"'s fine'`, shell.Quote("it's fine"))
@@ -76,11 +41,10 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	pr := testReviewPullRequest()
 	m := tuiModel{
-		items:        []PRRowModel{{PR: pr}},
-		rows:         []TableRow{{Item: PRRowModel{PR: pr}}},
-		removed:      make(prKeys),
-		selected:     make(prKeys),
-		confirmInput: newConfirmInput(),
+		items:    []PRRowModel{{PR: pr}},
+		rows:     []TableRow{{Item: PRRowModel{PR: pr}}},
+		removed:  make(prKeys),
+		selected: make(prKeys),
 	}
 
 	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Text: "r"})
@@ -88,8 +52,6 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.Equal(t, "review", bm.confirmAction)
-	require.True(t, bm.confirmState.OptFocus)
-	require.False(t, bm.confirmInput.Focused())
 
 	model, cmd = m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModAlt})
 	require.NotNil(t, cmd)
@@ -104,11 +66,10 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 func TestUpdateListViewCtrlRSinglePRBypassesConfirm(t *testing.T) {
 	pr := testReviewPullRequest()
 	m := tuiModel{
-		items:        []PRRowModel{{PR: pr}},
-		rows:         []TableRow{{Item: PRRowModel{PR: pr}}},
-		removed:      make(prKeys),
-		selected:     make(prKeys),
-		confirmInput: newConfirmInput(),
+		items:    []PRRowModel{{PR: pr}},
+		rows:     []TableRow{{Item: PRRowModel{PR: pr}}},
+		removed:  make(prKeys),
+		selected: make(prKeys),
 	}
 
 	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
@@ -150,7 +111,6 @@ func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
 	)
 	require.Equal(t, "2 PRs", bm.confirmSubject)
 	require.NotNil(t, bm.confirmCmd)
-	require.True(t, bm.confirmState.Yes)
 }
 
 func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
@@ -227,239 +187,29 @@ func TestInlineHelpKeyEmbedsModifiedCtrlShiftChord(t *testing.T) {
 	require.Equal(t, "ctrl+shift+toggle", ansi.Strip(rendered))
 }
 
-func TestUpdateConfirmOverlaySwitchingProviderUpdatesModelChoices(t *testing.T) {
-	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-	}
-	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-
-	bm := m
-
-	model, cmd := bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyRight})
-	require.Nil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, string(reviewProviderCodex), bm.selectedConfirmOptionValue(0))
-	require.Equal(t, defaultReviewModel(nil, reviewProviderCodex), bm.selectedConfirmOptionValue(1))
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
-			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
-			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
-			{label: codexReviewModel55, value: codexReviewModel55},
-			{label: codexReviewModel54, value: codexReviewModel54},
-			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
-		},
-		bm.confirmOptions[1].choices,
-	)
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: codexReviewEffortLow, value: codexReviewEffortLow},
-			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
-			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
-			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
-			{label: codexReviewEffortMax, value: codexReviewEffortMax},
-		},
-		bm.confirmOptions[2].choices,
-	)
-}
-
-func TestUpdateConfirmOverlaySwitchingToGeminiShowsEffortImmediately(t *testing.T) {
-	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-	}
-	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-
-	bm := m
-	model, cmd := bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyRight})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-
-	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyRight})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-
-	require.Equal(t, string(reviewProviderGemini), bm.selectedConfirmOptionValue(0))
-	require.Equal(
-		t,
-		defaultReviewModel(nil, reviewProviderGemini),
-		bm.selectedConfirmOptionValue(1),
-	)
-	require.Len(t, bm.confirmOptions, 3)
-	require.Equal(t, reviewEffortOptionLabel, bm.confirmOptions[2].label)
-	require.NotEmpty(t, bm.confirmOptions[2].choices)
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
-			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
-			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
-		},
-		bm.confirmOptions[2].choices,
-	)
-}
-
-func TestRenderConfirmOptionsHighlightsActiveRowInGreen(t *testing.T) {
-	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-	}
-	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-	m.confirmState.OptFocus = true
-	m.confirmState.OptCursor = 1
-
-	rendered := m.confirmOptionsHeader()
-
-	label := m.styles.helpKey
-	faint := lg.NewStyle().Faint(true)
-	sel := styleTitle.Bold(true)
-	active := styleHighlight.Faint(true)
-	selActive := styleHighlight.Bold(true)
-	g := "  "
-	require.Equal(
-		t,
-		label.Render("Provider")+nl+
-			sel.Render(string(reviewProviderClaude))+g+
-			faint.Render(string(reviewProviderCodex))+g+
-			faint.Render(string(reviewProviderGemini))+nl+nl+
-			label.Render("Model")+nl+
-			active.Render(claudeReviewModelSonnet)+g+
-			selActive.Render(claudeReviewModelOpus)+g+
-			active.Render(claudeReviewModelFable)+nl+nl+
-			label.Render("Effort")+nl+
-			faint.Render(claudeReviewEffortLow)+g+
-			faint.Render(claudeReviewEffortMedium)+g+
-			sel.Render(claudeReviewEffortHigh)+g+
-			faint.Render(claudeReviewEffortXHigh)+g+
-			faint.Render(claudeReviewEffortMax)+g+
-			faint.Render(claudeReviewEffortAuto)+nl+nl,
-		rendered,
-	)
-}
-
-func TestUpdateConfirmOverlayTabLoopsAcrossOptions(t *testing.T) {
-	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-	}
-	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-
-	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
-	require.Nil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 1, bm.confirmState.OptCursor)
-
-	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
-	require.Nil(t, cmd)
-
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 2, bm.confirmState.OptCursor)
-
-	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
-	require.NotNil(t, cmd)
-
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.confirmState.OptFocus)
-	require.True(t, bm.confirmInput.Focused())
-
-	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyTab})
-	require.Nil(t, cmd)
-
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.confirmState.OptFocus)
-	require.Equal(t, 0, bm.confirmState.OptCursor)
-}
-
-func TestUpdateConfirmOverlayUpDownCanFocusPrompt(t *testing.T) {
-	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-	}
-	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-
-	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyUp})
-	require.NotNil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.confirmState.OptFocus)
-	require.True(t, bm.confirmInput.Focused())
-
-	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
-	require.Nil(t, cmd)
-
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.confirmState.OptFocus)
-	require.True(t, bm.confirmInput.Focused())
-
-	bm = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-	bm.confirmState.OptFocus = true
-	bm.confirmInput.Blur()
-	bm.confirmState.OptCursor = len(bm.confirmOptions) - 1
-	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
-	require.NotNil(t, cmd)
-
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.confirmState.OptFocus)
-	require.True(t, bm.confirmInput.Focused())
-}
-
-func TestUpdateConfirmOverlayPromptDoesNotExitOnArrowKeys(t *testing.T) {
-	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-	}
-	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-	m, cmd := m.focusConfirmInput()
-	require.NotNil(t, cmd)
-
-	model, cmd := m.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyUp})
-	require.NotNil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.confirmState.OptFocus)
-	require.True(t, bm.confirmInput.Focused())
-
-	model, cmd = bm.updateConfirmOverlay(tea.KeyPressMsg{Code: tea.KeyDown})
-	require.NotNil(t, cmd)
-
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.confirmState.OptFocus)
-	require.True(t, bm.confirmInput.Focused())
-}
-
 func TestDoPasteRoutesToFocusedReviewPrompt(t *testing.T) {
 	m := tuiModel{
-		confirmInput: newConfirmInput(),
-		styles:       newTuiStyles(),
-		view:         tuiViewList,
+		styles: newTuiStyles(),
+		view:   tuiViewList,
 	}
 	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
-	m.confirmInput.SetValue("")
-	m, cmd := m.focusConfirmInput()
-	require.NotNil(t, cmd)
+	m.confirmInputValue = ""
+	m.syncConfirmDialog()
+	for range len(m.confirmOptions) {
+		model, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+		var ok bool
+		m, ok = model.(tuiModel)
+		require.True(t, ok)
+	}
 
 	model, _ := m.Update(tea.PasteMsg{Content: "line one\nline two"})
 
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, "line one\nline two", bm.confirmInput.Value())
+	d, ok := bm.dialogs.Top().(*dialog.Form)
+	require.True(t, ok)
+	values := d.Model().Values()
+	require.Equal(t, "line one\nline two", values[len(values)-1])
 }
 
 func TestDoPasteRoutesToFocusedFilter(t *testing.T) {
@@ -1560,13 +1310,12 @@ func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
 	m := tuiModel{
 		confirmAction: tuiActionInfo,
 		confirmPrompt: strings.TrimSuffix(strings.Repeat("line\n", 40), nl),
-		confirmView:   newScrollViewSoftWrap(),
-		confirmInput:  newConfirmInput(),
 		width:         80,
 		height:        18,
 		styles:        newTuiStyles(),
 	}
-	m.syncConfirmView()
+	m.syncConfirmDialog()
+	m.View()
 
 	hitbox, ok := m.scrollbarHitbox(scrollbarTargetConfirm)
 	require.True(t, ok)
@@ -1577,8 +1326,7 @@ func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
 		Button: tea.MouseLeft,
 	}))
 
-	require.Positive(t, m.confirmView.YOffset())
-	require.GreaterOrEqual(t, m.confirmView.ScrollPercent(), 0.9)
+	require.GreaterOrEqual(t, m.dialogs.ScrollPercent(), 0.9)
 }
 
 func TestWrapDiffLinesExpandsTabs(t *testing.T) {
