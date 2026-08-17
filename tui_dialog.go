@@ -114,13 +114,17 @@ func (m *tuiModel) newConfirmFormDialog() dialog.Dialog {
 	if len(values) > 0 {
 		previousProvider = normalizeReviewProvider(values[0])
 	}
+	inputValue := m.confirmInputValue
+	if draft, ok := m.confirmDraft(); ok {
+		inputValue = draft
+	}
 	var d *dialog.Form
 	formOptions := []dialog.FormOption{}
 	if activeIcons.PillLeft != "" {
 		formOptions = append(formOptions, dialog.WithNerdFonts())
 	}
 	d = dialog.NewForm(
-		owner.newConfirmFormModel(defs, values, m.confirmInputValue),
+		owner.newConfirmFormModel(defs, values, inputValue),
 		func(ev form.EventKind) {
 			if ev == form.EventChanged && owner.confirmAction == tuiActionReview {
 				owner.syncReviewDialogForm(d, &defs, &previousProvider)
@@ -262,8 +266,59 @@ func (m tuiModel) updateConfirmDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		model, actionCmd := m.confirmAccept()
 		return model, tea.Batch(cmd, actionCmd)
 	}
+	if f, ok := popped.(*dialog.Form); ok {
+		m = m.rememberConfirmDraft(m.dialogFormInput(f))
+	}
 	model, dismissCmd := m.confirmDismiss()
 	return model, tea.Batch(cmd, dismissCmd)
+}
+
+func (m tuiModel) dialogFormInput(d *dialog.Form) string {
+	values := d.Model().Values()
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
+}
+
+func (m tuiModel) confirmDraft() (string, bool) {
+	key, ok := m.confirmDraftKey()
+	if !ok {
+		return "", false
+	}
+	draft, ok := m.confirmDrafts[key]
+	return draft, ok
+}
+
+func (m tuiModel) rememberConfirmDraft(input string) tuiModel {
+	key, ok := m.confirmDraftKey()
+	if !ok {
+		return m
+	}
+	if m.confirmDrafts == nil {
+		m.confirmDrafts = make(map[confirmDraftKey]string)
+	}
+	if input == "" {
+		delete(m.confirmDrafts, key)
+	} else {
+		m.confirmDrafts[key] = input
+	}
+	return m
+}
+
+func (m tuiModel) forgetConfirmDraft() tuiModel {
+	key, ok := m.confirmDraftKey()
+	if ok {
+		delete(m.confirmDrafts, key)
+	}
+	return m
+}
+
+func (m tuiModel) confirmDraftKey() (confirmDraftKey, bool) {
+	if !m.confirmHasInput || m.confirmAction == "" || m.confirmURL == "" {
+		return confirmDraftKey{}, false
+	}
+	return confirmDraftKey{action: m.confirmAction, url: m.confirmURL}, true
 }
 
 func (m tuiModel) dialogFormSubmission(d *dialog.Form) confirmSubmission {

@@ -246,6 +246,49 @@ func TestInputConfirmDialogSubmitsTrimmedText(t *testing.T) {
 	require.False(t, bm.dialogs.Active())
 }
 
+func TestInputConfirmDialogRestoresCanceledDraftForSamePR(t *testing.T) {
+	open := func(m tuiModel, url string) tuiModel {
+		m.confirmAction = tuiActionClose
+		m.confirmPrompt = "Close owner/repo#42?"
+		m.confirmSubject = "owner/repo#42"
+		m.confirmURL = url
+		m.confirmHasInput = true
+		m.confirmCmdFn = func(confirmSubmission) tea.Cmd { return nil }
+		m.syncConfirmDialog()
+		return m
+	}
+
+	m := open(plainConfirmModel(), "https://example.com/owner/repo/pull/42")
+	d, ok := m.dialogs.Top().(*dialog.Form)
+	require.True(t, ok)
+	d.Model().SetValue(0, "half-written\ncomment")
+	model, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m, ok = model.(tuiModel)
+	require.True(t, ok)
+
+	other := open(m, "https://example.com/owner/repo/pull/43")
+	d, ok = other.dialogs.Top().(*dialog.Form)
+	require.True(t, ok)
+	require.Empty(t, d.Model().Value(0))
+	model, _ = other.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m, ok = model.(tuiModel)
+	require.True(t, ok)
+
+	m = open(m, "https://example.com/owner/repo/pull/42")
+	d, ok = m.dialogs.Top().(*dialog.Form)
+	require.True(t, ok)
+	require.Equal(t, "half-written\ncomment", d.Model().Value(0))
+
+	model, _ = m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	m, ok = model.(tuiModel)
+	require.True(t, ok)
+	_, saved := m.confirmDrafts[confirmDraftKey{
+		action: tuiActionClose,
+		url:    "https://example.com/owner/repo/pull/42",
+	}]
+	require.False(t, saved)
+}
+
 func TestReviewConfirmDialogUpdatesDependentFields(t *testing.T) {
 	m := tuiModel{
 		styles: newTuiStyles(),

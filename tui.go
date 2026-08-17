@@ -42,6 +42,11 @@ type confirmSubmission struct {
 	Options map[string]string
 }
 
+type confirmDraftKey struct {
+	action string
+	url    string
+}
+
 func (s confirmSubmission) Option(label string) string {
 	if s.Options == nil {
 		return ""
@@ -475,7 +480,8 @@ type tuiModel struct {
 	confirmInputPlaceholder string            // empty text input hint
 	confirmOptions          []filterOptionDef // optional selectable rows shown in the dialog
 	confirmReviewPR         *PullRequest      // selected PR when the dialog is for AI review
-	dialogs                 *dialog.Stack     // primer stack for confirmations, information, and forms
+	confirmDrafts           map[confirmDraftKey]string
+	dialogs                 *dialog.Stack // primer stack for confirmations, information, and forms
 	scrollDrag              scrollbarDragState
 
 	// Background auto-refresh.
