@@ -42,7 +42,9 @@ func (m *tuiModel) syncConfirmDialog() {
 func (m *tuiModel) newConfirmFrame() dialog.Frame {
 	return dialog.NewFrame(dialog.FrameConfig{
 		Styles: dialog.Styles{
-			Box: m.styles.overlayBox.Padding(1, tuiConfirmPadX-1),
+			Box:      m.styles.overlayBox.Padding(1, tuiConfirmPadX-1),
+			HintKey:  m.styles.helpKey,
+			HintText: m.styles.helpText,
 			Scrollbar: scrollbar.Styles{
 				Thumb: lg.NewStyle().Foreground(colorAccent),
 				Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
@@ -113,6 +115,10 @@ func (m *tuiModel) newConfirmFormDialog() dialog.Dialog {
 		previousProvider = normalizeReviewProvider(values[0])
 	}
 	var d *dialog.Form
+	formOptions := []dialog.FormOption{}
+	if activeIcons.PillLeft != "" {
+		formOptions = append(formOptions, dialog.WithNerdFonts())
+	}
 	d = dialog.NewForm(
 		owner.newConfirmFormModel(defs, values, m.confirmInputValue),
 		func(ev form.EventKind) {
@@ -120,6 +126,7 @@ func (m *tuiModel) newConfirmFormDialog() dialog.Dialog {
 				owner.syncReviewDialogForm(d, &defs, &previousProvider)
 			}
 		},
+		formOptions...,
 	)
 	return d
 }
@@ -129,6 +136,7 @@ func (m *tuiModel) newConfirmFormModel(
 	values []string,
 	inputValue string,
 ) form.Model {
+	dimAccent := lg.NewStyle().Foreground(colorAccent).Faint(true)
 	fields := make([]form.FieldSpec, 0, len(defs)+1)
 	for i, def := range defs {
 		initial := ""
@@ -154,15 +162,15 @@ func (m *tuiModel) newConfirmFormModel(
 		Optional:    true,
 	})
 	return form.New(form.Config{
-		Title:  m.confirmPrompt,
+		Title:  m.confirmPrompt + nl,
 		Fields: fields,
 		Width:  m.confirmInputWidth(),
 		Styles: form.Styles{
 			Title:         styleText,
-			Label:         m.styles.helpText,
-			LabelFocused:  m.styles.helpKey,
-			Border:        lg.NewStyle().Foreground(colorAccent).Faint(true),
-			BorderFocused: lg.NewStyle().Foreground(colorHighlight),
+			Label:         dimAccent,
+			LabelFocused:  dimAccent,
+			Border:        dimAccent,
+			BorderFocused: dimAccent,
 			HintKey:       m.styles.helpKey,
 			HintText:      m.styles.helpText,
 			Question:      styleWarning,

@@ -200,6 +200,29 @@ func TestInputConfirmUsesFormDialog(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestInputConfirmDialogSeparatesAndDimsField(t *testing.T) {
+	m := plainConfirmModel()
+	m.confirmHasInput = true
+	m.confirmCmd = nil
+	m.confirmCmdFn = func(confirmSubmission) tea.Cmd { return nil }
+	m.syncConfirmDialog()
+
+	d, ok := m.dialogs.Top().(*dialog.Form)
+	require.True(t, ok)
+	body := d.Model().Body()
+	lines := strings.Split(ansi.Strip(body), nl)
+	require.Equal(t, "Approve owner/repo#42?", strings.TrimSpace(lines[0]))
+	require.Empty(t, strings.TrimSpace(lines[1]))
+	require.Equal(
+		t,
+		"╭ Comment (optional) "+strings.Repeat("─", 48)+"╮",
+		lines[2],
+	)
+	dimAccent := lg.NewStyle().Foreground(colorAccent).Faint(true)
+	require.Equal(t, 1, strings.Count(body, dimAccent.Render(" Comment (optional) ")))
+	require.Equal(t, 1, strings.Count(body, dimAccent.Render("╭")))
+}
+
 func TestInputConfirmDialogSubmitsTrimmedText(t *testing.T) {
 	m := plainConfirmModel()
 	m.confirmHasInput = true

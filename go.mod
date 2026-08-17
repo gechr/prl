@@ -17,7 +17,7 @@ require (
 	github.com/gechr/clib v0.7.17
 	github.com/gechr/clive v0.4.10
 	github.com/gechr/clog v0.17.0
-	github.com/gechr/primer v0.2.2
+	github.com/gechr/primer v0.2.3
 	github.com/gechr/x v0.5.19
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.1
