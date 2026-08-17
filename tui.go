@@ -1166,6 +1166,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx < 0 {
 			return m, nil // PR no longer in list
 		}
+		m.applyDetailMergeStatus(msg.key, idx, msg.detail.MergeStatus)
 		m.refreshTerminalSize()
 		m.detailKey = msg.key
 		m.detail = msg.detail
@@ -1345,6 +1346,27 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// applyDetailMergeStatus replaces list enrichment for a single PR with the
+// uncapped status fetched specifically for its detail view.
+func (m *tuiModel) applyDetailMergeStatus(key prKey, idx int, status *MergeStatus) {
+	if status == nil {
+		return
+	}
+
+	update := func(item *PRRowModel) {
+		item.PR.MergeStatus = *status
+		item.MergeStatus = *status
+		item.MergeReason = deriveMergeReason(item.PR)
+	}
+	update(&m.rows[idx].Item)
+	for i := range m.items {
+		if makePRKey(m.items[i].PR) == key {
+			update(&m.items[i])
+			break
+		}
+	}
 }
 
 func (m tuiModel) doPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
@@ -1976,18 +1998,6 @@ func (m tuiModel) renderDetailContent() []string {
 	if len(m.detail.Reviews) > 0 {
 		var parts []string
 		for _, r := range m.detail.Reviews {
-			icon := activeIcons.Commented
-			switch r.State {
-			case valueReviewApproved:
-				icon = activeIcons.Approved
-			case valueReviewChanges:
-				icon = activeIcons.Rejected
-			case valueReviewDismissed:
-				icon = activeIcons.Dismissed
-			}
-			if isAuthorBot(r.User) && icon == activeIcons.Commented {
-				icon = activeIcons.Copilot
-			}
 			name := m.resolver.Resolve(r.User)
 			var link string
 			if isAuthorBot(r.User) {
@@ -1996,7 +2006,7 @@ func (m tuiModel) renderDetailContent() []string {
 				link = "https://github.com/" + r.User
 			}
 			styled := xansi.Force().Hyperlink(link, styleText.Render(name))
-			parts = append(parts, icon+" "+styled)
+			parts = append(parts, renderReviewIcon(r)+" "+styled)
 		}
 		lines = append(lines, detailIndent+labelStyle.Render("Reviews: ")+
 			strings.Join(parts, " · "))
@@ -2095,6 +2105,25 @@ func (m tuiModel) renderDetailContent() []string {
 	}
 
 	return lines
+}
+
+func renderReviewIcon(review PRReview) string {
+	icon := activeIcons.Commented
+	switch review.State {
+	case valueReviewApproved:
+		if activeIcons == iconsNerd {
+			return styleOK.Render(activeIcons.Approved)
+		}
+		return activeIcons.Approved
+	case valueReviewChanges:
+		icon = activeIcons.Rejected
+	case valueReviewDismissed:
+		icon = activeIcons.Dismissed
+	}
+	if isAuthorBot(review.User) && icon == activeIcons.Commented {
+		return activeIcons.Copilot
+	}
+	return icon
 }
 
 func (m tuiModel) renderDetailStatus(pr PullRequest) string {

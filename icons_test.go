@@ -98,6 +98,17 @@ func TestUseIcons(t *testing.T) {
 	require.Equal(t, iconsNerd, activeIcons)
 }
 
+func TestNerdCheckIconsUseUnicodeHeavyCheck(t *testing.T) {
+	require.Equal(t, "\u2714", iconsNerd.Approved)
+	require.Equal(t, "\u2714", iconsNerd.Check)
+}
+
+func TestNerdCrossIconsUseUnicodeHeavyBallotX(t *testing.T) {
+	require.Equal(t, "\u2718", iconsNerd.Rejected)
+	require.Equal(t, "\u2718", iconsNerd.Cross)
+	require.Equal(t, "\u2718", iconsNerd.StatusCIFailed)
+}
+
 func TestIconsFor(t *testing.T) {
 	t.Setenv("NERD_FONTS", "")
 	require.Equal(t, iconsUnicode, iconsFor(IconAuto))

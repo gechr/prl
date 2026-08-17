@@ -514,6 +514,7 @@ func (a *ActionRunner) fetchPRBody(owner, repo string, number int) (string, erro
 type PRDetail struct {
 	Body           string
 	MergeableState string // clean, dirty, unstable, behind, blocked, unknown
+	MergeStatus    *MergeStatus
 	Reviews        []PRReview
 	Checks         []PRCheck
 	Files          []PRFile
@@ -549,6 +550,7 @@ type detailPageInfo struct {
 type prDetailFirstPage struct {
 	Body           string
 	MergeableState string
+	MergeStatus    MergeStatus
 	Reviews        []PRReview
 	ReviewsPage    detailPageInfo
 	Files          []PRFile
@@ -601,6 +603,7 @@ func (a *ActionRunner) fetchPRDetail(
 	detail := PRDetail{
 		Body:           firstPage.Body,
 		MergeableState: firstPage.MergeableState,
+		MergeStatus:    &firstPage.MergeStatus,
 		Files:          append([]PRFile(nil), firstPage.Files...),
 		Checks:         append([]PRCheck(nil), firstPage.Checks...),
 	}
@@ -737,8 +740,9 @@ func (a *ActionRunner) fetchPRDetailREST(
 func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage, error) {
 	var result struct {
 		Node *struct {
-			Body             string `json:"body"`
-			MergeStateStatus string `json:"mergeStateStatus"`
+			Body             string  `json:"body"`
+			MergeStateStatus string  `json:"mergeStateStatus"`
+			ReviewDecision   *string `json:"reviewDecision"`
 			Reviews          struct {
 				PageInfo detailPageInfo `json:"pageInfo"`
 				Nodes    []struct {
@@ -761,6 +765,7 @@ func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage,
 				Nodes []struct {
 					Commit struct {
 						StatusCheckRollup *struct {
+							State    string `json:"state"`
 							Contexts struct {
 								PageInfo detailPageInfo    `json:"pageInfo"`
 								Nodes    []detailCheckNode `json:"nodes"`
@@ -778,6 +783,7 @@ func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage,
 				... on PullRequest {
 					body
 					mergeStateStatus
+					reviewDecision
 					reviews(first: 100) {
 						pageInfo {
 							hasNextPage
@@ -804,6 +810,7 @@ func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage,
 						nodes {
 							commit {
 								statusCheckRollup {
+									state
 									contexts(first: 100) {
 										pageInfo {
 											hasNextPage
@@ -841,9 +848,25 @@ func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage,
 		return prDetailFirstPage{}, fmt.Errorf("pull request not found")
 	}
 
+	ciState := ""
+	if len(result.Node.Commits.Nodes) > 0 {
+		if rollup := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+			ciState = rollup.State
+		}
+	}
+	mergeStatus := resolveMergeStatus(
+		ciState,
+		result.Node.ReviewDecision,
+		result.Node.MergeStateStatus,
+	)
+	if result.Node.MergeStateStatus == valueMergeStateDirty {
+		mergeStatus = MergeStatusConflict
+	}
+
 	page := prDetailFirstPage{
 		Body:           result.Node.Body,
 		MergeableState: strings.ToLower(result.Node.MergeStateStatus),
+		MergeStatus:    mergeStatus,
 		ReviewsPage:    result.Node.Reviews.PageInfo,
 		FilesPage:      result.Node.Files.PageInfo,
 	}

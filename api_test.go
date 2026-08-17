@@ -582,6 +582,7 @@ func TestFetchPRDetailUsesSingleGraphQLPageWhenItFits(t *testing.T) {
 				`{"data":{"node":{
 					"body":"hello world",
 					"mergeStateStatus":"BEHIND",
+					"reviewDecision":"APPROVED",
 					"reviews":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
 						{"author":{"login":"alice"},"state":"COMMENTED"},
 						{"author":{"login":"alice"},"state":"APPROVED"},
@@ -590,7 +591,7 @@ func TestFetchPRDetailUsesSingleGraphQLPageWhenItFits(t *testing.T) {
 					"files":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
 						{"path":"gone.txt","changeType":"DELETED","additions":0,"deletions":4}
 					]},
-					"commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+					"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"PENDING","contexts":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
 						{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-04-10T00:00:00Z","completedAt":"2026-04-10T00:01:00Z"},
 						{"__typename":"StatusContext","context":"lint","state":"PENDING"}
 					]}}}}]}
@@ -624,6 +625,8 @@ func TestFetchPRDetailUsesSingleGraphQLPageWhenItFits(t *testing.T) {
 	require.EqualValues(t, 1, gqlCalls.Load())
 	require.Equal(t, "hello world", detail.Body)
 	require.Equal(t, valueBehind, detail.MergeableState)
+	require.NotNil(t, detail.MergeStatus)
+	require.Equal(t, MergeStatusCIPending, *detail.MergeStatus)
 	require.Equal(t, []PRReview{
 		{User: "alice", State: "APPROVED"},
 		{User: "bob", State: "CHANGES_REQUESTED"},

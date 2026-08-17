@@ -113,8 +113,8 @@ var iconsUnicode = iconSet{
 }
 
 var iconsNerd = iconSet{
-	Approved:          "\uf42e", // nf-oct-check
-	Rejected:          "\uf467", // nf-oct-x
+	Approved:          "\u2714",
+	Rejected:          "\u2718",
 	Dismissed:         "\uf468", // nf-oct-circle_slash
 	Commented:         "\uf41f", // nf-oct-comment
 	Copilot:           "\uf4b8", // nf-oct-copilot
@@ -125,8 +125,8 @@ var iconsNerd = iconSet{
 	CINeutral:         "\uf48b", // nf-oct-dash
 	CIStale:           "\uf4ee", // nf-oct-moon
 	CIUnknown:         "\uf420", // nf-oct-question
-	Check:             "\uf42e", // nf-oct-check
-	Cross:             "\uf467", // nf-oct-x
+	Check:             "\u2714",
+	Cross:             "\u2718",
 	Warning:           "\uf421", // nf-oct-alert
 	PillLeft:          "\ue0b6", // nf-ple-left_half_circle_thick
 	PillRight:         "\ue0b4", // nf-ple-right_half_circle_thick
@@ -135,7 +135,7 @@ var iconsNerd = iconSet{
 	StatusClosed:      "\uf4dc", // nf-oct-git_pull_request_closed
 	StatusReady:       "\uf407", // nf-oct-git_pull_request
 	StatusCIPending:   "\uf43a", // nf-oct-clock
-	StatusCIFailed:    "\uf467", // nf-oct-x
+	StatusCIFailed:    "\u2718",
 	StatusNeedsReview: "\uf441", // nf-oct-eye
 	StatusConflict:    "\uf421", // nf-oct-alert
 	StatusUnknown:     "\uf420", // nf-oct-question

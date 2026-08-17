@@ -852,6 +852,57 @@ func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
 	)
 }
 
+func TestRenderReviewIconStylesApprovalGreen(t *testing.T) {
+	previous := activeIcons
+	useIcons(iconsFor(IconNerd))
+	t.Cleanup(func() { useIcons(previous) })
+
+	require.Equal(
+		t,
+		styleOK.Render("\u2714"),
+		renderReviewIcon(PRReview{State: valueReviewApproved}),
+	)
+}
+
+func TestRenderReviewIconKeepsUnicodeApproval(t *testing.T) {
+	previous := activeIcons
+	useIcons(iconsFor(IconUnicode))
+	t.Cleanup(func() { useIcons(previous) })
+
+	require.Equal(
+		t,
+		"✅",
+		renderReviewIcon(PRReview{State: valueReviewApproved}),
+	)
+}
+
+func TestDetailFetchReplacesUnknownListStatus(t *testing.T) {
+	pr := testReviewPullRequest()
+	pr.State = valueOpen
+	pr.MergeStatus = MergeStatusUnknown
+	status := MergeStatusReady
+	m := tuiModel{
+		items:     []PRRowModel{{PR: pr, MergeStatus: MergeStatusUnknown}},
+		rows:      []TableRow{{Item: PRRowModel{PR: pr, MergeStatus: MergeStatusUnknown}}},
+		detailKey: makePRKey(pr),
+		p:         testPRL,
+		resolver:  NewAuthorResolver(&Config{}),
+		width:     80,
+	}
+
+	m.applyDetailMergeStatus(makePRKey(pr), 0, &status)
+
+	require.Equal(t, MergeStatusReady, m.rows[0].Item.PR.MergeStatus)
+	require.Equal(t, MergeStatusReady, m.items[0].PR.MergeStatus)
+	rendered := ansi.Strip(strings.Join(m.renderDetailContent(), nl))
+	require.Equal(
+		t,
+		"Overview\n\n    Title: \n   Author: @\n      URL: https://github.com/owner/repo/pull/42\n"+
+			"   Status: Ready to merge\n\nNo description provided.",
+		rendered,
+	)
+}
+
 func TestRenderDetailContentUsesNerdReviewAndStatusIcons(t *testing.T) {
 	previous := activeIcons
 	useIcons(iconsFor(IconNerd))
@@ -980,6 +1031,10 @@ func TestRenderDetailStatusKeepsUnicodeLabelsPlain(t *testing.T) {
 }
 
 func TestRenderDetailContentStylesCheckIcons(t *testing.T) {
+	previous := activeIcons
+	useIcons(iconsFor(IconNerd))
+	t.Cleanup(func() { useIcons(previous) })
+
 	pr := testReviewPullRequest()
 	pr.Author.Login = "alice"
 	checks := []PRCheck{
