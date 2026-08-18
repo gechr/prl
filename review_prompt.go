@@ -20,7 +20,7 @@ const (
 	reviewProviderClaude  reviewProvider = "claude"
 	reviewProviderCodex   reviewProvider = "codex"
 	reviewProviderGemini  reviewProvider = "gemini"
-	defaultReviewProvider                = reviewProviderClaude
+	defaultReviewProvider                = reviewProviderCodex
 )
 
 func normalizeReviewProvider(provider string) reviewProvider {

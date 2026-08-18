@@ -280,6 +280,19 @@ func (m *tuiModel) syncReviewDialogForm(
 	if len(*defs) > reviewEffortOptionRow {
 		effort = normalizeReviewEffort(m.cfg, provider, model, fm.Value(reviewEffortOptionRow))
 	}
+	// Remember the navigated combination immediately - the next dialog opens
+	// here even if this one is cancelled. Explicit config keys still win when
+	// the state is re-applied on startup.
+	if m.cfg != nil {
+		m.cfg.TUI.Review.Default = TUIReviewDefaultConfig{
+			Provider: string(provider),
+			Model:    model,
+			Effort:   effort,
+		}
+		if err := saveTUIState(m.cfg); err != nil {
+			warnStateSaveErr(err, "review defaults")
+		}
+	}
 	next := reviewConfirmOptions(m.cfg, provider, model)
 	promptValue := fm.Value(len(*defs))
 	if m.confirmReviewPR != nil {

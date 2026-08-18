@@ -188,7 +188,7 @@ func TestLoadConfigUsesConfiguredReviewProviders(t *testing.T) {
 	cfg, err := loadConfig()
 	require.NoError(t, err)
 	require.Equal(t, []string{"codex", "claude"}, cfg.TUI.Review.Enabled)
-	require.Equal(t, "claude", cfg.TUI.Review.Default.Provider)
+	require.Equal(t, "codex", cfg.TUI.Review.Default.Provider)
 }
 
 func TestLoadConfigMigratesLegacySlackDefaultOutput(t *testing.T) {

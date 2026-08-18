@@ -69,6 +69,11 @@ func TestSaveTUIStateMirrorsConfigSubtree(t *testing.T) {
     review: ""
   refresh:
     enabled: true
+  review:
+    default:
+      provider: ""
+      model: ""
+      effort: ""
   sort:
     key: updated
     order: desc

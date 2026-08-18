@@ -126,9 +126,18 @@ type TUIReviewProvidersConfig struct {
 }
 
 type TUIReviewDefaultConfig struct {
-	Provider string `koanf:"provider"`
-	Model    string `koanf:"model"`
-	Effort   string `koanf:"effort"`
+	Provider string `koanf:"provider" yaml:"provider"`
+	Model    string `koanf:"model"    yaml:"model"`
+	Effort   string `koanf:"effort"   yaml:"effort"`
+}
+
+// reviewDefaultsExplicit records which tui.review.default keys the user set in
+// the config file or environment, so persisted TUI state never overrides an
+// explicit choice.
+type reviewDefaultsExplicit struct {
+	provider bool
+	model    bool
+	effort   bool
 }
 
 type TUIReviewConfig struct {
@@ -190,6 +199,10 @@ type Config struct {
 
 	// Author display names (github_username -> Display Name)
 	Authors map[string]string `koanf:"authors"`
+
+	// reviewExplicit marks the review defaults pinned by the user rather than
+	// filled in from the hardcoded defaults; koanf never touches it.
+	reviewExplicit reviewDefaultsExplicit
 }
 
 func defaultConfig() map[string]any {
@@ -243,6 +256,10 @@ func defaultConfig() map[string]any {
 func loadConfig() (*Config, error) {
 	k := koanf.New(".")
 
+	// userK holds only the file and env layers, so a key's presence there
+	// means the user pinned it rather than inherited the hardcoded default.
+	userK := koanf.New(".")
+
 	// 1. Hardcoded defaults
 	if err := k.Load(confmap.Provider(defaultConfig(), "."), nil); err != nil {
 		return nil, fmt.Errorf("loading defaults: %w", err)
@@ -255,12 +272,19 @@ func loadConfig() (*Config, error) {
 		if err := k.Load(file.Provider(cp), koanfyaml.Parser()); err != nil {
 			return nil, fmt.Errorf("loading config file %s: %w", cp, err)
 		}
+		if err := userK.Load(file.Provider(cp), koanfyaml.Parser()); err != nil {
+			return nil, fmt.Errorf("loading config file %s: %w", cp, err)
+		}
 	}
 
 	// 3. PRL_* env vars
-	if err := k.Load(env.Provider(envPrefix, ".", func(s string) string {
+	envProvider := env.Provider(envPrefix, ".", func(s string) string {
 		return strings.ToLower(strings.TrimPrefix(s, envPrefix))
-	}), nil); err != nil {
+	})
+	if err := k.Load(envProvider, nil); err != nil {
+		return nil, fmt.Errorf("loading environment variables: %w", err)
+	}
+	if err := userK.Load(envProvider, nil); err != nil {
 		return nil, fmt.Errorf("loading environment variables: %w", err)
 	}
 	if strings.EqualFold(k.String(keyDefaultOutput), "slack") {
@@ -275,6 +299,11 @@ func loadConfig() (*Config, error) {
 	var cfg Config
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
+	}
+	cfg.reviewExplicit = reviewDefaultsExplicit{
+		provider: userK.Exists(keyTUIReviewDefaultProv),
+		model:    userK.Exists(keyTUIReviewDefaultModel),
+		effort:   userK.Exists(keyTUIReviewDefaultEff),
 	}
 
 	// Validate defaults

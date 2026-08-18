@@ -303,11 +303,15 @@ func TestReviewConfirmDialogUpdatesDependentFields(t *testing.T) {
 	require.True(t, ok)
 	d, ok := bm.dialogs.Top().(*dialog.Form)
 	require.True(t, ok)
-	require.Equal(t, string(reviewProviderCodex), d.Model().Value(0))
-	require.Equal(t, defaultReviewModel(nil, reviewProviderCodex), d.Model().Value(1))
+	require.Equal(t, string(reviewProviderGemini), d.Model().Value(0))
+	require.Equal(t, defaultReviewModel(nil, reviewProviderGemini), d.Model().Value(1))
 	require.Equal(
 		t,
-		defaultReviewEffort(nil, reviewProviderCodex, defaultReviewModel(nil, reviewProviderCodex)),
+		defaultReviewEffort(
+			nil,
+			reviewProviderGemini,
+			defaultReviewModel(nil, reviewProviderGemini),
+		),
 		d.Model().Value(reviewEffortOptionRow),
 	)
 
@@ -317,14 +321,14 @@ func TestReviewConfirmDialogUpdatesDependentFields(t *testing.T) {
 	require.True(t, ok)
 	d, ok = bm.dialogs.Top().(*dialog.Form)
 	require.True(t, ok)
-	require.Equal(t, string(reviewProviderGemini), d.Model().Value(0))
-	require.Equal(t, defaultReviewModel(nil, reviewProviderGemini), d.Model().Value(1))
+	require.Equal(t, string(reviewProviderClaude), d.Model().Value(0))
+	require.Equal(t, defaultReviewModel(nil, reviewProviderClaude), d.Model().Value(1))
 	require.Equal(
 		t,
 		defaultReviewEffort(
 			nil,
-			reviewProviderGemini,
-			defaultReviewModel(nil, reviewProviderGemini),
+			reviewProviderClaude,
+			defaultReviewModel(nil, reviewProviderClaude),
 		),
 		d.Model().Value(reviewEffortOptionRow),
 	)

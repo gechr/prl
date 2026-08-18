@@ -26,7 +26,14 @@ import (
 type tuiState struct {
 	Filters TUIFiltersConfig     `yaml:"filters"`
 	Refresh TUIAutoRefreshConfig `yaml:"refresh"`
+	Review  tuiReviewState       `yaml:"review"`
 	Sort    TUISortConfig        `yaml:"sort"`
+}
+
+// tuiReviewState nests the remembered review defaults under `review.default`,
+// mirroring the config's `tui.review.default` subtree.
+type tuiReviewState struct {
+	Default TUIReviewDefaultConfig `yaml:"default"`
 }
 
 // stateDocument is the on-disk shape of the state file: the persisted TUI
@@ -81,6 +88,7 @@ func saveTUIState(cfg *Config) error {
 	doc := stateDocument{TUI: tuiState{
 		Filters: cfg.TUI.Filters,
 		Refresh: cfg.TUI.AutoRefresh,
+		Review:  tuiReviewState{Default: cfg.TUI.Review.Default},
 		Sort:    cfg.TUI.Sort,
 	}}
 	data, err := goyaml.Marshal(doc)
@@ -93,7 +101,8 @@ func saveTUIState(cfg *Config) error {
 
 // applyTUIState overlays persisted state onto cfg.TUI. The whole persisted
 // subtree is authoritative when present, so the user's last interactive choices
-// take precedence over config defaults.
+// take precedence over config defaults - except the review defaults, where an
+// explicit tui.review.default key in the config always wins.
 func applyTUIState(cfg *Config, st *tuiState) {
 	if st == nil {
 		return
@@ -101,6 +110,30 @@ func applyTUIState(cfg *Config, st *tuiState) {
 	cfg.TUI.Filters = st.Filters
 	cfg.TUI.AutoRefresh = st.Refresh
 	cfg.TUI.Sort = st.Sort
+	applyReviewState(cfg, st.Review.Default)
+}
+
+// applyReviewState restores the last-chosen review provider/model/effort for
+// the keys the config doesn't pin. The remembered model and effort belong to
+// the remembered provider, so they only apply when that provider is the one
+// the dialog will open with; stale or invalid values fall back to defaults
+// through the configuredReview* normalizers at use time.
+func applyReviewState(cfg *Config, saved TUIReviewDefaultConfig) {
+	if !cfg.reviewExplicit.provider && saved.Provider != "" {
+		if p := normalizeReviewProvider(saved.Provider); p != reviewProviderUnknown &&
+			isChoiceValue(reviewProviderChoices(cfg), string(p)) {
+			cfg.TUI.Review.Default.Provider = string(p)
+		}
+	}
+	if saved.Provider != string(configuredReviewProvider(cfg)) {
+		return
+	}
+	if !cfg.reviewExplicit.model && saved.Model != "" {
+		cfg.TUI.Review.Default.Model = saved.Model
+	}
+	if !cfg.reviewExplicit.effort && saved.Effort != "" {
+		cfg.TUI.Review.Default.Effort = saved.Effort
+	}
 }
 
 // warnStateSaveErr logs a non-fatal state persistence failure.
