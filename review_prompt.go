@@ -56,7 +56,7 @@ First read the PR context with:
 gh pr view {prNumber} --repo {ownerWithRepo}
 
 Then get the diff with:
-gh api repos/{ownerWithRepo}/pulls/{prNumber} -H 'Accept: application/vnd.github.v3.diff'
+gh pr diff {prNumber} --repo {ownerWithRepo}
 
 Focus on: correctness, edge cases, error handling, performance, readability, and style.
 

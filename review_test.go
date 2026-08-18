@@ -341,7 +341,7 @@ First read the PR context with:
 gh pr view %[1]d --repo %[2]s
 
 Then get the diff with:
-gh api repos/%[2]s/pulls/%[1]d -H 'Accept: application/vnd.github.v3.diff'
+gh pr diff %[1]d --repo %[2]s
 
 Focus on: correctness, edge cases, error handling, performance, readability, and style.
 
@@ -585,12 +585,12 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 	require.Equal(
 		t,
 		[]filterChoice{
-			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
-			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
-			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
-			{label: codexReviewModel55, value: codexReviewModel55},
-			{label: codexReviewModel54, value: codexReviewModel54},
 			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
+			{label: codexReviewModel54, value: codexReviewModel54},
+			{label: codexReviewModel55, value: codexReviewModel55},
+			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
+			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
+			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
 		},
 		reviewModelChoices(nil, reviewProviderCodex),
 	)

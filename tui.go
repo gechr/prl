@@ -2531,7 +2531,7 @@ func (m tuiModel) filterHelpPipeCol() int {
 
 func (m tuiModel) renderFilterHelp() string {
 	pairs := []key.Hint{
-		{Key: key.ArrowsUpDown, Desc: "prev/next"},
+		{Key: key.ArrowsVertical, Desc: "prev/next"},
 		{Key: key.Enter, Desc: "apply"},
 		{Key: key.Esc, Desc: "exit"},
 	}
@@ -2550,7 +2550,7 @@ func (m tuiModel) renderFilterHelp() string {
 
 func (m tuiModel) diffHelpPairs() []key.Hint {
 	pairs := []key.Hint{
-		{Key: key.ArrowsUpDown, Desc: tuiHelpScroll},
+		{Key: key.ArrowsVertical, Desc: tuiHelpScroll},
 	}
 	ctx, _ := m.actionContextForKey(m.diffKey)
 	actionable := ctx.actionable
@@ -2603,7 +2603,7 @@ func (m tuiModel) diffHelpPairs() []key.Hint {
 
 func (m tuiModel) detailHelpPairs() []key.Hint {
 	pairs := []key.Hint{
-		{Key: key.ArrowsUpDown, Desc: tuiHelpScroll},
+		{Key: key.ArrowsVertical, Desc: tuiHelpScroll},
 		{Key: tuiKeybindDiff, Desc: tuiHelpDiff},
 	}
 	ctx, _ := m.actionContextForKey(m.detailKey)
@@ -2648,7 +2648,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		{Key: tuiKeysJumpFirstLast, Desc: tuiDescJumpFirstLast},
 		{Key: key.Enter, Desc: tuiDescShow},
 		{Key: key.Space, Desc: tuiDescSelect},
-		{Key: key.ShiftArrowsUpDown, Desc: tuiDescExtendSelection},
+		{Key: key.ShiftArrowsVertical, Desc: tuiDescExtendSelection},
 		{Key: tuiKeybindSelectAll, Desc: tuiDescSelectAll},
 		{Key: tuiKeybindInvertSelection, Desc: tuiDescInvertSelection},
 		{Key: tuiKeybindFilter, Desc: tuiDescFilter},

@@ -125,24 +125,24 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	if xos.IsDarwin() {
 		require.Equal(
 			t,
-			"│       alt+a  Approve PRs (no confirm)           r  Launch AI review                 │",
+			"│      alt+a  Approve PRs (no confirm)          r  Launch AI review                 │",
 			lines[13],
 		)
 		require.Equal(
 			t,
-			"│           d  View diff                      alt+r  Launch AI review (no confirm)    │",
+			"│          d  View diff                     alt+r  Launch AI review (no confirm)    │",
 			lines[14],
 		)
 		require.Equal(
 			t,
-			"│    shift+↑↓  Extend selection               alt+c  Copy URL(s)                      │",
+			"│    shift+↕  Extend selection              alt+c  Copy URL(s)                      │",
 			lines[7],
 		)
 	} else {
 		// Non-darwin has no AI-review launcher, which gates the review
 		// shortcuts out of the help overlay.
 		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
-		require.Contains(t, strings.Fields(strings.Join(lines, " ")), "shift+↑↓")
+		require.Contains(t, strings.Fields(strings.Join(lines, " ")), "shift+↕")
 	}
 }
 
@@ -1217,9 +1217,9 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 
 	// The "review" shortcut only renders where an AI-review launcher
 	// exists (darwin).
-	footer := "Close  open  alt+copy  slack  ctrl+r copilot  dismiss"
+	footer := "open  alt+copy  slack  ctrl+r copilot  dismiss"
 	if xos.IsDarwin() {
-		footer = "Close  open  alt+copy  slack  review  ctrl+r copilot  dismiss"
+		footer = "open  alt+copy  slack  review  ctrl+r copilot  dismiss"
 	}
 	require.Equal(
 		t,
@@ -1228,7 +1228,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 			"+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"+
 			"aaaaaaa\n\n"+
 			"────────────────────────────────────────────────────────────────────────────────\n"+
-			" ↑↓ scroll  automerge  Draft  approve  Approve/merge  unsubscribe  comment\n"+
+			" ↕ scroll  automerge  Draft  approve  Approve/merge  unsubscribe  comment  Close\n"+
 			footer,
 		out,
 	)

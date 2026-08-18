@@ -9,6 +9,7 @@ import (
 	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/form"
 	"github.com/gechr/primer/key"
+	"github.com/gechr/primer/pill"
 	"github.com/gechr/primer/scrollbar"
 )
 
@@ -140,19 +141,24 @@ func (m *tuiModel) newConfirmFormModel(
 	values []string,
 	inputValue string,
 ) form.Model {
-	dimAccent := lg.NewStyle().Foreground(colorAccent).Faint(true)
+	boldAccent := styleAccent.Bold(true)
+	dimAccent := styleAccent.Faint(true)
 	fields := make([]form.FieldSpec, 0, len(defs)+1)
 	for i, def := range defs {
 		initial := ""
 		if i < len(values) {
 			initial = values[i]
 		}
-		fields = append(fields, form.FieldSpec{
+		spec := form.FieldSpec{
 			Label:   def.label,
 			Initial: initial,
 			Options: confirmChoiceLabels(def.choices),
-			Notify:  m.confirmAction == tuiActionReview,
-		})
+		}
+		if m.confirmAction == tuiActionReview {
+			spec.Notify = true
+			spec.RenderValue = confirmValueRenderer(def.label)
+		}
+		fields = append(fields, spec)
 	}
 	label := m.confirmInputLabel
 	if label == "" {
@@ -170,17 +176,82 @@ func (m *tuiModel) newConfirmFormModel(
 		Fields: fields,
 		Width:  m.confirmInputWidth(),
 		Styles: form.Styles{
-			Title:         styleText,
-			Label:         dimAccent,
-			LabelFocused:  dimAccent,
-			Border:        dimAccent,
-			BorderFocused: dimAccent,
+			Title: styleText,
+			Chevrons: pill.Chevrons{
+				Left:  activeIcons.ChevronLeft,
+				Right: activeIcons.ChevronRight,
+			},
+			Label:         dimAccent.Bold(true),
+			LabelFocused:  boldAccent,
+			Border:        dimAccent.Bold(true),
+			BorderFocused: boldAccent,
 			HintKey:       m.styles.helpKey,
 			HintText:      m.styles.helpText,
 			Question:      styleWarning,
 			Error:         styleDanger,
 		},
 	})
+}
+
+// Review cycle values render in meaningful colors: providers in their brand
+// colors, models and efforts on the statusline's capability scale.
+var (
+	reviewProviderValueStyles = map[string]lg.Style{
+		string(reviewProviderClaude): lg.NewStyle().Foreground(lg.Color("#da7756")),
+		string(reviewProviderCodex):  lg.NewStyle().Foreground(lg.Color("#9b77dc")),
+		string(reviewProviderGemini): lg.NewStyle().Foreground(lg.Color("#4796e3")),
+	}
+	reviewEffortValueStyles = map[string]lg.Style{
+		claudeReviewEffortLow:    lg.NewStyle().Foreground(lg.Color("2")),
+		claudeReviewEffortMedium: lg.NewStyle().Foreground(lg.Color("3")),
+		claudeReviewEffortHigh:   lg.NewStyle().Foreground(lg.Color("#ff8c00")),
+		claudeReviewEffortXHigh:  lg.NewStyle().Foreground(lg.Color("1")),
+		claudeReviewEffortMax:    lg.NewStyle().Foreground(lg.Color("#ff0000")),
+		// Gemini-only efforts: minimal sits below low, and the thinking
+		// budgets ramp like the named levels, with off dimmed and dynamic in
+		// the statusline's fallback purple.
+		geminiReviewEffortMinimal: lg.NewStyle().Foreground(lg.Color("4")),
+		geminiReviewEffortOff:     lg.NewStyle().Faint(true),
+		geminiReviewEffort1024:    lg.NewStyle().Foreground(lg.Color("2")),
+		geminiReviewEffort8192:    lg.NewStyle().Foreground(lg.Color("3")),
+		geminiReviewEffort24576:   lg.NewStyle().Foreground(lg.Color("1")),
+		geminiReviewEffortDynamic: lg.NewStyle().Foreground(lg.Color("#c4b5fd")),
+	}
+	reviewModelValueStyles = map[string]lg.Style{
+		claudeReviewModelSonnet: lg.NewStyle().Foreground(lg.Color("2")),
+		claudeReviewModelOpus:   lg.NewStyle().Foreground(lg.Color("3")),
+		claudeReviewModelFable:  lg.NewStyle().Foreground(lg.Color("1")),
+		codexReviewModel54Mini:  lg.NewStyle().Foreground(lg.Color("4")),
+		codexReviewModel54:      lg.NewStyle().Foreground(lg.Color("2")),
+		codexReviewModel55:      lg.NewStyle().Foreground(lg.Color("2")),
+		codexReviewModel56Luna:  lg.NewStyle().Foreground(lg.Color("3")),
+		codexReviewModel56Terra: lg.NewStyle().Foreground(lg.Color("208")),
+		codexReviewModel56Sol:   lg.NewStyle().Foreground(lg.Color("1")),
+		geminiReviewModelFlash:  lg.NewStyle().Foreground(lg.Color("2")),
+		geminiReviewModel31Pro:  lg.NewStyle().Foreground(lg.Color("1")),
+	}
+)
+
+// confirmValueRenderer returns the display styler for a review cycle field,
+// or nil for fields whose values carry no color.
+func confirmValueRenderer(label string) func(string) string {
+	var styles map[string]lg.Style
+	switch label {
+	case reviewProviderOptionLabel:
+		styles = reviewProviderValueStyles
+	case reviewModelOptionLabel:
+		styles = reviewModelValueStyles
+	case reviewEffortOptionLabel:
+		styles = reviewEffortValueStyles
+	default:
+		return nil
+	}
+	return func(v string) string {
+		if s, ok := styles[v]; ok {
+			return s.Render(v)
+		}
+		return v
+	}
 }
 
 func confirmChoiceLabels(choices []filterChoice) []string {

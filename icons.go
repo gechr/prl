@@ -72,6 +72,8 @@ type iconSet struct {
 	Warning           string
 	PillLeft          string
 	PillRight         string
+	ChevronLeft       string
+	ChevronRight      string
 	StatusMerged      string
 	StatusDraft       string
 	StatusClosed      string
@@ -101,6 +103,8 @@ var iconsUnicode = iconSet{
 	Warning:           "⚠",
 	PillLeft:          "",
 	PillRight:         "",
+	ChevronLeft:       "",
+	ChevronRight:      "",
 	StatusMerged:      "",
 	StatusDraft:       "",
 	StatusClosed:      "",
@@ -130,6 +134,8 @@ var iconsNerd = iconSet{
 	Warning:           "\uf421", // nf-oct-alert
 	PillLeft:          "\ue0b6", // nf-ple-left_half_circle_thick
 	PillRight:         "\ue0b4", // nf-ple-right_half_circle_thick
+	ChevronLeft:       "\uf104", // nf-fa-angle_left
+	ChevronRight:      "\uf105", // nf-fa-angle_right
 	StatusMerged:      "\uf419", // nf-oct-git_merge
 	StatusDraft:       "\uf4dd", // nf-oct-git_pull_request_draft
 	StatusClosed:      "\uf4dc", // nf-oct-git_pull_request_closed

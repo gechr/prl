@@ -131,20 +131,20 @@ var claudeReviewConfig = reviewProviderConfig{
 
 var codexReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
-		{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
-		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
-		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
-		{label: codexReviewModel55, value: codexReviewModel55},
-		{label: codexReviewModel54, value: codexReviewModel54},
 		{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
+		{label: codexReviewModel54, value: codexReviewModel54},
+		{label: codexReviewModel55, value: codexReviewModel55},
+		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
+		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
+		{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
 	},
 	defaultModel: codexReviewModel56Sol,
 }
 
 var geminiReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
-		{label: geminiReviewModel31Pro, value: geminiReviewModel31Pro},
 		{label: geminiReviewModelFlash, value: geminiReviewModelFlash},
+		{label: geminiReviewModel31Pro, value: geminiReviewModel31Pro},
 	},
 	defaultModel: geminiReviewModel31Pro,
 }

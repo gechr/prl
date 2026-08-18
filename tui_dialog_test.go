@@ -200,7 +200,7 @@ func TestInputConfirmUsesFormDialog(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestInputConfirmDialogSeparatesAndDimsField(t *testing.T) {
+func TestInputConfirmDialogSeparatesAndAccentsField(t *testing.T) {
 	m := plainConfirmModel()
 	m.confirmHasInput = true
 	m.confirmCmd = nil
@@ -218,9 +218,10 @@ func TestInputConfirmDialogSeparatesAndDimsField(t *testing.T) {
 		"╭ Comment (optional) "+strings.Repeat("─", 48)+"╮",
 		lines[2],
 	)
-	dimAccent := lg.NewStyle().Foreground(colorAccent).Faint(true)
-	require.Equal(t, 1, strings.Count(body, dimAccent.Render(" Comment (optional) ")))
-	require.Equal(t, 1, strings.Count(body, dimAccent.Render("╭")))
+	// The sole field is focused, so its title and border carry the bold accent.
+	boldAccent := lg.NewStyle().Foreground(colorAccent).Bold(true)
+	require.Equal(t, 1, strings.Count(body, boldAccent.Render(" Comment (optional) ")))
+	require.Equal(t, 1, strings.Count(body, boldAccent.Render("╭")))
 }
 
 func TestInputConfirmDialogSubmitsTrimmedText(t *testing.T) {
