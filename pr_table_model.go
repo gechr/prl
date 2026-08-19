@@ -81,8 +81,7 @@ func buildAuthorModel(pr PullRequest, resolver *AuthorResolver) AuthorModel {
 	login := pr.Author.Login
 	isBot := strings.HasSuffix(strings.ToLower(login), BotSuffix)
 
-	am := AuthorModel{Login: login, IsBot: isBot}
-	am.URL = authorURL(login, isBot)
+	am := AuthorModel{Login: login, URL: authorURL(login, isBot), IsBot: isBot}
 
 	if resolver == nil {
 		am.Display = login

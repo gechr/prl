@@ -84,19 +84,15 @@ func (m *tuiModel) newConfirmButtonsDialog() dialog.Dialog {
 	return dialog.NewConfirmButtons(
 		m.confirmPrompt,
 		dialog.ConfirmButton{
-			Button: button.Button{
-				Label:   "No",
-				Focused: m.styles.confirmNo,
-				Blurred: m.styles.confirmNoDim,
-			},
-			Keys: []string{tuiKeybindConfirmNo, "N", tuiKeybindQuit},
+			Label:   "No",
+			Focused: m.styles.confirmNo,
+			Blurred: m.styles.confirmNoDim,
+			Keys:    []string{tuiKeybindConfirmNo, "N", tuiKeybindQuit},
 		},
 		dialog.ConfirmButton{
-			Button: button.Button{
-				Label:   "Yes",
-				Focused: m.styles.confirmYes,
-				Blurred: m.styles.confirmYesDim,
-			},
+			Label:   "Yes",
+			Focused: m.styles.confirmYes,
+			Blurred: m.styles.confirmYesDim,
 			Accept:  true,
 			Keys:    []string{"y", "Y"},
 			Default: true,

@@ -99,6 +99,12 @@ func TestExecuteListSearchFallsBackWhenGraphQLIsEmpty(t *testing.T) {
 
 func TestToPullRequestGraphQLHydratesMergeStatus(t *testing.T) {
 	node := graphQLSearchPRNode{
+		Author: &struct {
+			Login string `json:"login"`
+		}{Login: "alice"},
+		AutoMergeRequest: &struct {
+			EnabledAt string `json:"enabledAt"`
+		}{EnabledAt: "2026-06-24T12:01:00Z"},
 		CreatedAt:        mustTime(t, "2026-06-24T11:00:00Z"),
 		HeadRefOID:       "abc123",
 		ID:               "PR_node",
@@ -111,12 +117,6 @@ func TestToPullRequestGraphQLHydratesMergeStatus(t *testing.T) {
 		UpdatedAt:        mustTime(t, "2026-06-24T12:00:00Z"),
 		URL:              "https://github.com/owner/repo/pull/42",
 	}
-	node.Author = &struct {
-		Login string `json:"login"`
-	}{Login: "alice"}
-	node.AutoMergeRequest = &struct {
-		EnabledAt string `json:"enabledAt"`
-	}{EnabledAt: "2026-06-24T12:01:00Z"}
 	node.Labels.Nodes = []struct {
 		Name string `json:"name"`
 	}{{Name: "enhancement"}}
