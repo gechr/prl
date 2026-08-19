@@ -270,8 +270,20 @@ const (
 	defaultSpinner = spinnerDots
 )
 
-// Default spinner colors (256-color palette).
-var defaultSpinnerColors = []string{"218"}
+// Default spinner colors (256-color palette), per background.
+var (
+	defaultSpinnerColorsDark  = []string{"218"}
+	defaultSpinnerColorsLight = []string{"168"}
+)
+
+// defaultSpinnerColors returns the default spinner colors for the active
+// background.
+func defaultSpinnerColors() []string {
+	if paletteIsLight {
+		return defaultSpinnerColorsLight
+	}
+	return defaultSpinnerColorsDark
+}
 
 type spinner struct {
 	frames   []string
@@ -305,7 +317,7 @@ func buildSpinner(cfg SpinnerConfig) spinner {
 
 	colors := cfg.Colors
 	if len(colors) == 0 {
-		colors = defaultSpinnerColors
+		colors = defaultSpinnerColors()
 	}
 
 	frames := make([]string, len(style.glyphs))

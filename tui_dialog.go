@@ -194,19 +194,31 @@ func (m *tuiModel) newConfirmFormModel(
 }
 
 // Review cycle values render in meaningful colors: providers in their brand
-// colors, models and efforts on the statusline's capability scale.
-var (
-	reviewProviderValueStyles = map[string]lg.Style{
-		string(reviewProviderClaude): lg.NewStyle().Foreground(lg.Color("#da7756")),
-		string(reviewProviderCodex):  lg.NewStyle().Foreground(lg.Color("#9b77dc")),
-		string(reviewProviderGemini): lg.NewStyle().Foreground(lg.Color("#4796e3")),
+// colors, models and efforts on the statusline's capability scale. Built per
+// call so hex colors track the active background; ANSI indexes 1-4 are
+// terminal-themed and identical in both modes.
+func reviewProviderValueStyles() map[string]lg.Style {
+	ld := lg.LightDark(!paletteIsLight)
+	return map[string]lg.Style{
+		string(reviewProviderClaude): lg.NewStyle().
+			Foreground(ld(lg.Color("#c15f3c"), lg.Color("#da7756"))),
+		string(reviewProviderCodex): lg.NewStyle().
+			Foreground(ld(lg.Color("#7a55c8"), lg.Color("#9b77dc"))),
+		string(reviewProviderGemini): lg.NewStyle().
+			Foreground(ld(lg.Color("#1a73e8"), lg.Color("#4796e3"))),
 	}
-	reviewEffortValueStyles = map[string]lg.Style{
+}
+
+func reviewEffortValueStyles() map[string]lg.Style {
+	ld := lg.LightDark(!paletteIsLight)
+	return map[string]lg.Style{
 		claudeReviewEffortLow:    lg.NewStyle().Foreground(lg.Color("2")),
 		claudeReviewEffortMedium: lg.NewStyle().Foreground(lg.Color("3")),
-		claudeReviewEffortHigh:   lg.NewStyle().Foreground(lg.Color("#ff8c00")),
-		claudeReviewEffortXHigh:  lg.NewStyle().Foreground(lg.Color("1")),
-		claudeReviewEffortMax:    lg.NewStyle().Foreground(lg.Color("#ff0000")),
+		claudeReviewEffortHigh: lg.NewStyle().
+			Foreground(ld(lg.Color("#cc7000"), lg.Color("#ff8c00"))),
+		claudeReviewEffortXHigh: lg.NewStyle().Foreground(lg.Color("1")),
+		claudeReviewEffortMax: lg.NewStyle().
+			Foreground(ld(lg.Color("#d70000"), lg.Color("#ff0000"))),
 		// Gemini-only efforts: minimal sits below low, and the thinking
 		// budgets ramp like the named levels, with off dimmed and dynamic in
 		// the statusline's fallback purple.
@@ -215,9 +227,14 @@ var (
 		geminiReviewEffort1024:    lg.NewStyle().Foreground(lg.Color("2")),
 		geminiReviewEffort8192:    lg.NewStyle().Foreground(lg.Color("3")),
 		geminiReviewEffort24576:   lg.NewStyle().Foreground(lg.Color("1")),
-		geminiReviewEffortDynamic: lg.NewStyle().Foreground(lg.Color("#c4b5fd")),
+		geminiReviewEffortDynamic: lg.NewStyle().
+			Foreground(ld(lg.Color("#7c5cbf"), lg.Color("#c4b5fd"))),
 	}
-	reviewModelValueStyles = map[string]lg.Style{
+}
+
+func reviewModelValueStyles() map[string]lg.Style {
+	ld := lg.LightDark(!paletteIsLight)
+	return map[string]lg.Style{
 		claudeReviewModelSonnet: lg.NewStyle().Foreground(lg.Color("2")),
 		claudeReviewModelOpus:   lg.NewStyle().Foreground(lg.Color("3")),
 		claudeReviewModelFable:  lg.NewStyle().Foreground(lg.Color("1")),
@@ -225,12 +242,12 @@ var (
 		codexReviewModel54:      lg.NewStyle().Foreground(lg.Color("2")),
 		codexReviewModel55:      lg.NewStyle().Foreground(lg.Color("2")),
 		codexReviewModel56Luna:  lg.NewStyle().Foreground(lg.Color("3")),
-		codexReviewModel56Terra: lg.NewStyle().Foreground(lg.Color("208")),
+		codexReviewModel56Terra: lg.NewStyle().Foreground(ld(lg.Color("130"), lg.Color("208"))),
 		codexReviewModel56Sol:   lg.NewStyle().Foreground(lg.Color("1")),
 		geminiReviewModelFlash:  lg.NewStyle().Foreground(lg.Color("2")),
 		geminiReviewModel31Pro:  lg.NewStyle().Foreground(lg.Color("1")),
 	}
-)
+}
 
 // confirmValueRenderer returns the display styler for a review cycle field,
 // or nil for fields whose values carry no color.
@@ -238,11 +255,11 @@ func confirmValueRenderer(label string) func(string) string {
 	var styles map[string]lg.Style
 	switch label {
 	case reviewProviderOptionLabel:
-		styles = reviewProviderValueStyles
+		styles = reviewProviderValueStyles()
 	case reviewModelOptionLabel:
-		styles = reviewModelValueStyles
+		styles = reviewModelValueStyles()
 	case reviewEffortOptionLabel:
-		styles = reviewEffortValueStyles
+		styles = reviewEffortValueStyles()
 	default:
 		return nil
 	}

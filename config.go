@@ -245,7 +245,8 @@ func defaultConfig() map[string]any {
 		keyTUIFilterState:        "",
 		keyTUISortKey:            "",
 		keyTUISortOrder:          "",
-		keySpinnerColors:         defaultSpinnerColors,
+		// Empty so buildSpinner can pick the background-adaptive default.
+		keySpinnerColors: []string{},
 	}
 }
 
@@ -825,7 +826,7 @@ team_aliases: {}
 		valueOpen,
 		vcsGit,
 		defaultSpinner,
-		`"`+strings.Join(defaultSpinnerColors, `", "`)+`"`,
+		`"`+strings.Join(defaultSpinnerColorsDark, `", "`)+`"`,
 		indentBlock(defaultReviewPromptTemplate(reviewProviderClaude), promptBlockIndent),
 		"`{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`",
 		indentBlock(defaultReviewPromptTemplate(reviewProviderCodex), promptBlockIndent),

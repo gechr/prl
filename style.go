@@ -58,6 +58,18 @@ var (
 	colorHelpKeyDim    color.Color // edit help key
 )
 
+// paletteIsLight records the background initPalette was last built for, so
+// renderers outside the palette (glamour, chroma, delta, spinner) can adapt.
+var paletteIsLight bool
+
+// markdownStyle returns the glamour style name for the active background.
+func markdownStyle() string {
+	if paletteIsLight {
+		return "light"
+	}
+	return "dracula"
+}
+
 // Raw ANSI escape backgrounds for cursor-line highlighting (background-adaptive).
 var (
 	cursorLineBG         string
@@ -115,6 +127,8 @@ func init() { initPalette(false) }
 // strings for the given background. When isLight is true, light-background
 // variants are selected; otherwise the dark variants are used.
 func initPalette(isLight bool) {
+	paletteIsLight = isLight
+
 	// lg.LightDark(isDark) returns a picker: ld(lightValue, darkValue).
 	ld := lg.LightDark(!isLight)
 

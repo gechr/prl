@@ -2201,7 +2201,7 @@ func (m tuiModel) renderMarkdown(body string) []string {
 	if width <= 0 {
 		width = defaultTermWidth
 	}
-	rendered := render.Markdown(body, width, "dracula")
+	rendered := render.Markdown(body, width, markdownStyle())
 	if rendered == "" {
 		return m.plainBodyLines(body)
 	}
@@ -2868,11 +2868,12 @@ func styledRef(pr *PullRequest) string {
 func highlightDiff(raw, prURL, headSHA string) string {
 	repoURL, _, ok := strings.Cut(prURL, "/pull/")
 	if !ok {
-		return render.DiffStyled(raw, render.DiffOptions{})
+		return render.DiffStyled(raw, render.DiffOptions{Dark: !paletteIsLight})
 	}
 	return render.DiffStyled(raw, render.DiffOptions{
 		RepoURL:   repoURL,
 		CommitSHA: headSHA,
+		Dark:      !paletteIsLight,
 	})
 }
 
