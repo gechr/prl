@@ -114,6 +114,54 @@ func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
 	require.NotNil(t, bm.confirmCmd)
 }
 
+func TestUpdateDiffViewRLaunchesAIReview(t *testing.T) {
+	if !xos.IsDarwin() {
+		t.Skip("AI review requires macOS")
+	}
+
+	t.Setenv(herdrEnvVar, "")
+	t.Setenv("TERM_PROGRAM", "ghostty")
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		rows:    []TableRow{{Item: PRRowModel{PR: pr}}},
+		view:    tuiViewDiff,
+		diffKey: makePRKey(pr),
+	}
+
+	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	require.Nil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiViewDiff, bm.view)
+	require.Equal(t, tuiActionReview, bm.confirmAction)
+	require.Equal(t, &pr, bm.confirmReviewPR)
+	require.NotNil(t, bm.confirmCmdFn)
+}
+
+func TestUpdateDetailViewCtrlRRequestsCopilotReview(t *testing.T) {
+	pr := testReviewPullRequest()
+	m := tuiModel{
+		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
+		view:      tuiViewDetail,
+		detailKey: makePRKey(pr),
+		actions:   &ActionRunner{},
+	}
+
+	model, cmd := m.updateDetailView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	require.NotNil(t, cmd)
+
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, tuiViewDetail, bm.view)
+	require.Empty(t, bm.confirmAction)
+	require.Equal(
+		t,
+		"Requesting Copilot review owner/repo#42…",
+		ansi.Strip(bm.flash.Msg),
+	)
+}
+
 func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")

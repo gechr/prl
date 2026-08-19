@@ -935,7 +935,7 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		switch msg.String() {
 		case tuiKeybindOpen, tuiKeybindCopyURL, tuiKeybindSlackNoConfirm,
 			tuiKeybindUpdateBranch, tuiKeybindDraftToggle, tuiKeybindComment,
-			tuiKeybindSlack:
+			tuiKeybindSlack, tuiKeybindReview, tuiKeybindCopilotReview:
 			return m, nil, true
 		}
 		return m, nil, false
@@ -1036,6 +1036,40 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 		}
 		return m, exitCmd, true
+	case tuiKeybindReview:
+		if !hasAIReviewLauncher() {
+			var exitCmd tea.Cmd
+			if m.view == tuiViewDetail {
+				exitCmd = m.exitDetailView()
+			}
+			m.confirmAction = tuiActionInfo
+			m.confirmPrompt = tuiAIReviewUnsupported
+			m.confirmCmd = nil
+			return m, exitCmd, true
+		}
+		if !ctx.actionable {
+			return m, nil, true
+		}
+		var exitCmd tea.Cmd
+		if m.view == tuiViewDetail {
+			exitCmd = m.exitDetailView()
+		}
+		m = m.prepareAIReviewConfirm(ctx.pr, ctx.idx)
+		return m, exitCmd, true
+	case tuiKeybindCopilotReview:
+		pr := ctx.pr
+		flashPending(&m, statusCopilotReview, &pr)
+		actions := m.actions
+		return m, func() tea.Msg {
+			owner, repo := prOwnerRepo(pr)
+			err := actions.requestReview(owner, repo, pr.Number, copilotReviewer)
+			return actionMsg{
+				index:  ctx.idx,
+				key:    ctx.key,
+				action: tuiActionReviewRequested,
+				err:    err,
+			}
+		}, true
 	case tuiKeybindSlack:
 		if !ctx.actionable {
 			return m, nil, true
@@ -1266,29 +1300,6 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
-	case tuiKeybindCopilotReview:
-		idx := m.resolveIndex(m.diffKey, -1)
-		if idx < 0 {
-			return m, nil
-		}
-		pr := m.rows[idx].Item.PR
-		flashPending(&m, statusCopilotReview, &pr)
-		actions := m.actions
-		return m, func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			err := actions.requestReview(
-				owner,
-				repo,
-				pr.Number,
-				copilotReviewer,
-			)
-			return actionMsg{
-				index:  idx,
-				key:    makePRKey(pr),
-				action: tuiActionReviewRequested,
-				err:    err,
-			}
-		}
 	}
 	return m, nil
 }
@@ -1412,26 +1423,6 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				err:    err,
 			}
 		}
-		return m, refreshCmd
-	case tuiKeybindReview:
-		if !hasAIReviewLauncher() {
-			refreshCmd := m.exitDetailView()
-			m.confirmAction = tuiActionInfo
-			m.confirmPrompt = tuiAIReviewUnsupported
-			m.confirmCmd = nil
-			return m, refreshCmd
-		}
-		idx := m.resolveIndex(m.detailKey, -1)
-		if idx < 0 {
-			return m, nil
-		}
-		pr := m.rows[idx].Item.PR
-		state := strings.ToLower(pr.State)
-		if state == valueMerged || state == valueClosed {
-			return m, nil
-		}
-		refreshCmd := m.exitDetailView()
-		m = m.prepareAIReviewConfirm(pr, idx)
 		return m, refreshCmd
 	}
 	return m, nil
