@@ -2761,11 +2761,11 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 		if pad > 0 {
 			return prefix + lastLine + strings.Repeat(" ", pad) + status
 		}
-		idx := strings.LastIndex(lastLine, helpGap)
-		if idx < 0 {
+		before, _, found := strings.CutLast(lastLine, helpGap)
+		if !found {
 			break
 		}
-		lastLine = lastLine[:idx]
+		lastLine = before
 	}
 
 	if statusWidth < usableWidth {

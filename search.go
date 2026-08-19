@@ -491,8 +491,8 @@ func toPullRequest(item searchItem) PullRequest {
 	if idx := strings.Index(item.RepoURL, "/repos/"); idx >= 0 {
 		nwo := item.RepoURL[idx+len("/repos/"):]
 		repo.NameWithOwner = nwo
-		if slashIdx := strings.LastIndex(nwo, "/"); slashIdx >= 0 {
-			repo.Name = nwo[slashIdx+1:]
+		if _, name, found := strings.CutLast(nwo, "/"); found {
+			repo.Name = name
 		} else {
 			repo.Name = nwo
 		}
