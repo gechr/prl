@@ -61,6 +61,7 @@ const (
 	colOwner  = "owner"
 	colReason = "reason"
 	colRef    = "ref"
+	colReview = "review"
 	colState  = "state"
 	colStatus = "status"
 	colTitle  = "title"

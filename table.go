@@ -122,6 +122,13 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				return table.TextCell(row.MergeReason)
 			},
 		},
+		colReview: {
+			Name:   colReview,
+			Header: "REVIEW",
+			Render: func(row PRRowModel, _ *table.RenderContext) table.Cell {
+				return table.TextCell(row.Review)
+			},
+		},
 		valueRepo: {
 			Name:   valueRepo,
 			Header: "REPO",
@@ -282,7 +289,7 @@ var columnWidthEstimate = map[string]int{
 	colIndex: 3, colIdx: 3, colI: 3,
 	colRef: 20, valueRepo: 15, colOwner: 25,
 	colNumber: 5, colAuthor: 12, colState: 6, colLabels: 15,
-	colStatus: 8, colReason: 12, valueURL: 50,
+	colStatus: 8, colReason: 12, colReview: 17, valueURL: 50,
 	valueCreated: 14, valueUpdated: 14,
 	colTitle: 30,
 }

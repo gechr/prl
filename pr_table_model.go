@@ -25,6 +25,7 @@ type PRRowModel struct {
 	URL         string
 	MergeStatus MergeStatus
 	MergeReason string
+	Review      string
 }
 
 // AuthorModel holds resolved author information for display.
@@ -71,6 +72,7 @@ func buildPRRowModels(
 			URL:         pr.URL,
 			MergeStatus: pr.MergeStatus,
 			MergeReason: deriveMergeReason(pr),
+			Review:      deriveReviewStatus(pr),
 		}
 	}
 	return models
@@ -146,4 +148,30 @@ func deriveMergeReason(pr PullRequest) string {
 		return valueUnknown
 	}
 	return ""
+}
+
+// deriveReviewStatus returns the PR's review decision as a lowercase string
+// matching the `--review` filter values. Non-open PRs have no meaningful
+// review decision and render empty; "unknown" means the decision was not
+// hydrated (e.g. `--quick`).
+func deriveReviewStatus(pr PullRequest) string {
+	if strings.ToLower(pr.State) != valueOpen {
+		return ""
+	}
+	if !pr.reviewDecisionLoaded {
+		return valueUnknown
+	}
+	switch pr.ReviewDecision {
+	case valueReviewApproved:
+		return valueReviewFilterApproved
+	case valueReviewChanges:
+		return valueReviewFilterChanges
+	case valueReviewRequired:
+		return valueReviewFilterRequired
+	case valueReviewDismissed:
+		return strings.ToLower(valueReviewDismissed)
+	case "":
+		return valueReviewFilterNone
+	}
+	return strings.ToLower(pr.ReviewDecision)
 }

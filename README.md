@@ -225,7 +225,13 @@ Default columns: `index`, `title`, `ref`, `created`, `updated`.
 
 `author` is added automatically when multiple authors are in play (e.g. `--team`).
 
-Available columns: `index`, `owner`, `ref`, `repo`, `number`, `title`, `labels`, `author`, `state`, `created`, `updated`, `url`
+Available columns: `index`, `owner`, `ref`, `repo`, `number`, `title`, `labels`, `author`, `state`, `review`, `created`, `updated`, `url`
+
+The `review` column shows the PR's review decision using the same values as the
+`--review` filter: `approved`, `changes_requested`, `required`, `dismissed`, or
+`none` when nobody has been asked to review. It reuses the review decision
+already fetched for the status column, so it costs no extra API calls (with
+`--quick` it renders `unknown`).
 
 ```sh
 prl --columns title,ref,author,labels
