@@ -684,7 +684,14 @@ func resolveMergeStatus(
 	reviewDecision *string,
 	mergeStateStatus string,
 ) MergeStatus {
+	// A repo without a required-review rule reports mergeStateStatus=CLEAN even
+	// when a reviewer has asked for changes, so GitHub would let the merge
+	// through. Report it as blocked so the status agrees with the review column
+	// (and with --state=ready) rather than inviting a merge over the request.
 	if mergeStateStatus == valueMergeStateClean {
+		if reviewDecision != nil && *reviewDecision == valueReviewChanges {
+			return MergeStatusBlocked
+		}
 		return MergeStatusReady
 	}
 	switch {

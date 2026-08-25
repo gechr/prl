@@ -630,6 +630,24 @@ func TestDeriveReviewStatus(t *testing.T) {
 	}
 }
 
+func TestDeriveMergeReason_ChangesRequested(t *testing.T) {
+	blocked := PullRequest{
+		State:                valueOpen,
+		MergeStatus:          MergeStatusBlocked,
+		ReviewDecision:       valueReviewChanges,
+		reviewDecisionLoaded: true,
+	}
+	require.Equal(t, valueReviewFilterChanges, deriveMergeReason(blocked))
+
+	awaiting := PullRequest{
+		State:                valueOpen,
+		MergeStatus:          MergeStatusBlocked,
+		ReviewDecision:       valueReviewRequired,
+		reviewDecisionLoaded: true,
+	}
+	require.Equal(t, valueNeedsReview, deriveMergeReason(awaiting))
+}
+
 func TestRender_URLColumn(t *testing.T) {
 	models := testModels("")[:1]
 	defs := testPRL.allColumnDefs(tableLayout{})

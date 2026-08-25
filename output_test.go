@@ -684,6 +684,7 @@ func TestRenderBullets(t *testing.T) {
 
 func TestResolveMergeStatus(t *testing.T) {
 	approved := valueReviewApproved
+	changes := valueReviewChanges
 
 	tests := []struct {
 		name             string
@@ -706,6 +707,22 @@ func TestResolveMergeStatus(t *testing.T) {
 		// repos with no CI checks: ciState="" but mergeStateStatus=CLEAN
 		{"clean + no ci + empty reviewDecision", "", nil, valueMergeStateClean, MergeStatusReady},
 		{"ci success + no approval + not clean", valueCISuccess, nil, "", MergeStatusBlocked},
+		// Repos without a required-review rule report CLEAN even when a reviewer
+		// asked for changes.
+		{
+			"clean + changes requested",
+			valueCISuccess,
+			&changes,
+			valueMergeStateClean,
+			MergeStatusBlocked,
+		},
+		{
+			"ci success + changes requested + not clean",
+			valueCISuccess,
+			&changes,
+			"",
+			MergeStatusBlocked,
+		},
 		{
 			"ci success + no approval + dirty",
 			valueCISuccess,
