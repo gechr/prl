@@ -538,6 +538,82 @@ func TestRender_StateColumn(t *testing.T) {
 	require.Equal(t, "open", rt.Rows[0].Cells[0].Text)
 }
 
+func TestRender_ReviewColumn(t *testing.T) {
+	prs := []PullRequest{{
+		Number:               1,
+		Title:                "test",
+		URL:                  "https://github.com/owner/repo/pull/1",
+		State:                "open",
+		Repository:           Repository{Name: "repo", NameWithOwner: "owner/repo"},
+		Author:               Author{Login: "user"},
+		CreatedAt:            time.Now().UTC(),
+		UpdatedAt:            time.Now().UTC(),
+		ReviewDecision:       valueReviewChanges,
+		reviewDecisionLoaded: true,
+	}}
+	models := testModelsFrom(prs, "")
+	defs := testPRL.allColumnDefs(tableLayout{})
+	r := newTestRenderer([]Column{defs[colReview]})
+	rt := r.Render(models)
+
+	require.Equal(t, valueReviewFilterChanges, rt.Rows[0].Cells[0].Text)
+}
+
+func TestDeriveReviewStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		pr       PullRequest
+		expected string
+	}{
+		{
+			name:     "approved",
+			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewApproved, reviewDecisionLoaded: true},
+			expected: valueReviewFilterApproved,
+		},
+		{
+			name:     "changes requested",
+			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewChanges, reviewDecisionLoaded: true},
+			expected: valueReviewFilterChanges,
+		},
+		{
+			name:     "review required",
+			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewRequired, reviewDecisionLoaded: true},
+			expected: valueReviewFilterRequired,
+		},
+		{
+			name:     "dismissed",
+			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewDismissed, reviewDecisionLoaded: true},
+			expected: "dismissed",
+		},
+		{
+			name:     "no reviewers requested",
+			pr:       PullRequest{State: valueOpen, reviewDecisionLoaded: true},
+			expected: valueReviewFilterNone,
+		},
+		{
+			name:     "not hydrated",
+			pr:       PullRequest{State: valueOpen},
+			expected: valueUnknown,
+		},
+		{
+			name:     "merged PR has no review decision",
+			pr:       PullRequest{State: valueMerged, reviewDecisionLoaded: true},
+			expected: "",
+		},
+		{
+			name:     "closed PR has no review decision",
+			pr:       PullRequest{State: valueClosed},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, deriveReviewStatus(tt.pr))
+		})
+	}
+}
+
 func TestRender_URLColumn(t *testing.T) {
 	models := testModels("")[:1]
 	defs := testPRL.allColumnDefs(tableLayout{})
