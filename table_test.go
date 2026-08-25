@@ -844,6 +844,29 @@ func TestComputeLayout_CustomColumns_NoTime(t *testing.T) {
 	require.False(t, layout.compact)
 }
 
+func TestColumnNames_MatchDefs(t *testing.T) {
+	defs := testPRL.allColumnDefs(tableLayout{})
+	names := make([]string, 0, len(defs))
+	for name := range defs {
+		names = append(names, name)
+	}
+	require.ElementsMatch(t, columnNames, names)
+}
+
+func TestResolveColumns_ConfigDefaultBeatsAuthorInjection(t *testing.T) {
+	// --team would otherwise add the author column; a configured list wins.
+	cli := &CLI{Team: CSVFlag{Values: []string{"ops"}}}
+	cli.Normalize(&Config{Default: Defaults{Columns: []string{colTitle, colRef}}})
+	require.Equal(t, []string{colTitle, colRef}, resolveColumns(cli))
+
+	flagged := &CLI{
+		Team:    CSVFlag{Values: []string{"ops"}},
+		Columns: CSVFlag{Values: []string{colNumber}},
+	}
+	flagged.Normalize(&Config{Default: Defaults{Columns: []string{colTitle, colRef}}})
+	require.Equal(t, []string{colNumber}, resolveColumns(flagged))
+}
+
 func TestEstimatedWidth_CompactShorter(t *testing.T) {
 	cols := defaultColumns()
 	long := estimatedWidth(cols, false)

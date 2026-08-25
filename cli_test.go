@@ -223,6 +223,33 @@ func TestNormalize_GroupRaisesLimitDefault(t *testing.T) {
 	require.True(t, override.limitExplicit)
 }
 
+func TestNormalize_ConfigDefaultColumns(t *testing.T) {
+	cfg := &Config{Default: Defaults{
+		Columns: []string{colTitle, colRef},
+		Limit:   defaultLimit,
+		Output:  valueBullet,
+	}}
+
+	configured := &CLI{}
+	configured.Normalize(cfg)
+	require.Equal(t, []string{colTitle, colRef}, configured.Columns.Values)
+	require.False(t, configured.columnsExplicit)
+
+	// A configured column list is a display preference, so default.output wins.
+	configured.ApplyOutputOverrides()
+	require.Equal(t, valueBullet, *configured.Output)
+
+	// The CLI holds a copy, so later edits can't reach back into the config.
+	configured.Columns.Values[0] = colOwner
+	require.Equal(t, []string{colTitle, colRef}, cfg.Default.Columns)
+
+	explicit := &CLI{Columns: CSVFlag{Values: []string{colAuthor}}}
+	explicit.Normalize(cfg)
+	require.Equal(t, []string{colAuthor}, explicit.Columns.Values)
+	require.True(t, explicit.columnsExplicit)
+	require.Equal(t, valueTable, *explicit.Output)
+}
+
 func TestValidate_IntervalRequiresInteractiveOrWatch(t *testing.T) {
 	interval := 30 * time.Second
 	cli := &CLI{Interval: &interval}

@@ -191,6 +191,49 @@ func TestLoadConfigUsesConfiguredReviewProviders(t *testing.T) {
 	require.Equal(t, "codex", cfg.TUI.Review.Default.Provider)
 }
 
+func TestLoadConfigNormalizesDefaultColumns(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`default:
+  columns: [" Title ", REF, ""]
+`),
+			0o600,
+		),
+	)
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, []string{colTitle, colRef}, cfg.Default.Columns)
+}
+
+func TestLoadConfigRejectsInvalidDefaultColumns(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(
+		t,
+		os.WriteFile(
+			cp,
+			[]byte(`default:
+  columns: [title, bogus]
+`),
+			0o600,
+		),
+	)
+
+	_, err = loadConfig()
+	require.EqualError(t, err, `invalid default.columns entry "bogus"`)
+}
+
 func TestLoadConfigMigratesLegacySlackDefaultOutput(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

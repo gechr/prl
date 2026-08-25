@@ -243,6 +243,19 @@ func defaultColumnsWithAuthor() []string {
 	return []string{colIndex, colTitle, colRef, valueCreated, valueUpdated, colAuthor}
 }
 
+// columnNames lists every name --columns and default.columns accept. It mirrors
+// the keys of allColumnDefs, which TestColumnNamesMatchDefs enforces.
+var columnNames = []string{
+	colIndex, colIdx, colI,
+	colOwner, colRef, valueRepo, colNumber, colTitle, colLabels, colAuthor,
+	colState, colStatus, colReason, colReview, valueCreated, valueUpdated, valueURL,
+}
+
+// knownColumn reports whether name is a recognised column.
+func knownColumn(name string) bool {
+	return slices.Contains(columnNames, name)
+}
+
 // truncateTitle truncates a title to maxTitleLen runes, appending an ellipsis if needed.
 func truncateTitle(title string) string {
 	if runes := []rune(title); len(runes) > maxTitleLen {

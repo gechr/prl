@@ -237,6 +237,8 @@ already fetched for the status column, so it costs no extra API calls (with
 prl --columns title,ref,author,labels
 ```
 
+Set `default.columns` in `config.yaml` to change the default set. `--columns` overrides it, and unlike the flag a configured list leaves `default.output` alone.
+
 In table mode, sort defaults to `updated` unless `--sort` is set explicitly.
 
 ## Configuration
@@ -250,6 +252,7 @@ default:
   authors:
     - "@me"
   bots: true
+  columns: []
   limit: 30
   match: title
   merge_method: squash

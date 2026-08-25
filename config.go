@@ -36,6 +36,7 @@ const (
 	keyAuthors               = "authors"
 	keyDefaultAuthors        = "default.authors"
 	keyDefaultBots           = "default.bots"
+	keyDefaultColumns        = "default.columns"
 	keyDefaultLimit          = "default.limit"
 	keyDefaultMatch          = "default.match"
 	keyDefaultMergeMethod    = "default.merge_method"
@@ -74,6 +75,7 @@ const (
 type Defaults struct {
 	Authors     []string `koanf:"authors"`
 	Bots        bool     `koanf:"bots"`
+	Columns     []string `koanf:"columns"`
 	Limit       int      `koanf:"limit"`
 	Match       string   `koanf:"match"`
 	MergeMethod string   `koanf:"merge_method"`
@@ -212,6 +214,7 @@ func defaultConfig() map[string]any {
 		keyVCS:                vcsGit,
 		keyDefaultAuthors:     []string{valueAtMe},
 		keyDefaultBots:        true,
+		keyDefaultColumns:     []string{},
 		keyDefaultLimit:       defaultLimit,
 		keyDefaultMatch:       colTitle,
 		keyDefaultMergeMethod: "squash",
@@ -319,6 +322,12 @@ func loadConfig() (*Config, error) {
 	}
 	if _, ok := parsePRState(cfg.Default.State); !ok {
 		return nil, fmt.Errorf("invalid default.state %q", cfg.Default.State)
+	}
+	cfg.Default.Columns = normalizeColumns(cfg.Default.Columns)
+	for _, col := range cfg.Default.Columns {
+		if !knownColumn(col) {
+			return nil, fmt.Errorf("invalid default.columns entry %q", col)
+		}
 	}
 	if cfg.Default.Match != "" {
 		switch cfg.Default.Match {
@@ -661,6 +670,15 @@ default:
 
   # Whether to include PRs from bot accounts (e.g. dependabot, renovate).
   bots: true
+
+  # Table columns to show, in order. Leave empty for the built-in set
+  # (index, title, ref, created, updated), which also adds author when the
+  # results span multiple authors.
+  # Options: index, ref, repo, owner, number, title, labels, author, state,
+  #          review, created, updated, url
+  # Example:
+  #   columns: [index, title, ref, author, updated]
+  columns: []
 
   # Maximum number of results to return.
   limit: %[2]d

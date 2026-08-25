@@ -18,8 +18,14 @@ func (p *prl) helpPrinter(cfg *Config) kong.HelpPrinter {
 		defaultAuthor = valueAtMe
 	}
 
+	defaultCols := formatCSV(cfg.Default.Columns)
+	if defaultCols == "" {
+		defaultCols = formatCSV(defaultColumns())
+	}
+
 	return clib.HelpPrinterFunc(renderer,
 		clib.NodeSectionsFunc(clib.WithArguments(&CLI{})),
+		help.WithFlagDefault("columns", defaultCols),
 		help.WithFlagDefault("owner", formatCSV(cfg.Default.Owners)),
 		help.WithFlagDefault("author", defaultAuthor),
 		help.WithFlagDefault("limit", fmt.Sprintf("%d", cfg.Default.Limit)),

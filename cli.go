@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -128,6 +129,7 @@ type CLI struct {
 
 	archivedExplicit bool `kong:"-"`
 	ciExplicit       bool `kong:"-"`
+	columnsExplicit  bool `kong:"-"`
 	draftExplicit    bool `kong:"-"`
 	limitExplicit    bool `kong:"-"`
 	noBotExplicit    bool `kong:"-"`
@@ -517,9 +519,16 @@ func (c *CLI) Normalize(cfg *Config) {
 	// Reverse: XOR with config default so --reverse toggles the configured direction
 	c.Reverse = cfg.Default.Reverse != c.Reverse
 
-	// --columns defaults to table output when --output is not explicit
-	if len(c.Columns.Values) > 0 && !c.outputExplicit {
-		c.setOutput(valueTable)
+	// Columns: --columns wins over config, and only the flag implies table
+	// output when --output is not explicit - a configured column list is a
+	// display preference that default.output still governs.
+	c.columnsExplicit = len(c.Columns.Values) > 0
+	if c.columnsExplicit {
+		if !c.outputExplicit {
+			c.setOutput(valueTable)
+		}
+	} else if len(cfg.Default.Columns) > 0 {
+		c.Columns.Values = slices.Clone(cfg.Default.Columns)
 	}
 
 	// Team alias resolution
@@ -713,7 +722,7 @@ func (c *CLI) ApplyOutputOverrides() {
 		}
 	}
 	// --columns defaults to table output (re-check after overrides)
-	if len(c.Columns.Values) > 0 && !c.outputExplicit {
+	if c.columnsExplicit && !c.outputExplicit {
 		c.setOutput(valueTable)
 	}
 
