@@ -566,23 +566,39 @@ func TestDeriveReviewStatus(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "approved",
-			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewApproved, reviewDecisionLoaded: true},
+			name: "approved",
+			pr: PullRequest{
+				State:                valueOpen,
+				ReviewDecision:       valueReviewApproved,
+				reviewDecisionLoaded: true,
+			},
 			expected: valueReviewFilterApproved,
 		},
 		{
-			name:     "changes requested",
-			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewChanges, reviewDecisionLoaded: true},
+			name: "changes requested",
+			pr: PullRequest{
+				State:                valueOpen,
+				ReviewDecision:       valueReviewChanges,
+				reviewDecisionLoaded: true,
+			},
 			expected: valueReviewFilterChanges,
 		},
 		{
-			name:     "review required",
-			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewRequired, reviewDecisionLoaded: true},
+			name: "review required",
+			pr: PullRequest{
+				State:                valueOpen,
+				ReviewDecision:       valueReviewRequired,
+				reviewDecisionLoaded: true,
+			},
 			expected: valueReviewFilterRequired,
 		},
 		{
-			name:     "dismissed",
-			pr:       PullRequest{State: valueOpen, ReviewDecision: valueReviewDismissed, reviewDecisionLoaded: true},
+			name: "dismissed",
+			pr: PullRequest{
+				State:                valueOpen,
+				ReviewDecision:       valueReviewDismissed,
+				reviewDecisionLoaded: true,
+			},
 			expected: "dismissed",
 		},
 		{

@@ -149,8 +149,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 			},
 		},
 		colTitle: {
-			Name: colTitle,
-			//nolint:goconst // column header literal; tests assert on rendered text
+			Name:   colTitle,
 			Header: "TITLE",
 			Flex:   true,
 			Render: func(row PRRowModel, ctx *table.RenderContext) table.Cell {

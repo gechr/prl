@@ -10,7 +10,6 @@ import (
 
 // openBrowser opens the given URLs in the default browser.
 func openBrowser(urls ...string) error {
-	//nolint:goconst // macOS launcher binary, not the PR state value
 	name := "open"
 	if xos.IsLinux() {
 		name = "xdg-open"
