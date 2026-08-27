@@ -654,7 +654,7 @@ func buildOutput(
 	// --state=ready) genuinely requires it.
 	needMergeStatus := (!cli.Quick || needsEnrich) &&
 		((cli.OutputFormat() == OutputTable && !cli.GroupActive()) || needsEnrich)
-	prs, searchHydrated, err := executeListSearch(rest, getGQL, params, needMergeStatus)
+	prs, err := executeListSearch(rest, getGQL, params, needMergeStatus)
 	if err != nil {
 		return "", nil, err
 	}
@@ -684,7 +684,7 @@ func buildOutput(
 		getGQL,
 		prs,
 		needAutomerge && !allAutomergeLoaded(prs),
-		needMergeStatus && !searchHydrated,
+		needMergeStatus,
 		closedAllowed,
 		mergedAllowed,
 		cache,
@@ -812,7 +812,7 @@ func runOnce(
 	// --state=ready) genuinely requires it.
 	needMergeStatus := (!cli.Quick || needsEnrich) &&
 		((cli.OutputFormat() == OutputTable && !cli.GroupActive()) || needsEnrich)
-	prs, searchHydrated, err := executeListSearch(rest, getGQL, params, needMergeStatus)
+	prs, err := executeListSearch(rest, getGQL, params, needMergeStatus)
 	if err != nil {
 		return "", err
 	}
@@ -847,7 +847,7 @@ func runOnce(
 		getGQL,
 		prs,
 		needAutomerge && !allAutomergeLoaded(prs),
-		needMergeStatus && !searchHydrated,
+		needMergeStatus,
 		closedAllowed,
 		mergedAllowed,
 		nil,
