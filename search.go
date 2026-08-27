@@ -564,14 +564,13 @@ func executeListSearch(
 	getGQL func() (*api.GraphQLClient, error),
 	params *SearchParams,
 	preferGraphQL bool,
-) ([]PullRequest, bool, error) {
+) ([]PullRequest, error) {
 	if preferGraphQL {
 		if prs, ok := tryExecuteListSearchGraphQL(getGQL, params); ok {
-			return prs, true, nil
+			return prs, nil
 		}
 	}
-	prs, err := executeSearch(rest, params)
-	return prs, false, err
+	return executeSearch(rest, params)
 }
 
 func tryExecuteListSearchGraphQL(
@@ -588,7 +587,7 @@ func tryExecuteListSearchGraphQL(
 	}
 	prs, err := executeSearchGraphQL(gql, params)
 	if err != nil {
-		clog.Debug().Err(err).Msg("GraphQL search failed")
+		clog.Warn().Err(err).Msg("GraphQL search failed, falling back to REST search")
 		return nil, false
 	}
 	if len(prs) == 0 {
@@ -621,16 +620,6 @@ type graphQLSearchPRNode struct {
 	AutoMergeRequest *struct {
 		EnabledAt string `json:"enabledAt"`
 	} `json:"autoMergeRequest"`
-	Commits struct {
-		Nodes []struct {
-			Commit struct {
-				CheckSuites       listCheckSuites `json:"checkSuites"`
-				StatusCheckRollup *struct {
-					State string `json:"state"`
-				} `json:"statusCheckRollup"`
-			} `json:"commit"`
-		} `json:"nodes"`
-	} `json:"commits"`
 	CreatedAt  time.Time `json:"createdAt"`
 	HeadRefOID string    `json:"headRefOid"`
 	ID         string    `json:"id"`
@@ -640,22 +629,23 @@ type graphQLSearchPRNode struct {
 			Name string `json:"name"`
 		} `json:"nodes"`
 	} `json:"labels"`
-	MergedAt         *time.Time `json:"mergedAt"`
-	MergeStateStatus string     `json:"mergeStateStatus"`
-	Number           int        `json:"number"`
-	Repository       Repository `json:"repository"`
-	ReviewDecision   *string    `json:"reviewDecision"`
-	State            string     `json:"state"`
-	Title            string     `json:"title"`
-	UpdatedAt        time.Time  `json:"updatedAt"`
-	URL              string     `json:"url"`
+	MergedAt   *time.Time `json:"mergedAt"`
+	Number     int        `json:"number"`
+	Repository Repository `json:"repository"`
+	State      string     `json:"state"`
+	Title      string     `json:"title"`
+	UpdatedAt  time.Time  `json:"updatedAt"`
+	URL        string     `json:"url"`
 }
 
 const graphQLVarFirst = "first"
 
 // executeSearchGraphQL queries GitHub's GraphQL search endpoint and returns
-// parsed PRs. It also hydrates the list-view merge status fields that the REST
-// search path has to fetch in a second GraphQL query.
+// parsed PRs. It deliberately selects only cheap per-node fields: merge status
+// and review decision are hydrated afterwards by hydrateListMetadata, which
+// batches them into chunked node queries. Selecting them here as well made a
+// full page of results expensive enough for GitHub to time the search out at
+// higher --limit values.
 func executeSearchGraphQL(gql *api.GraphQLClient, params *SearchParams) ([]PullRequest, error) {
 	var allPRs []PullRequest
 	var cursor *string
@@ -679,26 +669,10 @@ func executeSearchGraphQL(gql *api.GraphQLClient, params *SearchParams) ([]PullR
 							updatedAt
 							mergedAt
 							headRefOid
-							mergeStateStatus
-							reviewDecision
 							autoMergeRequest { enabledAt }
 							author { login }
 							repository { name nameWithOwner }
 							labels(first: 100) { nodes { name } }
-							commits(last: 1) {
-								nodes {
-									commit {
-										checkSuites(first: 50) {
-											totalCount
-											nodes {
-												conclusion
-												checkRuns(first: 1) { totalCount }
-											}
-										}
-										statusCheckRollup { state }
-									}
-								}
-							}
 						}
 					}
 					pageInfo { hasNextPage endCursor }
@@ -757,52 +731,29 @@ func toPullRequestGraphQL(node graphQLSearchPRNode) PullRequest {
 	if node.Author != nil {
 		author = node.Author.Login
 	}
-	reviewDecision := ""
-	if node.ReviewDecision != nil {
-		reviewDecision = *node.ReviewDecision
-	}
 
-	pr := PullRequest{
-		Automerge:      node.AutoMergeRequest != nil,
-		Author:         Author{Login: author},
-		CreatedAt:      node.CreatedAt,
-		HeadSHA:        node.HeadRefOID,
-		IsDraft:        node.IsDraft,
-		Labels:         labels,
-		NodeID:         node.ID,
-		Number:         node.Number,
-		Repository:     node.Repository,
-		ReviewDecision: reviewDecision,
-		State:          state,
-		Title:          strings.TrimSpace(node.Title),
-		TitleRaw:       node.Title,
-		UpdatedAt:      node.UpdatedAt,
-		URL:            node.URL,
+	// Merge status and review decision are left unloaded here;
+	// hydrateListMetadata fills them in for both the GraphQL and REST search
+	// paths. Auto-merge stays because it is a plain scalar lookup, not one of
+	// the per-node rollups that made a full page too expensive to return.
+	return PullRequest{
+		Automerge:  node.AutoMergeRequest != nil,
+		Author:     Author{Login: author},
+		CreatedAt:  node.CreatedAt,
+		HeadSHA:    node.HeadRefOID,
+		IsDraft:    node.IsDraft,
+		Labels:     labels,
+		NodeID:     node.ID,
+		Number:     node.Number,
+		Repository: node.Repository,
+		State:      state,
+		Title:      strings.TrimSpace(node.Title),
+		TitleRaw:   node.Title,
+		UpdatedAt:  node.UpdatedAt,
+		URL:        node.URL,
 
-		automergeLoaded:      true,
-		reviewDecisionLoaded: true,
+		automergeLoaded: true,
 	}
-
-	if state == valueOpen {
-		pr.MergeStatus = graphQLMergeStatus(node)
-	}
-	return pr
-}
-
-func graphQLMergeStatus(node graphQLSearchPRNode) MergeStatus {
-	if node.MergeStateStatus == valueMergeStateDirty {
-		return MergeStatusConflict
-	}
-	var ciState string
-	if len(node.Commits.Nodes) > 0 {
-		commit := node.Commits.Nodes[0].Commit
-		if checkState, ok := checkSuitesCIState(commit.CheckSuites); ok {
-			ciState = checkState
-		} else if rollup := commit.StatusCheckRollup; rollup != nil {
-			ciState = rollup.State
-		}
-	}
-	return resolveMergeStatus(ciState, node.ReviewDecision, node.MergeStateStatus)
 }
 
 // executeCount queries the GitHub Search Issues API and returns the total result count.

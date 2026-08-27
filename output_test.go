@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -328,6 +331,239 @@ func TestHydrateListMetadataBatchesGraphQLRequests(t *testing.T) {
 
 	require.Equal(t, "alice", actors.closed["PR_1"])
 	require.Equal(t, "bob", actors.merged["PR_2"])
+}
+
+func TestHydrateListMetadataKeepsReviewDecisionOnConflicts(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		readBody(t, req.Body)
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			fmt.Sprintf(`{"data":{"mergeNodes":[
+				{"id":"PR_1","headRefOid":"sha-1","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[]}}
+			]}}`, valueMergeStateDirty, valueReviewChanges),
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{{NodeID: "PR_1", State: valueOpen}}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.NoError(t, err)
+
+	// A conflicted PR still has a review decision; reporting it as loaded but
+	// empty renders the review column as "none".
+	require.Equal(t, MergeStatusConflict, prs[0].MergeStatus)
+	require.True(t, prs[0].reviewDecisionLoaded)
+	require.Equal(t, valueReviewChanges, prs[0].ReviewDecision)
+}
+
+func TestHydrateListMetadataKeepsPartialResponseData(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		readBody(t, req.Body)
+		// GitHub's shape when a token cannot read one PR's check suites: usable
+		// data for every node, plus field-level errors for the parts it withheld.
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			fmt.Sprintf(`{
+				"data":{"mergeNodes":[
+					{"id":"PR_1","headRefOid":"sha-1","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"},"checkSuites":{"totalCount":1,"nodes":[null]}}}]}}
+				]},
+				"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token","path":["mergeNodes",0,"commits","nodes",0,"commit","checkSuites","nodes",0]}]
+			}`, valueMergeStateClean, valueReviewApproved),
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{{NodeID: "PR_1", State: valueOpen}}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.NoError(t, err)
+	require.True(t, prs[0].reviewDecisionLoaded)
+	require.Equal(t, valueReviewApproved, prs[0].ReviewDecision)
+	require.Equal(t, MergeStatusReady, prs[0].MergeStatus)
+}
+
+func TestHydrateListMetadataFailsWhenResponseHasNoData(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		readBody(t, req.Body)
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{},"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token"}]}`,
+		), nil
+	})
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{{NodeID: "PR_1", State: valueOpen}}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.Error(t, err)
+	require.False(t, prs[0].reviewDecisionLoaded)
+}
+
+func TestHydrateListMetadataHalvesChunkAfterGatewayTimeout(t *testing.T) {
+	var mu sync.Mutex
+	var sizes []int
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		ids, _ := decodeGraphQLBody(t, readBody(t, req.Body)).Variables["mergeIDs"].([]any)
+
+		mu.Lock()
+		sizes = append(sizes, len(ids))
+		mu.Unlock()
+
+		// GitHub gives up on the whole batch; only smaller ones come back.
+		if len(ids) > 2 {
+			return jsonResponse(req, http.StatusGatewayTimeout, `{"message":"Gateway Timeout"}`), nil
+		}
+		nodes := make([]string, 0, len(ids))
+		for _, id := range ids {
+			nodes = append(nodes, fmt.Sprintf(
+				`{"id":%q,"headRefOid":"sha","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[]}}`,
+				id, valueMergeStateClean, valueReviewApproved,
+			))
+		}
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			fmt.Sprintf(`{"data":{"mergeNodes":[%s]}}`, strings.Join(nodes, ",")),
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := make([]PullRequest, 8)
+	for i := range prs {
+		prs[i] = PullRequest{NodeID: fmt.Sprintf("PR_%d", i), State: valueOpen}
+	}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.NoError(t, err)
+
+	require.Greater(t, len(sizes), 1, "expected the failed batch to be retried in halves")
+	for i := range prs {
+		require.True(t, prs[i].reviewDecisionLoaded, "PR %d never enriched", i)
+		require.Equal(t, MergeStatusReady, prs[i].MergeStatus)
+	}
+}
+
+func TestHydrateListMetadataDoesNotRetryNonTimeoutFailures(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		readBody(t, req.Body)
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return jsonResponse(req, http.StatusForbidden, `{"message":"Forbidden"}`), nil
+	})
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := make([]PullRequest, 8)
+	for i := range prs {
+		prs[i] = PullRequest{NodeID: fmt.Sprintf("PR_%d", i), State: valueOpen}
+	}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.Error(t, err)
+	require.Equal(t, 1, calls, "a refused request must not be retried in halves")
+}
+
+func TestHydrateListMetadataChunksLargeResultSets(t *testing.T) {
+	// Fixed, not derived from hydrateChunkSize: the point is that a result set
+	// larger than one chunk gets split.
+	const total = 53
+
+	var mu sync.Mutex
+	var batchSizes []int
+
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+
+		gqlReq := decodeGraphQLBody(t, readBody(t, req.Body))
+		ids, ok := gqlReq.Variables["mergeIDs"].([]any)
+		require.True(t, ok)
+
+		mu.Lock()
+		batchSizes = append(batchSizes, len(ids))
+		mu.Unlock()
+
+		nodes := make([]string, 0, len(ids))
+		for _, id := range ids {
+			nodes = append(nodes, fmt.Sprintf(
+				`{"id":%q,"headRefOid":"sha","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}`,
+				id, valueMergeStateClean, valueReviewApproved,
+			))
+		}
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			fmt.Sprintf(`{"data":{"mergeNodes":[%s]}}`, strings.Join(nodes, ",")),
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := make([]PullRequest, total)
+	for i := range prs {
+		prs[i] = PullRequest{NodeID: fmt.Sprintf("PR_%d", i), State: valueOpen}
+	}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.NoError(t, err)
+
+	// Split into several queries, none larger than the chunk size, together
+	// covering every PR.
+	require.Greater(t, len(batchSizes), 1)
+	covered := 0
+	for _, size := range batchSizes {
+		require.LessOrEqual(t, size, hydrateChunkSize)
+		covered += size
+	}
+	require.Equal(t, total, covered)
+
+	// Every PR is enriched - no silent truncation of the oldest results.
+	for i := range prs {
+		require.True(t, prs[i].reviewDecisionLoaded, "PR %d missing review decision", i)
+		require.Equal(t, MergeStatusReady, prs[i].MergeStatus, "PR %d missing merge status", i)
+	}
 }
 
 func TestHydrateListMetadataSkipsAutomergeFieldWhenNotRequested(t *testing.T) {

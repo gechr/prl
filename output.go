@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -636,6 +638,17 @@ type listViewerReviewNode struct {
 	} `json:"latestOpinionatedReviews"`
 }
 
+// listMetadataResult is the combined response of the list-metadata query.
+type listMetadataResult struct {
+	TimelineNodes  []listTimelineNode    `json:"timelineNodes"`
+	AutomergeNodes []listAutomergeNode   `json:"automergeNodes"`
+	MergeNodes     []listMergeStatusNode `json:"mergeNodes"`
+	Viewer         struct {
+		Login string `json:"login"`
+	} `json:"viewer"`
+	ViewerReviewNodes []listViewerReviewNode `json:"viewerReviewNodes"`
+}
+
 type listCheckSuites struct {
 	TotalCount int              `json:"totalCount"`
 	Nodes      []listCheckSuite `json:"nodes"`
@@ -667,16 +680,7 @@ func collectMergeStatusNodeIDs(prs []PullRequest) []string {
 		}
 		openIDs = append(openIDs, pr.NodeID)
 	}
-	if len(openIDs) <= maxEnrichCount {
-		return openIDs
-	}
-
-	clog.Debug().
-		Int("open", len(openIDs)).
-		Int("max", maxEnrichCount).
-		Msg("Enriching most recent PRs only, too expensive")
-
-	return openIDs[len(openIDs)-maxEnrichCount:]
+	return openIDs
 }
 
 func resolveMergeStatus(
@@ -835,18 +839,7 @@ func applyListMergeStatusNodes(
 
 	for _, node := range nodes {
 		if node.MergeStateStatus == valueMergeStateDirty {
-			indices, ok := openIdx[node.ID]
-			if ok {
-				for _, idx := range indices {
-					prs[idx].HeadSHA = node.HeadRefOID
-					prs[idx].MergeStatus = MergeStatusConflict
-					if includeAutomerge {
-						prs[idx].Automerge = node.AutomergeRequest != nil
-						prs[idx].automergeLoaded = true
-					}
-					prs[idx].reviewDecisionLoaded = true
-				}
-			}
+			applyConflictNode(prs, openIdx[node.ID], node, includeAutomerge)
 			continue
 		}
 		var ciState string
@@ -870,6 +863,40 @@ func applyListMergeStatusNodes(
 			node.AutomergeRequest != nil,
 		)
 	}
+}
+
+// applyConflictNode marks the given PRs as conflicted. The review decision is
+// carried over too: a conflicted PR still has one, and reporting it as loaded
+// but empty renders the review column as "none".
+func applyConflictNode(
+	prs []PullRequest,
+	indices []int,
+	node listMergeStatusNode,
+	includeAutomerge bool,
+) {
+	decision := ""
+	if node.ReviewDecision != nil {
+		decision = *node.ReviewDecision
+	}
+	for _, idx := range indices {
+		prs[idx].HeadSHA = node.HeadRefOID
+		prs[idx].MergeStatus = MergeStatusConflict
+		if includeAutomerge {
+			prs[idx].Automerge = node.AutomergeRequest != nil
+			prs[idx].automergeLoaded = true
+		}
+		prs[idx].ReviewDecision = decision
+		prs[idx].reviewDecisionLoaded = true
+	}
+}
+
+// hasListMetadataNodes reports whether a (possibly partial) response carried any
+// usable nodes.
+func hasListMetadataNodes(result *listMetadataResult) bool {
+	return len(result.TimelineNodes) > 0 ||
+		len(result.AutomergeNodes) > 0 ||
+		len(result.MergeNodes) > 0 ||
+		len(result.ViewerReviewNodes) > 0
 }
 
 func applyListViewerReviewNodes(prs []PullRequest, viewer string, nodes []listViewerReviewNode) {
@@ -946,7 +973,108 @@ func fetchHeadRefOIDs(gql *api.GraphQLClient, ids []string) (map[string]string, 
 
 // hydrateListMetadata batches the list-view GraphQL lookups needed for
 // automerge filtering, timeline filtering, and merge-status enrichment.
+//
+// The work is split into chunks of hydrateChunkSize PRs, each its own query, run
+// concurrently. A single query covering every PR asks GitHub for a check-suite
+// rollup per node, which times out once the result set gets large.
 func hydrateListMetadata(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	req listMetadataRequest,
+) (timelineActors, error) {
+	if len(prs) == 0 {
+		return newTimelineActors(), nil
+	}
+	if len(prs) <= hydrateChunkSize {
+		return hydrateListMetadataChunk(gql, prs, req)
+	}
+
+	actors := newTimelineActors()
+	var (
+		mu       sync.Mutex
+		wg       sync.WaitGroup
+		firstErr error
+	)
+	sem := make(chan struct{}, maxConcurrency)
+
+	// Chunks are subslices of prs, so each batch enriches the caller's PRs in place.
+	for start := 0; start < len(prs); start += hydrateChunkSize {
+		chunk := prs[start:min(start+hydrateChunkSize, len(prs))]
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			defer wg.Done()
+
+			chunkActors, err := hydrateListMetadataChunk(gql, chunk, req)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				clog.Warn().Err(err).Int("prs", len(chunk)).Msg("List metadata chunk failed")
+				if firstErr == nil {
+					firstErr = err
+				}
+				return
+			}
+			maps.Copy(actors.closed, chunkActors.closed)
+			maps.Copy(actors.merged, chunkActors.merged)
+		}()
+	}
+	wg.Wait()
+
+	return actors, firstErr
+}
+
+// hydrateListMetadataChunk queries one chunk, halving and retrying when GitHub
+// gives up on it. How much work a PR costs the server varies enormously - a repo
+// whose PRs each carry dozens of check suites exhausts the budget at a batch
+// size another repo handles comfortably - so the size that works is discovered
+// per request rather than assumed.
+func hydrateListMetadataChunk(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	req listMetadataRequest,
+) (timelineActors, error) {
+	actors, err := hydrateListMetadataBatch(gql, prs, req)
+	if err == nil || len(prs) < 2 || !isRetryableHydrateErr(err) {
+		return actors, err
+	}
+
+	clog.Debug().Err(err).Int("prs", len(prs)).Msg("Retrying list metadata in halves")
+
+	const halves = 2
+	mid := len(prs) / halves
+	left, leftErr := hydrateListMetadataChunk(gql, prs[:mid], req)
+	right, rightErr := hydrateListMetadataChunk(gql, prs[mid:], req)
+
+	merged := newTimelineActors()
+	for _, half := range []timelineActors{left, right} {
+		maps.Copy(merged.closed, half.closed)
+		maps.Copy(merged.merged, half.merged)
+	}
+	if leftErr != nil {
+		return merged, leftErr
+	}
+	return merged, rightErr
+}
+
+// isRetryableHydrateErr reports whether an error is GitHub giving up on the
+// query's size rather than refusing the request outright.
+func isRetryableHydrateErr(err error) bool {
+	var httpErr *api.HTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	switch httpErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+// hydrateListMetadataBatch performs one combined GraphQL query for the given PRs.
+func hydrateListMetadataBatch(
 	gql *api.GraphQLClient,
 	prs []PullRequest,
 	req listMetadataRequest,
@@ -1018,15 +1146,7 @@ func hydrateListMetadata(
 		return newTimelineActors(), nil
 	}
 
-	var result struct {
-		TimelineNodes  []listTimelineNode    `json:"timelineNodes"`
-		AutomergeNodes []listAutomergeNode   `json:"automergeNodes"`
-		MergeNodes     []listMergeStatusNode `json:"mergeNodes"`
-		Viewer         struct {
-			Login string `json:"login"`
-		} `json:"viewer"`
-		ViewerReviewNodes []listViewerReviewNode `json:"viewerReviewNodes"`
-	}
+	var result listMetadataResult
 
 	query := fmt.Sprintf(
 		`query ListMetadata(%s){%s}`,
@@ -1034,7 +1154,18 @@ func hydrateListMetadata(
 		strings.Join(queryRoots, " "),
 	)
 	if err := gql.Do(query, variables, &result); err != nil {
-		return timelineActors{}, fmt.Errorf("querying list metadata: %w", err)
+		// GitHub answers with usable data alongside field-level errors - a token
+		// that cannot read one repo's check suites still gets that PR's merge
+		// state and review decision. Discarding the whole response over those
+		// leaves every row unenriched, so keep whatever came back.
+		var gqlErr *api.GraphQLError
+		if !errors.As(err, &gqlErr) || !hasListMetadataNodes(&result) {
+			return timelineActors{}, fmt.Errorf("querying list metadata: %w", err)
+		}
+		clog.Debug().
+			Int("errors", len(gqlErr.Errors)).
+			Str("first", gqlErr.Errors[0].Message).
+			Msg("Partial list metadata response")
 	}
 
 	applyListAutomergeNodes(prs, automergeIDs, result.AutomergeNodes)
@@ -1070,19 +1201,21 @@ func hydrateListMetadataCached(
 		return actors, nil
 	}
 
+	// Chunks that succeeded are written back even when a sibling failed:
+	// discarding them would grey out the whole list over one bad request. The
+	// cache is left untouched in that case, so the next refresh retries rather
+	// than remembering a half-filled round.
 	freshActors, err := hydrateListMetadata(gql, missingPRs, req)
-	if err != nil {
-		return timelineActors{}, err
-	}
-
 	for i, idx := range missingIdx {
 		prs[idx] = missingPRs[i]
-		cache.store(prs[idx], req, freshActors)
+		if err == nil {
+			cache.store(prs[idx], req, freshActors)
+		}
 	}
 	maps.Copy(actors.closed, freshActors.closed)
 	maps.Copy(actors.merged, freshActors.merged)
 
-	return actors, nil
+	return actors, err
 }
 
 func validateCachedHeads(
@@ -1147,8 +1280,11 @@ func filterByViewerApproval(prs []PullRequest) []PullRequest {
 	return filtered
 }
 
-// Maximum number of PRs to enrich with merge status via GraphQL.
-const maxEnrichCount = 50
+// Number of PRs per list-metadata GraphQL query. Each node in the query pulls a
+// check-suite rollup, so batches beyond this start tripping GitHub's timeout.
+// Repositories with many check suites per PR blow the budget sooner, which is
+// what hydrateListMetadataChunk's halving retry is for.
+const hydrateChunkSize = 15
 
 // filterByCI keeps only PRs whose enriched MergeStatus matches the given CI status.
 // CISuccess matches PRs where CI passed (MergeStatusReady or MergeStatusBlocked).

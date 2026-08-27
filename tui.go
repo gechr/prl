@@ -616,7 +616,7 @@ func newRefreshSnapshot(m tuiModel) refreshSnapshot {
 // It returns the built row models, or an error.
 func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	needMergeStatus := true
-	prs, searchHydrated, err := executeListSearch(
+	prs, err := executeListSearch(
 		r.rest,
 		func() (*api.GraphQLClient, error) {
 			if r.gql == nil {
@@ -647,11 +647,11 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	}
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
 	needViewerApproval := r.cli.ReviewSelfRequired()
-	needMetadata := (needMergeStatus && !searchHydrated) || needTimeline || needViewerApproval
+	needMetadata := needMergeStatus || needTimeline || needViewerApproval
 
 	if needMetadata && r.gql != nil {
 		actors, hydrateErr := hydrateListMetadataCached(r.gql, prs, listMetadataRequest{
-			mergeStatus:    needMergeStatus && !searchHydrated,
+			mergeStatus:    needMergeStatus,
 			timelineClosed: len(closedAllowed) > 0,
 			timelineMerged: len(mergedAllowed) > 0,
 			viewerApproval: needViewerApproval,
