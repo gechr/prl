@@ -86,7 +86,7 @@ func exitCode(err error) int {
 	case errors.Is(err, errFatal):
 		return 1
 	default:
-		clog.Fatal().Err(err).Send()
+		clog.Fatal().Err(withGitHubErrorDetail(err)).Send()
 	}
 	return 1
 }
@@ -493,7 +493,7 @@ func runWatch(
 			fetching = false
 			switch {
 			case r.err != nil:
-				clog.Error().Err(r.err).Msg("Refresh failed")
+				clog.Error().Err(withGitHubErrorDetail(r.err)).Msg("Refresh failed")
 			case r.output != "":
 				lastOutput = r.output
 				lastPRs = r.prs

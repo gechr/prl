@@ -1054,7 +1054,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			flashCmd := flashResult(
 				&m,
 				msg.action.String()+" failed:",
-				fmt.Sprintf("%v", msg.err),
+				fmt.Sprintf("%v", withGitHubErrorDetail(msg.err)),
 				"",
 				true,
 			)
