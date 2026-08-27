@@ -933,9 +933,10 @@ func (r requestedRoots) satisfiedBy(result *listMetadataResult) bool {
 	}) {
 		return false
 	}
-	if r.viewer && !hasIdentifiedNodes(result.ViewerReviewNodes, func(n listViewerReviewNode) string {
-		return n.ID
-	}) {
+	if r.viewer &&
+		!hasIdentifiedNodes(result.ViewerReviewNodes, func(n listViewerReviewNode) string {
+			return n.ID
+		}) {
 		return false
 	}
 	return true

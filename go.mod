@@ -22,7 +22,7 @@ require (
 	github.com/gechr/forge v0.0.5
 	github.com/gechr/gorules v0.0.3
 	github.com/gechr/primer v0.2.7
-	github.com/gechr/x v0.5.19
+	github.com/gechr/x v0.6.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/confmap v1.0.1

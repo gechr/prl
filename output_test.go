@@ -499,13 +499,19 @@ func TestHydrateListMetadataHalvesChunkAfterGatewayTimeout(t *testing.T) {
 
 		// GitHub gives up on the whole batch; only smaller ones come back.
 		if len(ids) > 2 {
-			return jsonResponse(req, http.StatusGatewayTimeout, `{"message":"Gateway Timeout"}`), nil
+			return jsonResponse(
+				req,
+				http.StatusGatewayTimeout,
+				`{"message":"Gateway Timeout"}`,
+			), nil
 		}
 		nodes := make([]string, 0, len(ids))
 		for _, id := range ids {
 			nodes = append(nodes, fmt.Sprintf(
 				`{"id":%q,"headRefOid":"sha","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[]}}`,
-				id, valueMergeStateClean, valueReviewApproved,
+				id,
+				valueMergeStateClean,
+				valueReviewApproved,
 			))
 		}
 		return jsonResponse(
@@ -588,7 +594,9 @@ func TestHydrateListMetadataChunksLargeResultSets(t *testing.T) {
 		for _, id := range ids {
 			nodes = append(nodes, fmt.Sprintf(
 				`{"id":%q,"headRefOid":"sha","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]}}`,
-				id, valueMergeStateClean, valueReviewApproved,
+				id,
+				valueMergeStateClean,
+				valueReviewApproved,
 			))
 		}
 		return jsonResponse(
