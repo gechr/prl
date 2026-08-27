@@ -369,17 +369,19 @@ func TestHydrateListMetadataKeepsPartialResponseData(t *testing.T) {
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		require.Equal(t, "/graphql", req.URL.Path)
 		readBody(t, req.Body)
-		// GitHub's shape when a token cannot read one PR's check suites: usable
-		// data for every node, plus field-level errors for the parts it withheld.
+		// GitHub's shape when a token cannot read a PR's check suites: the node
+		// itself is intact, the suites it withheld are null, and field-level
+		// errors describe what is missing. The merge state is deliberately not
+		// CLEAN so the resolved status depends on the CI signal surviving.
 		return jsonResponse(
 			req,
 			http.StatusOK,
 			fmt.Sprintf(`{
 				"data":{"mergeNodes":[
-					{"id":"PR_1","headRefOid":"sha-1","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"},"checkSuites":{"totalCount":1,"nodes":[null]}}}]}}
+					{"id":"PR_1","headRefOid":"sha-1","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":%q},"checkSuites":{"totalCount":1,"nodes":[null]}}}]}}
 				]},
 				"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token","path":["mergeNodes",0,"commits","nodes",0,"commit","checkSuites","nodes",0]}]
-			}`, valueMergeStateClean, valueReviewApproved),
+			}`, "BLOCKED", valueReviewApproved, valueCISuccess),
 		), nil
 	})
 
@@ -396,7 +398,69 @@ func TestHydrateListMetadataKeepsPartialResponseData(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, prs[0].reviewDecisionLoaded)
 	require.Equal(t, valueReviewApproved, prs[0].ReviewDecision)
+	// Unreadable suites must defer to statusCheckRollup rather than pass
+	// themselves off as an authoritative "no CI here".
 	require.Equal(t, MergeStatusReady, prs[0].MergeStatus)
+}
+
+func TestHydrateListMetadataRejectsNullOnlyNodes(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		readBody(t, req.Body)
+		// Every node withheld. The slice is non-empty, but only of zero values.
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{"mergeNodes":[null]},"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token","path":["mergeNodes",0,"commits","nodes",0,"commit","checkSuites","nodes",0]}]}`,
+		), nil
+	})
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{{NodeID: "PR_1", State: valueOpen}}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.Error(t, err)
+	require.False(t, prs[0].reviewDecisionLoaded)
+}
+
+func TestHydrateListMetadataPropagatesErrorsOutsideCIRollup(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		readBody(t, req.Body)
+		// Every requested root came back with a usable node, so only the error's
+		// location disqualifies this response: a review decision that failed to
+		// resolve is a value the apply and cache paths would record as loaded
+		// despite never arriving.
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			fmt.Sprintf(`{
+				"data":{
+					"timelineNodes":[{"id":"PR_1","closed":{"nodes":[]},"merged":{"nodes":[]}}],
+					"mergeNodes":[{"id":"PR_1","headRefOid":"sha-1","mergeStateStatus":%q,"reviewDecision":null,"commits":{"nodes":[]}}]
+				},
+				"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token","path":["mergeNodes",0,"reviewDecision"]}]
+			}`, valueMergeStateClean),
+		), nil
+	})
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{{NodeID: "PR_1", State: valueOpen}}
+
+	_, err = hydrateListMetadata(
+		gql,
+		prs,
+		listMetadataRequest{mergeStatus: true, timelineClosed: true},
+	)
+	require.Error(t, err)
 }
 
 func TestHydrateListMetadataFailsWhenResponseHasNoData(t *testing.T) {
@@ -979,7 +1043,7 @@ func TestResolveMergeStatus(t *testing.T) {
 func TestCheckSuitesCIStateIgnoresPhantomSuites(t *testing.T) {
 	suites := listCheckSuites{
 		TotalCount: 2,
-		Nodes: []listCheckSuite{
+		Nodes: []*listCheckSuite{
 			testCheckSuite(new(valueCIFailure), 0),
 			testCheckSuite(nil, 0),
 		},
@@ -993,7 +1057,7 @@ func TestCheckSuitesCIStateIgnoresPhantomSuites(t *testing.T) {
 func TestCheckSuitesCIStateCountsStartupFailuresWithoutRuns(t *testing.T) {
 	suites := listCheckSuites{
 		TotalCount: 1,
-		Nodes:      []listCheckSuite{testCheckSuite(new(valueCIStartupFailed), 0)},
+		Nodes:      []*listCheckSuite{testCheckSuite(new(valueCIStartupFailed), 0)},
 	}
 
 	got, ok := checkSuitesCIState(suites)
@@ -1004,7 +1068,7 @@ func TestCheckSuitesCIStateCountsStartupFailuresWithoutRuns(t *testing.T) {
 func TestCheckSuitesCIStateDegradesTruncatedPassToPending(t *testing.T) {
 	suites := listCheckSuites{
 		TotalCount: 2,
-		Nodes:      []listCheckSuite{testCheckSuite(new(valueCISuccess), 1)},
+		Nodes:      []*listCheckSuite{testCheckSuite(new(valueCISuccess), 1)},
 	}
 
 	got, ok := checkSuitesCIState(suites)
@@ -1015,7 +1079,7 @@ func TestCheckSuitesCIStateDegradesTruncatedPassToPending(t *testing.T) {
 func TestCheckSuitesCIStatePassesWhenAllVisibleSuitesPass(t *testing.T) {
 	suites := listCheckSuites{
 		TotalCount: 1,
-		Nodes:      []listCheckSuite{testCheckSuite(new(valueCISuccess), 1)},
+		Nodes:      []*listCheckSuite{testCheckSuite(new(valueCISuccess), 1)},
 	}
 
 	got, ok := checkSuitesCIState(suites)
@@ -1023,8 +1087,8 @@ func TestCheckSuitesCIStatePassesWhenAllVisibleSuitesPass(t *testing.T) {
 	require.Equal(t, valueCISuccess, got)
 }
 
-func testCheckSuite(conclusion *string, runs int) listCheckSuite {
-	return listCheckSuite{
+func testCheckSuite(conclusion *string, runs int) *listCheckSuite {
+	return &listCheckSuite{
 		CheckRuns: new(struct {
 			TotalCount int `json:"totalCount"`
 		}{TotalCount: runs}),

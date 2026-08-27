@@ -650,8 +650,11 @@ type listMetadataResult struct {
 }
 
 type listCheckSuites struct {
-	TotalCount int              `json:"totalCount"`
-	Nodes      []listCheckSuite `json:"nodes"`
+	TotalCount int `json:"totalCount"`
+	// Nullable: GitHub nulls out individual suites the token cannot read, and a
+	// value type would decode those into zero-value suites indistinguishable
+	// from real ones.
+	Nodes []*listCheckSuite `json:"nodes"`
 }
 
 type listCheckSuite struct {
@@ -718,7 +721,15 @@ func checkSuitesCIState(suites listCheckSuites) (string, bool) {
 	}
 
 	ran := false
+	readable := 0
 	for _, suite := range suites.Nodes {
+		// A suite the token cannot read arrives as null. Reporting the set as
+		// authoritative anyway would suppress the statusCheckRollup fallback and
+		// leave the PR looking like it has no CI at all.
+		if suite == nil {
+			continue
+		}
+		readable++
 		conclusion := ""
 		if suite.Conclusion != nil {
 			conclusion = *suite.Conclusion
@@ -735,16 +746,19 @@ func checkSuitesCIState(suites listCheckSuites) (string, bool) {
 		}
 	}
 
+	if readable == 0 {
+		return "", false
+	}
 	if !ran {
 		return "", true
 	}
-	if suites.TotalCount > len(suites.Nodes) {
+	if suites.TotalCount > readable {
 		return valueCIPending, true
 	}
 	return valueCISuccess, true
 }
 
-func checkSuiteRan(suite listCheckSuite) bool {
+func checkSuiteRan(suite *listCheckSuite) bool {
 	return suite.CheckRuns != nil && suite.CheckRuns.TotalCount > 0
 }
 
@@ -890,13 +904,73 @@ func applyConflictNode(
 	}
 }
 
-// hasListMetadataNodes reports whether a (possibly partial) response carried any
-// usable nodes.
-func hasListMetadataNodes(result *listMetadataResult) bool {
-	return len(result.TimelineNodes) > 0 ||
-		len(result.AutomergeNodes) > 0 ||
-		len(result.MergeNodes) > 0 ||
-		len(result.ViewerReviewNodes) > 0
+// requestedRoots records which roots a list-metadata query asked for, so a
+// partial response can be checked for the ones that matter.
+type requestedRoots struct {
+	timeline  bool
+	automerge bool
+	merge     bool
+	viewer    bool
+}
+
+// satisfiedBy reports whether every requested root came back usable. Length
+// alone proves nothing: a JSON null element decodes into a zero-value node, so
+// `mergeNodes: [null]` would otherwise pass as data and hydration would report
+// success having applied nothing.
+func (r requestedRoots) satisfiedBy(result *listMetadataResult) bool {
+	if r.timeline && !hasIdentifiedNodes(result.TimelineNodes, func(n listTimelineNode) string {
+		return n.ID
+	}) {
+		return false
+	}
+	if r.automerge && !hasIdentifiedNodes(result.AutomergeNodes, func(n listAutomergeNode) string {
+		return n.ID
+	}) {
+		return false
+	}
+	if r.merge && !hasIdentifiedNodes(result.MergeNodes, func(n listMergeStatusNode) string {
+		return n.ID
+	}) {
+		return false
+	}
+	if r.viewer && !hasIdentifiedNodes(result.ViewerReviewNodes, func(n listViewerReviewNode) string {
+		return n.ID
+	}) {
+		return false
+	}
+	return true
+}
+
+func hasIdentifiedNodes[T any](nodes []T, id func(T) string) bool {
+	for _, node := range nodes {
+		if id(node) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// errorsConfinedToCIRollup reports whether every field-level error landed inside
+// the check-suite subtree, the one part of the response the list can do without.
+func errorsConfinedToCIRollup(gqlErr *api.GraphQLError) bool {
+	if len(gqlErr.Errors) == 0 {
+		return false
+	}
+	for _, item := range gqlErr.Errors {
+		if !pathInCIRollup(item.Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathInCIRollup(path []any) bool {
+	for _, segment := range path {
+		if name, ok := segment.(string); ok && name == "checkSuites" {
+			return true
+		}
+	}
+	return false
 }
 
 func applyListViewerReviewNodes(prs []PullRequest, viewer string, nodes []listViewerReviewNode) {
@@ -1153,13 +1227,23 @@ func hydrateListMetadataBatch(
 		strings.Join(queryDefs, ", "),
 		strings.Join(queryRoots, " "),
 	)
+	roots := requestedRoots{
+		timeline:  len(timelineIDs) > 0,
+		automerge: len(automergeIDs) > 0,
+		merge:     len(mergeIDs) > 0,
+		viewer:    len(viewerReviewIDs) > 0,
+	}
 	if err := gql.Do(query, variables, &result); err != nil {
 		// GitHub answers with usable data alongside field-level errors - a token
 		// that cannot read one repo's check suites still gets that PR's merge
-		// state and review decision. Discarding the whole response over those
-		// leaves every row unenriched, so keep whatever came back.
+		// state and review decision, and discarding the whole response over
+		// those leaves every row unenriched. Only the CI rollup is degradable
+		// that way: an error anywhere else means a value the apply and cache
+		// paths would record as loaded never arrived.
 		var gqlErr *api.GraphQLError
-		if !errors.As(err, &gqlErr) || !hasListMetadataNodes(&result) {
+		if !errors.As(err, &gqlErr) ||
+			!errorsConfinedToCIRollup(gqlErr) ||
+			!roots.satisfiedBy(&result) {
 			return timelineActors{}, fmt.Errorf("querying list metadata: %w", err)
 		}
 		clog.Debug().
