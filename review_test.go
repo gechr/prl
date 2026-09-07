@@ -591,10 +591,11 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
+			{label: codexReviewModel6Astra, value: codexReviewModel6Astra},
 		},
 		reviewModelChoices(nil, reviewProviderCodex),
 	)
-	require.Equal(t, codexReviewModel56Sol, defaultReviewModel(nil, reviewProviderCodex))
+	require.Equal(t, codexReviewModel6Astra, defaultReviewModel(nil, reviewProviderCodex))
 	require.Equal(
 		t,
 		[]filterChoice{
@@ -604,7 +605,7 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
 			{label: codexReviewEffortMax, value: codexReviewEffortMax},
 		},
-		reviewEffortChoices(nil, reviewProviderCodex, codexReviewModel56Terra),
+		reviewEffortChoices(nil, reviewProviderCodex, codexReviewModel56Luna),
 	)
 	require.Equal(
 		t,
@@ -613,7 +614,7 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 	)
 }
 
-func TestBuildAIReviewCommandUsesCodex56SolByDefault(t *testing.T) {
+func TestBuildAIReviewCommandUsesCodex6AstraByDefault(t *testing.T) {
 	pr := testReviewPullRequest()
 	cmd := buildAIReviewCommand(
 		pr,
@@ -627,7 +628,7 @@ func TestBuildAIReviewCommandUsesCodex56SolByDefault(t *testing.T) {
 	require.Equal(
 		t,
 		expectedAIReviewBaseCommand(pr)+
-			`codex --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=high "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+			`codex --sandbox read-only -m gpt-6-astra -c model_reasoning_effort=high "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
 		cmd,
 	)
 }
@@ -706,4 +707,28 @@ func TestGeminiEffortRulesUseExactMatchForBareGemini(t *testing.T) {
 		defaultReviewEffort(nil, reviewProviderGemini, "gemini"),
 	)
 	require.True(t, reviewProviderHasEffort(nil, reviewProviderGemini, "gemini"))
+}
+
+func TestCodexUltraEffortCommands(t *testing.T) {
+	for _, model := range []string{codexReviewModel6Astra, codexReviewModel56Sol, codexReviewModel56Terra} {
+		t.Run(model, func(t *testing.T) {
+			require.True(t, isValidReviewModel(nil, reviewProviderCodex, model))
+			require.True(
+				t,
+				isValidReviewEffort(nil, reviewProviderCodex, model, codexReviewEffortUltra),
+			)
+			pr := testReviewPullRequest()
+			cmd := buildAIReviewCommand(pr, "/tmp/prl-prompt.txt", nil,
+				reviewProviderCodex, model, codexReviewEffortUltra)
+			require.Equal(t, expectedAIReviewBaseCommand(pr)+
+				"codex --sandbox read-only -m "+model+
+				` -c model_reasoning_effort=ultra "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
+		})
+	}
+	for _, model := range []string{codexReviewModel56Luna, codexReviewModel55, codexReviewModel54} {
+		require.False(
+			t,
+			isValidReviewEffort(nil, reviewProviderCodex, model, codexReviewEffortUltra),
+		)
+	}
 }

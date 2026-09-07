@@ -215,6 +215,8 @@ func reviewEffortValueStyles() map[string]lg.Style {
 		claudeReviewEffortXHigh: lg.NewStyle().Foreground(lg.Color("1")),
 		claudeReviewEffortMax: lg.NewStyle().
 			Foreground(ld(lg.Color("#d70000"), lg.Color("#ff0000"))),
+		codexReviewEffortUltra: lg.NewStyle().Bold(true).
+			Foreground(ld(lg.Color("#d70000"), lg.Color("#ff0000"))),
 		// Gemini-only efforts: minimal sits below low, and the thinking
 		// budgets ramp like the named levels, with off dimmed and dynamic in
 		// the statusline's fallback purple.
@@ -240,6 +242,7 @@ func reviewModelValueStyles() map[string]lg.Style {
 		codexReviewModel56Luna:  lg.NewStyle().Foreground(lg.Color("3")),
 		codexReviewModel56Terra: lg.NewStyle().Foreground(ld(lg.Color("130"), lg.Color("208"))),
 		codexReviewModel56Sol:   lg.NewStyle().Foreground(lg.Color("1")),
+		codexReviewModel6Astra:  lg.NewStyle().Bold(true).Foreground(lg.Color("1")),
 		geminiReviewModelFlash:  lg.NewStyle().Foreground(lg.Color("2")),
 		geminiReviewModel31Pro:  lg.NewStyle().Foreground(lg.Color("1")),
 	}

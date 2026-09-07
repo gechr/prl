@@ -292,8 +292,9 @@ tui:
           URL: {prURL}
       codex:
         # Optional: override the available model/effort choices.
-        # models: [gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini]
-        # efforts: [low, medium, high, xhigh, max]
+        # models: [gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini]
+        # efforts: [low, medium, high, xhigh, max, ultra]
+        # ultra is supported by gpt-6-astra, gpt-5.6-sol, and gpt-5.6-terra.
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.
 

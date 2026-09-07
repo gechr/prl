@@ -70,6 +70,7 @@ const (
 	claudeReviewModelSonnet = "sonnet"
 	claudeReviewModelOpus   = "opus"
 	claudeReviewModelFable  = "fable"
+	codexReviewModel6Astra  = "gpt-6-astra"
 	codexReviewModel56Sol   = "gpt-5.6-sol"
 	codexReviewModel56Terra = "gpt-5.6-terra"
 	codexReviewModel56Luna  = "gpt-5.6-luna"
@@ -88,6 +89,7 @@ const (
 	codexReviewEffortHigh    = "high"
 	codexReviewEffortXHigh   = "xhigh"
 	codexReviewEffortMax     = "max"
+	codexReviewEffortUltra   = "ultra"
 
 	geminiReviewEffortMinimal = "minimal"
 	geminiReviewEffortLow     = "low"
@@ -137,8 +139,9 @@ var codexReviewConfig = reviewProviderConfig{
 		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 		{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
+		{label: codexReviewModel6Astra, value: codexReviewModel6Astra},
 	},
-	defaultModel: codexReviewModel56Sol,
+	defaultModel: codexReviewModel6Astra,
 }
 
 var geminiReviewConfig = reviewProviderConfig{
@@ -329,7 +332,23 @@ var claudeEffortRules = []reviewEffortRule{
 	},
 }
 
+var codexUltraEffortChoices = []filterChoice{
+	{label: codexReviewEffortLow, value: codexReviewEffortLow},
+	{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+	{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+	{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+	{label: codexReviewEffortMax, value: codexReviewEffortMax},
+	{label: codexReviewEffortUltra, value: codexReviewEffortUltra},
+}
+
 var codexEffortRules = []reviewEffortRule{
+	{pattern: codexReviewModel6Astra, choices: codexUltraEffortChoices, def: codexReviewEffortHigh},
+	{pattern: codexReviewModel56Sol, choices: codexUltraEffortChoices, def: codexReviewEffortHigh},
+	{
+		pattern: codexReviewModel56Terra,
+		choices: codexUltraEffortChoices,
+		def:     codexReviewEffortHigh,
+	},
 	{
 		pattern: "gpt-5.6*",
 		choices: []filterChoice{
