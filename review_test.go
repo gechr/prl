@@ -151,6 +151,32 @@ printf '%s\000' "$@" > "$PRL_TEST_ARGS"
 		require.NoError(t, err)
 		require.True(t, strings.HasPrefix(string(data), "/d\x00/v:off\x00/c\x00wt.exe\x00"))
 	})
+	t.Run("direct wt preserves cmd metacharacters as literal arguments", func(t *testing.T) {
+		directDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(directDir, "wt.exe"), []byte(`#!/bin/sh
+printf '%s\000' "$@" > "$PRL_TEST_ARGS"
+`), 0o700))
+		t.Setenv("PATH", directDir)
+		const launchFile = `/tmp/review & (draft) %TEMP% ^|<>"!.sh`
+		err := launchAIReviewWindowsTerminal(t.Context(), launchFile, "repo#42")
+		require.NoError(t, err)
+		data, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		args := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+		require.Equal(t, launchFile, args[len(args)-1])
+
+		for _, separator := range []string{";", "\r", "\n", "\x00"} {
+			t.Run(fmt.Sprintf("reject separator %q", separator), func(t *testing.T) {
+				captureFile := filepath.Join(t.TempDir(), "args")
+				t.Setenv("PRL_TEST_ARGS", captureFile)
+				path := "/tmp/review" + separator + ".sh"
+				err := launchAIReviewWindowsTerminal(t.Context(), path, "repo#42")
+				require.EqualError(t, err,
+					fmt.Sprintf("windows terminal: unsupported command character in argument %q", path))
+				require.NoFileExists(t, captureFile)
+			})
+		}
+	})
 	t.Run("wt failure does not launch a duplicate through cmd", func(t *testing.T) {
 		directDir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(directDir, "wt.exe"), []byte("#!/bin/sh\necho 'direct failure' >&2\nexit 8\n"), 0o700))

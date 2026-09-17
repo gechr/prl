@@ -701,14 +701,15 @@ func launchAIReviewWindowsTerminal(ctx context.Context, launchFile, tabTitle str
 		"wsl.exe", "--distribution", os.Getenv("WSL_DISTRO_NAME"),
 		"--user", currentUser.Username, "--exec", "/bin/sh", launchFile,
 	}
-	// cmd.exe and wt.exe interpret metacharacters even when invoked without a
-	// Unix shell. Reject them instead of treating metadata or paths as commands.
+	// wt.exe treats semicolons as separators between terminal commands.
+	// Reject control characters here too, before either launch path starts.
+	const terminalSeparators = ";\r\n\x00"
 	for _, arg := range args {
-		if strings.ContainsAny(arg, "\"%&|<>^;()\r\n\x00") {
+		if strings.ContainsAny(arg, terminalSeparators) {
 			return fmt.Errorf("windows terminal: unsupported command character in argument %q", arg)
 		}
 	}
-	//nolint:gosec // All arguments reject cmd.exe and wt.exe metacharacters above.
+	//nolint:gosec // Direct execution passes argv without a shell; wt.exe separators are rejected above.
 	direct := exec.CommandContext(ctx, "wt.exe", args...)
 	output, directErr := direct.CombinedOutput()
 	if directErr == nil {
@@ -718,6 +719,14 @@ func launchAIReviewWindowsTerminal(ctx context.Context, launchFile, tabTitle str
 	// when the executable itself could not be started, not on a nonzero exit.
 	if direct.Process != nil || ctx.Err() != nil {
 		return fmt.Errorf("windows terminal: %w: %s", directErr, strings.TrimSpace(string(output)))
+	}
+	// Only the fallback crosses cmd.exe: quotes, variable expansion, command
+	// operators, redirection, escaping and grouping must not reach that shell.
+	const cmdMetacharacters = "\"%&|<>^()"
+	for _, arg := range args {
+		if strings.ContainsAny(arg, cmdMetacharacters) {
+			return fmt.Errorf("windows terminal: unsupported command character in argument %q", arg)
+		}
 	}
 	interpreter, err := findWSLCommandInterpreter(exec.LookPath)
 	if err != nil {
