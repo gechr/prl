@@ -720,7 +720,9 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		for _, t := range targets {
-			_ = openBrowser(t.pr.URL)
+			if err := openBrowser(t.pr.URL); err != nil {
+				return m, flashResult(&m, "Open failed:", err.Error(), "", true), true
+			}
 		}
 		last := targets[len(targets)-1]
 		msg := fmt.Sprintf("%d PRs", len(targets))
@@ -737,7 +739,9 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		urls := xslices.Map(targets, func(t targetPR) string { return t.pr.URL })
 		xslices.SortNatural(urls)
-		_ = copyToClipboard(strings.Join(urls, nl))
+		if err := copyToClipboard(strings.Join(urls, nl)); err != nil {
+			return m, flashResult(&m, "Copy failed:", err.Error(), "", true), true
+		}
 		last := targets[len(targets)-1]
 		msg := last.pr.Ref()
 		if len(targets) > 1 {
@@ -943,10 +947,14 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 
 	switch msg.String() {
 	case tuiKeybindOpen:
-		_ = openBrowser(ctx.pr.URL)
+		if err := openBrowser(ctx.pr.URL); err != nil {
+			return m, flashResult(&m, "Open failed:", err.Error(), "", true), true
+		}
 		return m, nil, true
 	case tuiKeybindCopyURL:
-		_ = copyToClipboard(ctx.pr.URL)
+		if err := copyToClipboard(ctx.pr.URL); err != nil {
+			return m, flashResult(&m, "Copy failed:", err.Error(), "", true), true
+		}
 		return m, flashResult(&m, resultCopied, ctx.pr.Ref(), "", false), true
 	case tuiKeybindSlackNoConfirm:
 		if !ctx.actionable {
