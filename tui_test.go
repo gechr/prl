@@ -163,6 +163,8 @@ func TestUpdateDetailViewCtrlRRequestsCopilotReview(t *testing.T) {
 }
 
 func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
+	t.Setenv("WSL_DISTRO_NAME", "")
+	t.Setenv("WT_SESSION", "")
 	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	m := tuiModel{styles: newTuiStyles()}
@@ -187,7 +189,7 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 			lines[7],
 		)
 	} else {
-		// Non-darwin has no AI-review launcher, which gates the review
+		// Without WSL or Herdr, non-darwin has no launcher, which gates the review
 		// shortcuts out of the help overlay.
 		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
 		require.Contains(t, strings.Fields(strings.Join(lines, " ")), "shift+↕")
@@ -1236,6 +1238,8 @@ func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
 func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	// Pin launcher detection: the footer's "review" shortcut is gated on
 	// hasAIReviewLauncher(), which is env- and platform-dependent.
+	t.Setenv("WSL_DISTRO_NAME", "")
+	t.Setenv("WT_SESSION", "")
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")

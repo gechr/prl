@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -21,11 +22,12 @@ import (
 type aiReviewLauncher string
 
 const (
-	aiReviewLauncherNone    aiReviewLauncher = ""
-	aiReviewLauncherGhostty aiReviewLauncher = "ghostty"
-	aiReviewLauncherHerdr   aiReviewLauncher = "herdr"
-	aiReviewLauncherITerm2  aiReviewLauncher = "iterm2"
-	aiReviewLauncherKitty   aiReviewLauncher = "kitty"
+	aiReviewLauncherNone            aiReviewLauncher = ""
+	aiReviewLauncherGhostty         aiReviewLauncher = emulator.Ghostty
+	aiReviewLauncherHerdr           aiReviewLauncher = "herdr"
+	aiReviewLauncherITerm2          aiReviewLauncher = emulator.ITerm2
+	aiReviewLauncherKitty           aiReviewLauncher = emulator.Kitty
+	aiReviewLauncherWindowsTerminal aiReviewLauncher = emulator.WindowsTerminal
 )
 
 // herdrEnvVar is set in every pane Herdr owns. Herdr runs on top of a host
@@ -39,6 +41,9 @@ func currentAIReviewLauncher() aiReviewLauncher {
 		if _, err := exec.LookPath("herdr"); err == nil {
 			return aiReviewLauncherHerdr
 		}
+	}
+	if xos.IsLinux() && os.Getenv("WSL_DISTRO_NAME") != "" && os.Getenv("WT_SESSION") != "" {
+		return aiReviewLauncherWindowsTerminal
 	}
 	if !xos.IsDarwin() {
 		return aiReviewLauncherNone
@@ -627,6 +632,9 @@ func launchAIReview(
 	}()
 
 	shellCmd := buildAIReviewCommand(pr, promptFile, cfg, provider, model, effort)
+	if launcher == aiReviewLauncherWindowsTerminal {
+		shellCmd = buildWSLReviewCommand(shellCmd)
+	}
 	launchFile, err = writeReviewLaunchFile(shellCmd, promptFile)
 	if err != nil {
 		return err
@@ -635,6 +643,12 @@ func launchAIReview(
 
 	tabTitle := fmt.Sprintf("%s#%d", pr.Repository.Name, pr.Number)
 	switch launcher {
+	case aiReviewLauncherWindowsTerminal:
+		if launchErr := launchAIReviewWindowsTerminal(ctx, launchFile, tabTitle); launchErr != nil {
+			return launchErr
+		}
+		dispatched = true
+		return nil
 	case aiReviewLauncherKitty:
 		if kittyErr := launchAIReviewKitty(ctx, launchCmd, tabTitle); kittyErr != nil {
 			return kittyErr
@@ -661,6 +675,82 @@ func launchAIReview(
 	}
 	dispatched = true
 	return nil
+}
+
+// buildWSLReviewCommand loads the user's interactive login environment, then
+// executes the generated POSIX command in sh even when the login shell is fish.
+func buildWSLReviewCommand(shellCmd string) string {
+	loginShell := os.Getenv(shell.EnvShell)
+	if loginShell == "" {
+		loginShell = "/bin/sh"
+	}
+	posixCommand := "/bin/sh -c " + shell.Quote(shellCmd)
+	return shell.Quote(loginShell) + " -ilc " + shell.Quote(posixCommand)
+}
+
+// launchAIReviewWindowsTerminal tries wt.exe directly, then uses cmd.exe if
+// the Windows app execution alias cannot be started from WSL.
+// Only the script path crosses Windows; the review command stays inside WSL.
+func launchAIReviewWindowsTerminal(ctx context.Context, launchFile, tabTitle string) error {
+	currentUser, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("windows terminal: current WSL user: %w", err)
+	}
+	args := []string{
+		"--window", "0", "new-tab", "--title", tabTitle,
+		"wsl.exe", "--distribution", os.Getenv("WSL_DISTRO_NAME"),
+		"--user", currentUser.Username, "--exec", "/bin/sh", launchFile,
+	}
+	// wt.exe treats semicolons as separators between terminal commands.
+	// Reject control characters here too, before either launch path starts.
+	const terminalSeparators = ";\r\n\x00"
+	for _, arg := range args {
+		if strings.ContainsAny(arg, terminalSeparators) {
+			return fmt.Errorf("windows terminal: unsupported command character in argument %q", arg)
+		}
+	}
+	//nolint:gosec // Direct execution passes argv without a shell; wt.exe separators are rejected above.
+	direct := exec.CommandContext(ctx, "wt.exe", args...)
+	output, directErr := direct.CombinedOutput()
+	if directErr == nil {
+		return nil
+	}
+	// Once wt.exe starts, retrying could open a duplicate tab. Only fall back
+	// when the executable itself could not be started, not on a nonzero exit.
+	if direct.Process != nil || ctx.Err() != nil {
+		return fmt.Errorf("windows terminal: %w: %s", directErr, strings.TrimSpace(string(output)))
+	}
+	// Only the fallback crosses cmd.exe: quotes, variable expansion, command
+	// operators, redirection, escaping and grouping must not reach that shell.
+	const cmdMetacharacters = "\"%&|<>^()"
+	for _, arg := range args {
+		if strings.ContainsAny(arg, cmdMetacharacters) {
+			return fmt.Errorf("windows terminal: unsupported command character in argument %q", arg)
+		}
+	}
+	interpreter, err := findWSLCommandInterpreter(exec.LookPath)
+	if err != nil {
+		return fmt.Errorf(
+			"windows terminal: cannot start wt.exe (%w); cmd.exe fallback unavailable: %w",
+			directErr, err,
+		)
+	}
+	args = append([]string{"/d", "/v:off", "/c", "wt.exe"}, args...)
+	//nolint:gosec // Interpreter is resolved from known candidates; arguments are validated above.
+	cmd := exec.CommandContext(ctx, interpreter, args...)
+	if output, launchErr := cmd.CombinedOutput(); launchErr != nil {
+		return fmt.Errorf("windows terminal: %w: %s", launchErr, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// findWSLCommandInterpreter also checks the default Windows mount so users
+// do not have to add Windows System32 to their Linux PATH.
+func findWSLCommandInterpreter(lookPath func(string) (string, error)) (string, error) {
+	if interpreter, err := lookPath("cmd.exe"); err == nil {
+		return interpreter, nil
+	}
+	return lookPath("/mnt/c/Windows/System32/cmd.exe")
 }
 
 // writeReviewPromptFile writes the prompt to a temp file so the
@@ -982,6 +1072,8 @@ end run`, nil
 	case aiReviewLauncherHerdr:
 		// unreachable: Herdr is dispatched before AppleScript in launchAIReview.
 		return "", fmt.Errorf("herdr does not use AppleScript")
+	case aiReviewLauncherWindowsTerminal:
+		return "", fmt.Errorf("windows terminal does not use AppleScript")
 	}
 	return "", fmt.Errorf("unsupported terminal %q", launcher)
 }

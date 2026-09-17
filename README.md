@@ -190,7 +190,11 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 
 ## TUI
 
-`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`. AI reviews open in a new tab of the host terminal: inside a Herdr session (`HERDR_ENV=1`) a Herdr tab, otherwise Ghostty, iTerm2, or Kitty on macOS.
+`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`. AI reviews open in a new tab of the host terminal: inside a Herdr session (`HERDR_ENV=1`) a Herdr tab, otherwise Ghostty, iTerm2, or Kitty on macOS, or Windows Terminal when running in WSL.
+
+For Windows Terminal, run the Linux build of `prl` inside WSL. Detection uses `WSL_DISTRO_NAME` and `WT_SESSION`. The launcher tries `wt.exe` directly from `PATH`. If it cannot start, it falls back to `cmd.exe`, checking `PATH` and then `/mnt/c/Windows/System32/cmd.exe`; adding System32 to your Linux `PATH` is unnecessary with the default Windows mount. Windows interoperability must be enabled. If Windows is mounted elsewhere, put `wt.exe` or `cmd.exe` on `PATH`. A running `wt.exe` that reports an error is not retried, to avoid opening duplicate tabs.
+
+The review opens in the most recently used Windows Terminal window, using the same WSL distribution and Linux user. Your interactive login shell loads before the review starts, so install Git and your chosen AI CLI inside that distribution. Herdr still takes priority when running inside a Herdr session. Arguments containing semicolons, line breaks or NUL are rejected. The `cmd.exe` fallback also rejects shell metacharacters such as `%`, `&` and `|`; direct `wt.exe` calls pass those characters literally.
 
 ## Date Syntax
 

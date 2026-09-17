@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	xos "github.com/gechr/x/os"
@@ -13,6 +15,8 @@ import (
 )
 
 func TestCurrentAIReviewLauncherHerdr(t *testing.T) {
+	t.Setenv("WSL_DISTRO_NAME", "")
+	t.Setenv("WT_SESSION", "")
 	if _, err := exec.LookPath("herdr"); err != nil {
 		t.Skip("herdr not in PATH")
 	}
@@ -34,6 +38,8 @@ func TestCurrentAIReviewLauncherHerdr(t *testing.T) {
 
 func TestCurrentAIReviewLauncher(t *testing.T) {
 	t.Setenv(herdrEnvVar, "")
+	t.Setenv("WSL_DISTRO_NAME", "")
+	t.Setenv("WT_SESSION", "")
 
 	if !xos.IsDarwin() {
 		t.Run("non-darwin always returns none", func(t *testing.T) {
@@ -70,6 +76,241 @@ func TestCurrentAIReviewLauncher(t *testing.T) {
 
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
 	require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+}
+
+func TestCurrentAIReviewLauncherWSL(t *testing.T) {
+	if !xos.IsLinux() {
+		t.Skip("WSL detection requires Linux")
+	}
+
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	t.Setenv(herdrEnvVar, "")
+	t.Setenv("TERM_PROGRAM", "")
+	t.Setenv("KITTY_WINDOW_ID", "")
+	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
+	t.Setenv("WT_SESSION", "test-session")
+
+	t.Run("detection does not require Windows executables on PATH", func(t *testing.T) {
+		require.Equal(t, aiReviewLauncherWindowsTerminal, currentAIReviewLauncher())
+	})
+	t.Run("WSL without Windows Terminal", func(t *testing.T) {
+		t.Setenv("WT_SESSION", "")
+		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+	})
+	t.Run("Windows Terminal without WSL", func(t *testing.T) {
+		t.Setenv("WSL_DISTRO_NAME", "")
+		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
+	})
+	t.Run("Herdr takes precedence", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(filepath.Join(binDir, "herdr"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
+		t.Setenv(herdrEnvVar, "1")
+		require.Equal(t, aiReviewLauncherHerdr, currentAIReviewLauncher())
+	})
+}
+
+func TestLaunchAIReviewWindowsTerminal(t *testing.T) {
+	binDir := t.TempDir()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "cmd.exe"), []byte(`#!/bin/sh
+printf '%s\000' "$@" > "$PRL_TEST_ARGS"
+if [ "$PRL_TEST_FAIL" = 1 ]; then
+  echo 'wt.exe unavailable' >&2
+  exit 7
+fi
+`), 0o700))
+	t.Setenv("PATH", binDir)
+	t.Setenv("PRL_TEST_ARGS", argsFile)
+	t.Setenv("PRL_TEST_FAIL", "")
+	t.Setenv("WSL_DISTRO_NAME", "Ubuntu Dev")
+	currentUser, err := user.Current()
+	require.NoError(t, err)
+
+	t.Run("direct wt without cmd", func(t *testing.T) {
+		directDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(directDir, "wt.exe"), []byte(`#!/bin/sh
+printf '%s\000' "$@" > "$PRL_TEST_ARGS"
+`), 0o700))
+		t.Setenv("PATH", directDir)
+		err := launchAIReviewWindowsTerminal(t.Context(), "/tmp/review files/launch.sh", "repo#42")
+		require.NoError(t, err)
+		data, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"--window", "0", "new-tab", "--title", "repo#42",
+			"wsl.exe", "--distribution", "Ubuntu Dev", "--user", currentUser.Username,
+			"--exec", "/bin/sh", "/tmp/review files/launch.sh",
+		}, strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00"))
+	})
+	t.Run("unexecutable wt alias falls back to cmd", func(t *testing.T) {
+		aliasDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(aliasDir, "wt.exe"), []byte("not an executable"), 0o700))
+		t.Setenv("PATH", aliasDir+string(os.PathListSeparator)+binDir)
+		require.NoError(t, launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", "repo#42"))
+		data, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		require.True(t, strings.HasPrefix(string(data), "/d\x00/v:off\x00/c\x00wt.exe\x00"))
+	})
+	t.Run("direct wt preserves cmd metacharacters as literal arguments", func(t *testing.T) {
+		directDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(directDir, "wt.exe"), []byte(`#!/bin/sh
+printf '%s\000' "$@" > "$PRL_TEST_ARGS"
+`), 0o700))
+		t.Setenv("PATH", directDir)
+		const launchFile = `/tmp/review & (draft) %TEMP% ^|<>"!.sh`
+		err := launchAIReviewWindowsTerminal(t.Context(), launchFile, "repo#42")
+		require.NoError(t, err)
+		data, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		args := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+		require.Equal(t, launchFile, args[len(args)-1])
+
+		for _, separator := range []string{";", "\r", "\n", "\x00"} {
+			t.Run(fmt.Sprintf("reject separator %q", separator), func(t *testing.T) {
+				captureFile := filepath.Join(t.TempDir(), "args")
+				t.Setenv("PRL_TEST_ARGS", captureFile)
+				path := "/tmp/review" + separator + ".sh"
+				err := launchAIReviewWindowsTerminal(t.Context(), path, "repo#42")
+				require.EqualError(t, err,
+					fmt.Sprintf("windows terminal: unsupported command character in argument %q", path))
+				require.NoFileExists(t, captureFile)
+			})
+		}
+	})
+	t.Run("wt failure does not launch a duplicate through cmd", func(t *testing.T) {
+		directDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(directDir, "wt.exe"), []byte("#!/bin/sh\necho 'direct failure' >&2\nexit 8\n"), 0o700))
+		t.Setenv("PATH", directDir+string(os.PathListSeparator)+binDir)
+		captureFile := filepath.Join(t.TempDir(), "args")
+		t.Setenv("PRL_TEST_ARGS", captureFile)
+		err := launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", "repo#42")
+		require.EqualError(t, err, "windows terminal: exit status 8: direct failure")
+		require.NoFileExists(t, captureFile)
+	})
+
+	t.Run("same distro and user with Linux script path", func(t *testing.T) {
+		err := launchAIReviewWindowsTerminal(t.Context(), "/tmp/review files/launch.sh", "repo#42")
+		require.NoError(t, err)
+		data, err := os.ReadFile(argsFile)
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"/d", "/v:off", "/c", "wt.exe", "--window", "0", "new-tab", "--title", "repo#42",
+			"wsl.exe", "--distribution", "Ubuntu Dev", "--user", currentUser.Username,
+			"--exec", "/bin/sh", "/tmp/review files/launch.sh",
+		}, strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00"))
+	})
+	t.Run("launcher failure reports stderr", func(t *testing.T) {
+		t.Setenv("PRL_TEST_FAIL", "1")
+		err := launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", "repo#42")
+		require.EqualError(t, err, "windows terminal: exit status 7: wt.exe unavailable")
+	})
+	t.Run("reject Windows command expansion", func(t *testing.T) {
+		values := []string{
+			"a&b", "a|b", "a<b", "a>b", "a^b", "a;b", "a(b", "a)b",
+			`a"b`, "%TEMP%", "a\nb", "a\rb", "a\x00b",
+		}
+		for _, value := range values {
+			t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
+				captureFile := filepath.Join(t.TempDir(), "args")
+				t.Setenv("PRL_TEST_ARGS", captureFile)
+				t.Cleanup(func() { require.NoFileExists(t, captureFile) })
+				require.EqualError(t,
+					launchAIReviewWindowsTerminal(t.Context(), "/tmp/"+value, "repo#42"),
+					fmt.Sprintf("windows terminal: unsupported command character in argument %q", "/tmp/"+value))
+				require.EqualError(t,
+					launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", value),
+					fmt.Sprintf("windows terminal: unsupported command character in argument %q", value))
+				if strings.ContainsRune(value, '\x00') {
+					return // Environment variables cannot contain NUL.
+				}
+				t.Setenv("WSL_DISTRO_NAME", value)
+				require.EqualError(t,
+					launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", "repo#42"),
+					fmt.Sprintf("windows terminal: unsupported command character in argument %q", value))
+			})
+		}
+	})
+}
+
+func TestFindWSLCommandInterpreter(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		available string
+		wantCalls []string
+	}{
+		{
+			name: "PATH takes precedence", available: "cmd.exe",
+			wantCalls: []string{"cmd.exe"},
+		},
+		{
+			name: "default Windows mount without PATH", available: "/mnt/c/Windows/System32/cmd.exe",
+			wantCalls: []string{"cmd.exe", "/mnt/c/Windows/System32/cmd.exe"},
+		},
+		{
+			name:      "neither available",
+			wantCalls: []string{"cmd.exe", "/mnt/c/Windows/System32/cmd.exe"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := []string{}
+			interpreter, err := findWSLCommandInterpreter(func(name string) (string, error) {
+				calls = append(calls, name)
+				if name == tt.available {
+					return name, nil
+				}
+				return "", exec.ErrNotFound
+			})
+			if tt.available == "" {
+				require.ErrorIs(t, err, exec.ErrNotFound)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tt.available, interpreter)
+			require.Equal(t, tt.wantCalls, calls)
+		})
+	}
+}
+
+func TestBuildWSLReviewCommand(t *testing.T) {
+	shellPath := filepath.Join(t.TempDir(), "login shell")
+	require.NoError(t, os.WriteFile(shellPath, []byte(`#!/bin/sh
+test "$1" = -ilc || exit 12
+export PRL_TEST_LOGIN=loaded
+exec /bin/sh -c "$2"
+`), 0o700))
+	t.Setenv(shell.EnvShell, shellPath)
+	t.Setenv("PRL_TEST_LOGIN", "")
+	// Exercise nested quoting with spaces, quotes, metacharacters, and newlines.
+	want := "it's a \"review\"; $HOME & %PATH%\nsecond line"
+	command := `test "$PRL_TEST_LOGIN" = loaded && printf '%s' ` + shell.Quote(want)
+	output, err := exec.CommandContext(t.Context(), "/bin/sh", "-c", buildWSLReviewCommand(command)).CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	require.Equal(t, want, string(output))
+
+	t.Run("shell fallback", func(t *testing.T) {
+		t.Setenv(shell.EnvShell, "")
+		require.Equal(t, "/bin/sh -ilc "+shell.Quote("/bin/sh -c "+shell.Quote("true")), buildWSLReviewCommand("true"))
+	})
+}
+
+func TestLaunchAIReviewWSLCleansFilesOnFailure(t *testing.T) {
+	if !xos.IsLinux() {
+		t.Skip("WSL detection requires Linux")
+	}
+	binDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "cmd.exe"), []byte("#!/bin/sh\nexit 7\n"), 0o700))
+	t.Setenv("PATH", binDir)
+	t.Setenv(herdrEnvVar, "")
+	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
+	t.Setenv("WT_SESSION", "test-session")
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+
+	err := launchAIReview(testReviewPullRequest(), "test prompt", nil, reviewProviderCodex, "", "")
+	require.EqualError(t, err, "windows terminal: exit status 7: ")
+	files, err := os.ReadDir(tempDir)
+	require.NoError(t, err)
+	require.Empty(t, files)
 }
 
 func TestBuildAIReviewAppleScriptGhosttyUsesNewTab(t *testing.T) {
