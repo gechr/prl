@@ -23,10 +23,10 @@ type aiReviewLauncher string
 
 const (
 	aiReviewLauncherNone            aiReviewLauncher = ""
-	aiReviewLauncherGhostty         aiReviewLauncher = "ghostty"
+	aiReviewLauncherGhostty         aiReviewLauncher = emulator.Ghostty
 	aiReviewLauncherHerdr           aiReviewLauncher = "herdr"
-	aiReviewLauncherITerm2          aiReviewLauncher = "iterm2"
-	aiReviewLauncherKitty           aiReviewLauncher = "kitty"
+	aiReviewLauncherITerm2          aiReviewLauncher = emulator.ITerm2
+	aiReviewLauncherKitty           aiReviewLauncher = emulator.Kitty
 	aiReviewLauncherWindowsTerminal aiReviewLauncher = emulator.WindowsTerminal
 )
 
