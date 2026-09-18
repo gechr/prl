@@ -67,10 +67,14 @@ const (
 	reviewProviderOptionLabel = "Provider"
 	reviewModelOptionLabel    = "Model"
 	reviewEffortOptionLabel   = "Effort"
+	reviewYoloOptionLabel     = "YOLO"
 
 	reviewProviderOptionRow = 0
 	reviewModelOptionRow    = 1
 	reviewEffortOptionRow   = 2
+
+	reviewYoloNo  = "no"
+	reviewYoloYes = "yes"
 
 	claudeReviewModelSonnet = "sonnet"
 	claudeReviewModelOpus   = "opus"
@@ -115,6 +119,20 @@ const (
 	geminiModelPattern3       = "gemini-3*"
 	geminiModelPattern25Flash = "gemini-2.5-flash*"
 )
+
+// reviewLaunch = one review's picked settings. Yolo is per-launch only.
+type reviewLaunch struct {
+	provider reviewProvider
+	model    string
+	effort   string
+	isYolo   bool
+}
+
+// Yolo drops the provider's sandbox and approval prompts. Off unless picked.
+var reviewYoloChoices = []filterChoice{
+	{label: reviewYoloNo, value: reviewYoloNo},
+	{label: reviewYoloYes, value: reviewYoloYes},
+}
 
 var builtInReviewProviderChoices = []filterChoice{
 	{label: string(reviewProviderClaude), value: string(reviewProviderClaude)},
@@ -527,6 +545,21 @@ func reviewProviderHasEffort(cfg *Config, provider reviewProvider, model string)
 	return len(reviewEffortChoicesForModel(cfg, provider, model)) > 0
 }
 
+// reviewOptionRow finds row by label, -1 when absent. Rows conditional, so
+// positions shift per provider.
+func reviewOptionRow(defs []filterOptionDef, label string) int {
+	return xslices.LastIndexFunc(defs, func(def filterOptionDef) bool {
+		return def.label == label
+	})
+}
+
+func normalizeReviewYolo(yolo string) string {
+	if isChoiceValue(reviewYoloChoices, yolo) {
+		return yolo
+	}
+	return reviewYoloNo
+}
+
 func reviewConfirmOptions(cfg *Config, provider reviewProvider, model string) []filterOptionDef {
 	model = normalizeReviewModel(cfg, provider, model)
 	opts := []filterOptionDef{
@@ -545,10 +578,18 @@ func reviewConfirmOptions(cfg *Config, provider reviewProvider, model string) []
 			choices: reviewEffortChoicesForModel(cfg, provider, model),
 		})
 	}
+	opts = append(opts, filterOptionDef{
+		label:   reviewYoloOptionLabel,
+		choices: reviewYoloChoices,
+	})
 	return opts
 }
 
-func reviewConfirmOptValues(cfg *Config, provider reviewProvider, model, effort string) []int {
+func reviewConfirmOptValues(
+	cfg *Config,
+	provider reviewProvider,
+	model, effort, yolo string,
+) []int {
 	model = normalizeReviewModel(cfg, provider, model)
 	effort = normalizeReviewEffort(cfg, provider, model, effort)
 	vals := []int{
@@ -558,6 +599,7 @@ func reviewConfirmOptValues(cfg *Config, provider reviewProvider, model, effort 
 	if reviewProviderHasEffort(cfg, provider, model) {
 		vals = append(vals, choiceIndex(reviewEffortChoicesForModel(cfg, provider, model), effort))
 	}
+	vals = append(vals, choiceIndex(reviewYoloChoices, normalizeReviewYolo(yolo)))
 	return vals
 }
 
@@ -570,7 +612,7 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 	m.confirmHasInput = true
 	m.confirmInputLabel = "Prompt"
 	m.confirmOptions = reviewConfirmOptions(m.cfg, provider, model)
-	m.confirmOptionValues = reviewConfirmOptValues(m.cfg, provider, model, effort)
+	m.confirmOptionValues = reviewConfirmOptValues(m.cfg, provider, model, effort, reviewYoloNo)
 	m.confirmReviewPR = &prCopy
 	m.confirmInputPlaceholder = "Leave blank to use the default prompt"
 	m.confirmInputValue = reviewPrompt(pr, m.cfg, provider)
@@ -591,8 +633,16 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 				submission.Option(reviewEffortOptionLabel),
 			)
 		}
+		launch := reviewLaunch{
+			provider: provider,
+			model:    model,
+			effort:   effort,
+			isYolo: normalizeReviewYolo(
+				submission.Option(reviewYoloOptionLabel),
+			) == reviewYoloYes,
+		}
 		return func() tea.Msg {
-			err := launchAIReview(prCopy, prompt, m.cfg, provider, model, effort)
+			err := launchAIReview(prCopy, prompt, m.cfg, launch)
 			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}
 	}
@@ -602,14 +652,7 @@ func (m tuiModel) prepareAIReviewConfirm(pr PullRequest, idx int) tuiModel {
 // launchAIReview opens a new terminal tab, clones the PR there, and
 // launches an AI review session in that tab. Cloning happens in the new tab
 // so SSH prompts and progress are visible to the user.
-func launchAIReview(
-	pr PullRequest,
-	prompt string,
-	cfg *Config,
-	provider reviewProvider,
-	model string,
-	effort string,
-) error {
+func launchAIReview(pr PullRequest, prompt string, cfg *Config, launch reviewLaunch) error {
 	ctx := context.Background()
 	launcher := currentAIReviewLauncher()
 	if launcher == aiReviewLauncherNone {
@@ -631,7 +674,7 @@ func launchAIReview(
 		}
 	}()
 
-	shellCmd := buildAIReviewCommand(pr, promptFile, cfg, provider, model, effort)
+	shellCmd := buildAIReviewCommand(pr, promptFile, cfg, launch)
 	if launcher == aiReviewLauncherWindowsTerminal {
 		shellCmd = buildWSLReviewCommand(shellCmd)
 	}
@@ -870,9 +913,7 @@ func buildAIReviewCommand(
 	pr PullRequest,
 	promptFile string,
 	cfg *Config,
-	provider reviewProvider,
-	model string,
-	effort string,
+	launch reviewLaunch,
 ) string {
 	nwo := pr.Repository.NameWithOwner
 
@@ -899,40 +940,28 @@ func buildAIReviewCommand(
 		pr.Number,
 		headGuard,
 	)
-	cmdModel := normalizeReviewModel(cfg, provider, model)
-	cmdEffort := normalizeReviewEffort(cfg, provider, cmdModel, effort)
+	cmdModel := normalizeReviewModel(cfg, launch.provider, launch.model)
+	cmdEffort := normalizeReviewEffort(cfg, launch.provider, cmdModel, launch.effort)
 	prompt, cleanup := promptArg(promptFile)
-	switch provider {
+	switch launch.provider {
 	case reviewProviderCodex:
 		return baseCmd + fmt.Sprintf(
-			"codex --sandbox read-only -m %s -c model_reasoning_effort=%s %s%s",
+			"codex %s -m %s -c model_reasoning_effort=%s %s%s",
+			codexSandboxArg(launch.isYolo),
 			shell.Quote(cmdModel),
 			shell.Quote(cmdEffort),
 			prompt,
 			cleanup,
 		)
 	case reviewProviderGemini:
-		return baseCmd + buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt) + cleanup
+		return baseCmd +
+			buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt, launch.isYolo) +
+			cleanup
 	case reviewProviderUnknown, reviewProviderClaude:
-		return baseCmd + fmt.Sprintf(
-			"claude --permission-mode plan --model=%s %s--system-prompt %s %s%s",
-			shell.Quote(cmdModel),
-			claudeEffortArg(cmdEffort),
-			shell.Quote(
-				"You are an expert code reviewer. Be thorough, precise, and actionable.",
-			),
-			prompt,
-			cleanup,
-		)
+		return baseCmd + buildClaudeReviewCommand(cmdModel, cmdEffort, prompt, launch.isYolo) +
+			cleanup
 	}
-	return baseCmd + fmt.Sprintf(
-		"claude --permission-mode plan --model=%s %s--system-prompt %s %s%s",
-		shell.Quote(cmdModel),
-		claudeEffortArg(cmdEffort),
-		shell.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
-		prompt,
-		cleanup,
-	)
+	return baseCmd + buildClaudeReviewCommand(cmdModel, cmdEffort, prompt, launch.isYolo) + cleanup
 }
 
 func aiReviewDir(pr PullRequest, promptFile string) string {
@@ -968,6 +997,29 @@ func safeReviewPathComponent(value, fallback string) string {
 	return value
 }
 
+// Yolo drops sandbox + approval gates: review can run any command in clone.
+func codexSandboxArg(yolo bool) string {
+	if yolo {
+		return "--dangerously-bypass-approvals-and-sandbox"
+	}
+	return "--sandbox read-only"
+}
+
+func claudePermissionArg(yolo bool) string {
+	if yolo {
+		return "--dangerously-skip-permissions"
+	}
+	return "--permission-mode plan"
+}
+
+// Gemini sandbox needs Docker/Podman or macOS Seatbelt; yolo drops it.
+func geminiSandboxArgs(yolo bool) string {
+	if yolo {
+		return "--approval-mode yolo"
+	}
+	return "--sandbox --approval-mode plan"
+}
+
 func claudeEffortArg(effort string) string {
 	if effort == claudeReviewEffortAuto {
 		return ""
@@ -975,9 +1027,21 @@ func claudeEffortArg(effort string) string {
 	return fmt.Sprintf("--effort=%s ", shell.Quote(effort))
 }
 
+// promptExpr already shell-safe; do not quote again.
+func buildClaudeReviewCommand(model, effort, promptExpr string, yolo bool) string {
+	return fmt.Sprintf(
+		"claude %s --model=%s %s--system-prompt %s %s",
+		claudePermissionArg(yolo),
+		shell.Quote(model),
+		claudeEffortArg(effort),
+		shell.Quote("You are an expert code reviewer. Be thorough, precise, and actionable."),
+		promptExpr,
+	)
+}
+
 // buildGeminiReviewCommand expects promptExpr to be an already shell-safe
 // expression (e.g. "$(/bin/cat /path)"); it must not be further quoted.
-func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string) string {
+func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string, yolo bool) string {
 	settingsJSON, err := json.Marshal(geminiReviewSettings(model, effort))
 	if err != nil {
 		return fmt.Sprintf(
@@ -987,11 +1051,12 @@ func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string) strin
 		)
 	}
 	return fmt.Sprintf(
-		"/bin/rm -rf %s/.gemini && /bin/mkdir -p %s/.gemini && printf '%%s' %s > %s/.gemini/settings.json && gemini --sandbox --approval-mode plan --model %s --prompt-interactive %s",
+		"/bin/rm -rf %s/.gemini && /bin/mkdir -p %s/.gemini && printf '%%s' %s > %s/.gemini/settings.json && gemini %s --model %s --prompt-interactive %s",
 		shell.Quote(reviewDir),
 		shell.Quote(reviewDir),
 		shell.Quote(string(settingsJSON)),
 		shell.Quote(reviewDir),
+		geminiSandboxArgs(yolo),
 		shell.Quote("prl-review"),
 		promptExpr,
 	)

@@ -103,7 +103,10 @@ func TestCurrentAIReviewLauncherWSL(t *testing.T) {
 		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
 	})
 	t.Run("Herdr takes precedence", func(t *testing.T) {
-		require.NoError(t, os.WriteFile(filepath.Join(binDir, "herdr"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
+		require.NoError(
+			t,
+			os.WriteFile(filepath.Join(binDir, "herdr"), []byte("#!/bin/sh\nexit 0\n"), 0o700),
+		)
 		t.Setenv(herdrEnvVar, "1")
 		require.Equal(t, aiReviewLauncherHerdr, currentAIReviewLauncher())
 	})
@@ -144,7 +147,10 @@ printf '%s\000' "$@" > "$PRL_TEST_ARGS"
 	})
 	t.Run("unexecutable wt alias falls back to cmd", func(t *testing.T) {
 		aliasDir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(aliasDir, "wt.exe"), []byte("not an executable"), 0o700))
+		require.NoError(
+			t,
+			os.WriteFile(filepath.Join(aliasDir, "wt.exe"), []byte("not an executable"), 0o700),
+		)
 		t.Setenv("PATH", aliasDir+string(os.PathListSeparator)+binDir)
 		require.NoError(t, launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", "repo#42"))
 		data, err := os.ReadFile(argsFile)
@@ -171,15 +177,28 @@ printf '%s\000' "$@" > "$PRL_TEST_ARGS"
 				t.Setenv("PRL_TEST_ARGS", captureFile)
 				path := "/tmp/review" + separator + ".sh"
 				err := launchAIReviewWindowsTerminal(t.Context(), path, "repo#42")
-				require.EqualError(t, err,
-					fmt.Sprintf("windows terminal: unsupported command character in argument %q", path))
+				require.EqualError(
+					t,
+					err,
+					fmt.Sprintf(
+						"windows terminal: unsupported command character in argument %q",
+						path,
+					),
+				)
 				require.NoFileExists(t, captureFile)
 			})
 		}
 	})
 	t.Run("wt failure does not launch a duplicate through cmd", func(t *testing.T) {
 		directDir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(directDir, "wt.exe"), []byte("#!/bin/sh\necho 'direct failure' >&2\nexit 8\n"), 0o700))
+		require.NoError(
+			t,
+			os.WriteFile(
+				filepath.Join(directDir, "wt.exe"),
+				[]byte("#!/bin/sh\necho 'direct failure' >&2\nexit 8\n"),
+				0o700,
+			),
+		)
 		t.Setenv("PATH", directDir+string(os.PathListSeparator)+binDir)
 		captureFile := filepath.Join(t.TempDir(), "args")
 		t.Setenv("PRL_TEST_ARGS", captureFile)
@@ -214,19 +233,34 @@ printf '%s\000' "$@" > "$PRL_TEST_ARGS"
 				captureFile := filepath.Join(t.TempDir(), "args")
 				t.Setenv("PRL_TEST_ARGS", captureFile)
 				t.Cleanup(func() { require.NoFileExists(t, captureFile) })
-				require.EqualError(t,
+				require.EqualError(
+					t,
 					launchAIReviewWindowsTerminal(t.Context(), "/tmp/"+value, "repo#42"),
-					fmt.Sprintf("windows terminal: unsupported command character in argument %q", "/tmp/"+value))
-				require.EqualError(t,
+					fmt.Sprintf(
+						"windows terminal: unsupported command character in argument %q",
+						"/tmp/"+value,
+					),
+				)
+				require.EqualError(
+					t,
 					launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", value),
-					fmt.Sprintf("windows terminal: unsupported command character in argument %q", value))
+					fmt.Sprintf(
+						"windows terminal: unsupported command character in argument %q",
+						value,
+					),
+				)
 				if strings.ContainsRune(value, '\x00') {
 					return // Environment variables cannot contain NUL.
 				}
 				t.Setenv("WSL_DISTRO_NAME", value)
-				require.EqualError(t,
+				require.EqualError(
+					t,
 					launchAIReviewWindowsTerminal(t.Context(), "/tmp/launch.sh", "repo#42"),
-					fmt.Sprintf("windows terminal: unsupported command character in argument %q", value))
+					fmt.Sprintf(
+						"windows terminal: unsupported command character in argument %q",
+						value,
+					),
+				)
 			})
 		}
 	})
@@ -283,13 +317,18 @@ exec /bin/sh -c "$2"
 	// Exercise nested quoting with spaces, quotes, metacharacters, and newlines.
 	want := "it's a \"review\"; $HOME & %PATH%\nsecond line"
 	command := `test "$PRL_TEST_LOGIN" = loaded && printf '%s' ` + shell.Quote(want)
-	output, err := exec.CommandContext(t.Context(), "/bin/sh", "-c", buildWSLReviewCommand(command)).CombinedOutput()
+	output, err := exec.CommandContext(t.Context(), "/bin/sh", "-c", buildWSLReviewCommand(command)).
+		CombinedOutput()
 	require.NoError(t, err, "%s", output)
 	require.Equal(t, want, string(output))
 
 	t.Run("shell fallback", func(t *testing.T) {
 		t.Setenv(shell.EnvShell, "")
-		require.Equal(t, "/bin/sh -ilc "+shell.Quote("/bin/sh -c "+shell.Quote("true")), buildWSLReviewCommand("true"))
+		require.Equal(
+			t,
+			"/bin/sh -ilc "+shell.Quote("/bin/sh -c "+shell.Quote("true")),
+			buildWSLReviewCommand("true"),
+		)
 	})
 }
 
@@ -298,7 +337,10 @@ func TestLaunchAIReviewWSLCleansFilesOnFailure(t *testing.T) {
 		t.Skip("WSL detection requires Linux")
 	}
 	binDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(binDir, "cmd.exe"), []byte("#!/bin/sh\nexit 7\n"), 0o700))
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(binDir, "cmd.exe"), []byte("#!/bin/sh\nexit 7\n"), 0o700),
+	)
 	t.Setenv("PATH", binDir)
 	t.Setenv(herdrEnvVar, "")
 	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
@@ -306,7 +348,12 @@ func TestLaunchAIReviewWSLCleansFilesOnFailure(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("TMPDIR", tempDir)
 
-	err := launchAIReview(testReviewPullRequest(), "test prompt", nil, reviewProviderCodex, "", "")
+	err := launchAIReview(
+		testReviewPullRequest(),
+		"test prompt",
+		nil,
+		reviewLaunch{provider: reviewProviderCodex},
+	)
 	require.EqualError(t, err, "windows terminal: exit status 7: ")
 	files, err := os.ReadDir(tempDir)
 	require.NoError(t, err)
@@ -362,10 +409,16 @@ func TestPrepareAIReviewConfirmUsesYesNo(t *testing.T) {
 	require.NotNil(t, m.confirmCmdFn)
 	require.True(t, m.confirmHasInput)
 	require.Equal(t, "Prompt", m.confirmInputLabel)
-	require.Len(t, m.confirmOptions, 3)
+	require.Len(t, m.confirmOptions, 4)
 	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
 	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
 	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
+	require.Equal(t, reviewYoloOptionLabel, m.confirmOptions[3].label)
+	require.Equal(
+		t,
+		reviewYoloNo,
+		m.selectedConfirmOptionValue(reviewOptionRow(m.confirmOptions, reviewYoloOptionLabel)),
+	)
 	require.Equal(t, string(defaultReviewProvider), m.selectedConfirmOptionValue(0))
 	require.Equal(
 		t,
@@ -413,9 +466,11 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		pr,
 		promptFile,
 		nil,
-		reviewProviderClaude,
-		claudeReviewModelSonnet,
-		claudeReviewEffortHigh,
+		reviewLaunch{
+			provider: reviewProviderClaude,
+			model:    claudeReviewModelSonnet,
+			effort:   claudeReviewEffortHigh,
+		},
 	)
 	require.Equal(
 		t,
@@ -425,7 +480,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		cmd,
 	)
 
-	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewProviderClaude, "", "")
+	cmd = buildAIReviewCommand(pr, promptFile, nil, reviewLaunch{provider: reviewProviderClaude})
 	require.Equal(
 		t,
 		baseCmd+"claude --permission-mode plan --model=opus "+
@@ -438,9 +493,11 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		pr,
 		promptFile,
 		nil,
-		reviewProviderCodex,
-		codexReviewModel54Mini,
-		codexReviewEffortXHigh,
+		reviewLaunch{
+			provider: reviewProviderCodex,
+			model:    codexReviewModel54Mini,
+			effort:   codexReviewEffortXHigh,
+		},
 	)
 	require.Equal(
 		t,
@@ -453,9 +510,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		pr,
 		promptFile,
 		nil,
-		reviewProviderGemini,
-		geminiReviewModel31Pro,
-		"",
+		reviewLaunch{provider: reviewProviderGemini, model: geminiReviewModel31Pro},
 	)
 	require.Equal(
 		t,
@@ -477,9 +532,11 @@ func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 		pr,
 		promptFile,
 		nil,
-		reviewProviderCodex,
-		codexReviewModel54,
-		codexReviewEffortMedium,
+		reviewLaunch{
+			provider: reviewProviderCodex,
+			model:    codexReviewModel54,
+			effort:   codexReviewEffortMedium,
+		},
 	)
 
 	require.Equal(
@@ -636,11 +693,12 @@ func TestGeminiPrepareAIReviewConfirmIncludesEffort(t *testing.T) {
 
 	m = m.prepareAIReviewConfirm(pr, 0)
 
-	require.Len(t, m.confirmOptions, 3)
+	require.Len(t, m.confirmOptions, 4)
 	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
 	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
 	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
-	require.Len(t, m.confirmOptionValues, 3)
+	require.Equal(t, reviewYoloOptionLabel, m.confirmOptions[3].label)
+	require.Len(t, m.confirmOptionValues, 4)
 }
 
 func TestReviewPromptUsesConfigTemplate(t *testing.T) {
@@ -725,7 +783,12 @@ func TestBuildAIReviewCommandUsesConfiguredFallbackChoices(t *testing.T) {
 		},
 	}
 
-	cmd := buildAIReviewCommand(pr, "/tmp/prl-prompt.txt", cfg, reviewProviderCodex, "", "")
+	cmd := buildAIReviewCommand(
+		pr,
+		"/tmp/prl-prompt.txt",
+		cfg,
+		reviewLaunch{provider: reviewProviderCodex},
+	)
 
 	require.Equal(
 		t,
@@ -742,9 +805,11 @@ func TestBuildAIReviewCommandUsesGeminiBudgetFor25Flash(t *testing.T) {
 		pr,
 		"/tmp/prl-prompt.txt",
 		nil,
-		reviewProviderGemini,
-		geminiReviewModelFlash,
-		geminiReviewEffort1024,
+		reviewLaunch{
+			provider: reviewProviderGemini,
+			model:    geminiReviewModelFlash,
+			effort:   geminiReviewEffort1024,
+		},
 	)
 
 	reviewDir := aiReviewDir(pr, "/tmp/prl-prompt.txt")
@@ -861,15 +926,83 @@ func TestBuildAIReviewCommandUsesCodex6AstraByDefault(t *testing.T) {
 		pr,
 		"/tmp/prl-prompt.txt",
 		nil,
-		reviewProviderCodex,
-		"",
-		"",
+		reviewLaunch{provider: reviewProviderCodex},
 	)
 
 	require.Equal(
 		t,
 		expectedAIReviewBaseCommand(pr)+
 			`codex --sandbox read-only -m gpt-6-astra -c model_reasoning_effort=high "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+		cmd,
+	)
+}
+
+func TestBuildAIReviewCommandYoloDropsSandboxAndApprovals(t *testing.T) {
+	pr := testReviewPullRequest()
+	const promptFile = "/tmp/prl-prompt.txt"
+	promptExpr := fmt.Sprintf(`"$(/bin/cat %s)"`, shell.Quote(promptFile))
+	cleanup := fmt.Sprintf("; rm -f %s", shell.Quote(promptFile))
+	baseCmd := expectedAIReviewBaseCommand(pr)
+
+	cmd := buildAIReviewCommand(
+		pr,
+		promptFile,
+		nil,
+		reviewLaunch{
+			provider: reviewProviderCodex,
+			model:    codexReviewModel54,
+			effort:   codexReviewEffortHigh,
+			isYolo:   true,
+		},
+	)
+	require.Equal(
+		t,
+		baseCmd+"codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.4 "+
+			"-c model_reasoning_effort=high "+promptExpr+cleanup,
+		cmd,
+	)
+
+	cmd = buildAIReviewCommand(
+		pr,
+		promptFile,
+		nil,
+		reviewLaunch{
+			provider: reviewProviderClaude,
+			model:    claudeReviewModelSonnet,
+			effort:   claudeReviewEffortHigh,
+			isYolo:   true,
+		},
+	)
+	require.Equal(
+		t,
+		baseCmd+"claude --dangerously-skip-permissions --model=sonnet "+
+			"--effort=high --system-prompt 'You are an expert code reviewer. "+
+			"Be thorough, precise, and actionable.' "+promptExpr+cleanup,
+		cmd,
+	)
+
+	cmd = buildAIReviewCommand(
+		pr,
+		promptFile,
+		nil,
+		reviewLaunch{
+			provider: reviewProviderGemini,
+			model:    geminiReviewModel31Pro,
+			effort:   geminiReviewEffortHigh,
+			isYolo:   true,
+		},
+	)
+	reviewDir := shell.Quote(aiReviewDir(pr, promptFile))
+	require.Equal(
+		t,
+		baseCmd+"/bin/rm -rf "+reviewDir+"/.gemini "+
+			"&& /bin/mkdir -p "+reviewDir+"/.gemini "+
+			`&& printf '%s' '{"modelConfigs":{"customAliases":{"prl-review":{"modelConfig":`+
+			`{"generateContentConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}},`+
+			`"model":"gemini-3.1-pro"}}}}}' > `+
+			reviewDir+"/.gemini/settings.json "+
+			"&& gemini --approval-mode yolo --model prl-review "+
+			"--prompt-interactive "+promptExpr+cleanup,
 		cmd,
 	)
 }
@@ -959,8 +1092,16 @@ func TestCodexUltraEffortCommands(t *testing.T) {
 				isValidReviewEffort(nil, reviewProviderCodex, model, codexReviewEffortUltra),
 			)
 			pr := testReviewPullRequest()
-			cmd := buildAIReviewCommand(pr, "/tmp/prl-prompt.txt", nil,
-				reviewProviderCodex, model, codexReviewEffortUltra)
+			cmd := buildAIReviewCommand(
+				pr,
+				"/tmp/prl-prompt.txt",
+				nil,
+				reviewLaunch{
+					provider: reviewProviderCodex,
+					model:    model,
+					effort:   codexReviewEffortUltra,
+				},
+			)
 			require.Equal(t, expectedAIReviewBaseCommand(pr)+
 				"codex --sandbox read-only -m "+model+
 				` -c model_reasoning_effort=ultra "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
