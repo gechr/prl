@@ -479,10 +479,12 @@ type tuiModel struct {
 	confirmInputValue       string            // initial text input value
 	confirmInputPlaceholder string            // empty text input hint
 	confirmOptions          []filterOptionDef // optional selectable rows shown in the dialog
-	confirmReviewPR         *PullRequest      // selected PR when the dialog is for AI review
-	confirmDrafts           map[confirmDraftKey]string
-	dialogs                 *dialog.Stack // primer stack for confirmations, information, and forms
-	scrollDrag              scrollbarDragState
+	// open form dialog's own rows; rebuilt on provider switch
+	confirmLiveOptions *[]filterOptionDef
+	confirmReviewPR    *PullRequest // selected PR when the dialog is for AI review
+	confirmDrafts      map[confirmDraftKey]string
+	dialogs            *dialog.Stack // primer stack for confirmations, information, and forms
+	scrollDrag         scrollbarDragState
 
 	// Background auto-refresh.
 	autoRefresh     bool
@@ -2848,6 +2850,7 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmHasInput = false
 	m.confirmInputLabel = ""
 	m.confirmOptions = nil
+	m.confirmLiveOptions = nil
 	m.confirmOptionValues = nil
 	m.confirmReviewPR = nil
 	m.confirmInputValue = ""

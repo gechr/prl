@@ -657,8 +657,10 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		model := configuredReviewModel(m.cfg, provider)
 		effort := configuredReviewEffort(m.cfg, provider, model)
 		prompt := reviewPrompt(prCopy, m.cfg, provider)
+		// No dialog = no yolo opt-in. Provider defaults stand.
+		launch := reviewLaunch{provider: provider, model: model, effort: effort}
 		return m, func() tea.Msg {
-			err := launchAIReview(prCopy, prompt, m.cfg, provider, model, effort)
+			err := launchAIReview(prCopy, prompt, m.cfg, launch)
 			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
 		}, true
 

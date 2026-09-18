@@ -106,6 +106,7 @@ func (m *tuiModel) newConfirmFormDialog() dialog.Dialog {
 	for i := range defs {
 		values[i] = m.selectedConfirmOptionValue(i)
 	}
+	m.confirmLiveOptions = &defs
 	owner := *m
 	previousProvider := reviewProviderUnknown
 	if len(values) > 0 {
@@ -230,6 +231,16 @@ func reviewEffortValueStyles() map[string]lg.Style {
 	}
 }
 
+// Yolo reads as danger when on, dim when off.
+func reviewYoloValueStyles() map[string]lg.Style {
+	ld := lg.LightDark(!paletteIsLight)
+	return map[string]lg.Style{
+		reviewYoloNo: lg.NewStyle().Faint(true),
+		reviewYoloYes: lg.NewStyle().Bold(true).
+			Foreground(ld(lg.Color("#d70000"), lg.Color("#ff0000"))),
+	}
+}
+
 func reviewModelValueStyles() map[string]lg.Style {
 	ld := lg.LightDark(!paletteIsLight)
 	return map[string]lg.Style{
@@ -259,6 +270,8 @@ func confirmValueRenderer(label string) func(string) string {
 		styles = reviewModelValueStyles()
 	case reviewEffortOptionLabel:
 		styles = reviewEffortValueStyles()
+	case reviewYoloOptionLabel:
+		styles = reviewYoloValueStyles()
 	default:
 		return nil
 	}
@@ -293,8 +306,13 @@ func (m *tuiModel) syncReviewDialogForm(
 	}
 	model := normalizeReviewModel(m.cfg, provider, fm.Value(1))
 	effort := ""
-	if len(*defs) > reviewEffortOptionRow {
-		effort = normalizeReviewEffort(m.cfg, provider, model, fm.Value(reviewEffortOptionRow))
+	if row := reviewOptionRow(*defs, reviewEffortOptionLabel); row >= 0 {
+		effort = normalizeReviewEffort(m.cfg, provider, model, fm.Value(row))
+	}
+	// Yolo never persisted: carry across rebuilds only.
+	yolo := reviewYoloNo
+	if row := reviewOptionRow(*defs, reviewYoloOptionLabel); row >= 0 {
+		yolo = normalizeReviewYolo(fm.Value(row))
 	}
 	// Remember the navigated combination immediately - the next dialog opens
 	// here even if this one is cancelled. Explicit config keys still win when
@@ -318,8 +336,11 @@ func (m *tuiModel) syncReviewDialogForm(
 		}
 	}
 	values := []string{string(provider), model}
-	if len(next) > reviewEffortOptionRow {
+	if reviewOptionRow(next, reviewEffortOptionLabel) >= 0 {
 		values = append(values, effort)
+	}
+	if reviewOptionRow(next, reviewYoloOptionLabel) >= 0 {
+		values = append(values, yolo)
 	}
 	if len(next) != len(*defs) {
 		*fm = m.newConfirmFormModel(next, values, promptValue)
@@ -430,18 +451,17 @@ func (m tuiModel) dialogFormSubmission(d *dialog.Form) confirmSubmission {
 	if len(values) == 1 {
 		return submission
 	}
+	// Open dialog rebuilds rows on provider switch: its list wins.
+	options := m.confirmOptions
+	if m.confirmLiveOptions != nil {
+		options = *m.confirmLiveOptions
+	}
 	submission.Options = make(map[string]string, len(values)-1)
 	for i, selected := range values[:len(values)-1] {
-		label := ""
-		if i < len(m.confirmOptions) {
-			label = m.confirmOptions[i].label
-			selected = confirmChoiceValue(m.confirmOptions[i].choices, selected)
-		} else if m.confirmAction == tuiActionReview && i == reviewEffortOptionRow {
-			label = reviewEffortOptionLabel
+		if i >= len(options) {
+			continue
 		}
-		if label != "" {
-			submission.Options[label] = selected
-		}
+		submission.Options[options[i].label] = confirmChoiceValue(options[i].choices, selected)
 	}
 	return submission
 }
