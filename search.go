@@ -123,13 +123,12 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	}
 
 	// Resolve owner values (strip "all") and keep exclusions separate from the
-	// positive owner scope used to qualify shorthand repository names.
+	// positive owner scope used to qualify shorthand repository names. With
+	// several positive owners the first one wins - GitHub rejects an unqualified
+	// "repo:name" outright, so a best guess beats a guaranteed 422.
 	ownerVals := filterAllValue(cli.Owner.Values)
 	positiveOwners, negativeOwners := splitNegated(ownerVals)
-	qualifiedOwner := ""
-	if len(positiveOwners) == 1 {
-		qualifiedOwner = positiveOwners[0]
-	}
+	qualifiedOwner := firstOwner(positiveOwners)
 
 	// Repo filter
 	repos := cli.Repo.Values
@@ -417,15 +416,33 @@ func resolveTopicReposForSearch(topic string, ownerVals []string, cfg *Config) (
 		return nil, fmt.Errorf("no repos found for topic %q", topic)
 	}
 
+	owner := firstOwner(ownerVals)
 	qualifiedRepos := make([]string, 0, len(repos))
 	for _, repo := range repos {
-		if len(ownerVals) == 1 {
-			qualifiedRepos = append(qualifiedRepos, ownerVals[0]+"/"+repo)
+		if owner != "" && !strings.Contains(repo, "/") {
+			qualifiedRepos = append(qualifiedRepos, owner+"/"+repo)
 			continue
 		}
 		qualifiedRepos = append(qualifiedRepos, repo)
 	}
 	return qualifiedRepos, nil
+}
+
+// firstOwner returns the owner used to qualify shorthand repository names.
+// Multiple owners cannot all qualify one shorthand name, so the first wins;
+// name the owner explicitly (-O) or write "owner/repo" to pick another.
+func firstOwner(positiveOwners []string) string {
+	if len(positiveOwners) == 0 {
+		return ""
+	}
+	if len(positiveOwners) > 1 {
+		clog.Debug().Msgf(
+			"qualifying shorthand repositories with first of %d owners: %s",
+			len(positiveOwners),
+			positiveOwners[0],
+		)
+	}
+	return positiveOwners[0]
 }
 
 // shouldShowAuthor returns true if the author column should be shown in table mode.

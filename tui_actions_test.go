@@ -53,8 +53,11 @@ func TestDesktopActionFailures(t *testing.T) {
 				result, ok := model.(tuiModel)
 				require.True(t, ok)
 				require.True(t, result.flash.Err, "failed desktop actions must not report success")
-				require.Equal(t, fmt.Sprintf("%s failed: %s: exit status 7: desktop action failed",
-					action.label, filepath.Join(os.Getenv("PATH"), "powershell.exe")), result.flash.Msg)
+				require.Equal(t, fmt.Sprintf(
+					"%s failed: %s: exit status 7: desktop action failed",
+					action.label,
+					filepath.Join(os.Getenv("PATH"), "powershell.exe"),
+				), result.flash.Msg)
 				require.Equal(t, prKeys{key: true}, result.selected, "retain selection for retry")
 			})
 		}

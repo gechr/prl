@@ -84,7 +84,11 @@ func TestBrowserCommand(t *testing.T) {
 	argsFile, _ := fakeDesktopCommands(t)
 	const url = "https://github.com/search?q=is%3Apr&text='quoted';$value"
 	powerShellArgs := []string{
-		"-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command",
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-STA",
+		"-Command",
 		"$ErrorActionPreference = 'Stop'; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; " +
 			"Start-Process -FilePath ([Console]::In.ReadToEnd())",
 	}
@@ -139,7 +143,11 @@ func TestBrowserCommandMissingPowerShell(t *testing.T) {
 	require.Nil(t, cmd)
 	require.ErrorIs(t, err, exec.ErrNotFound)
 	lookupErr := &exec.Error{Name: "powershell.exe", Err: exec.ErrNotFound}
-	require.EqualError(t, err, "windows desktop integration requires powershell.exe: "+lookupErr.Error())
+	require.EqualError(
+		t,
+		err,
+		"windows desktop integration requires powershell.exe: "+lookupErr.Error(),
+	)
 }
 
 func TestCopyToClipboardWSL(t *testing.T) {

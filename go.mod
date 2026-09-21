@@ -14,9 +14,9 @@ require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.8
-	github.com/cli/go-gh/v2 v2.16.0
-	github.com/gechr/clib v0.7.17
-	github.com/gechr/clive v0.4.10
+	github.com/cli/go-gh/v2 v2.16.1
+	github.com/gechr/clib v0.7.18
+	github.com/gechr/clive v0.4.11
 	github.com/gechr/clog v0.17.1
 	github.com/gechr/conductor v0.1.17
 	github.com/gechr/forge v0.0.5

@@ -612,6 +612,39 @@ func TestBuildSearchQuery_NegatedOwnerDoesNotQualifyShorthandRepo(t *testing.T) 
 	)
 }
 
+func TestBuildSearchQuery_MultipleOwnersQualifyShorthandRepoWithFirst(t *testing.T) {
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"acme", "other"}},
+		Repo:  CSVFlag{Values: []string{"foo"}},
+	}, &Config{})
+	require.NoError(t, err)
+	require.Equal(t, "is:pr archived:false state:open repo:acme/foo", params.Query)
+}
+
+func TestBuildSearchQuery_MultipleOwnersQualifyTopicReposWithFirst(t *testing.T) {
+	dir := t.TempDir()
+	pluginPath := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
+if [ "$1" = "resolve" ] && [ "$2" = "topic" ]; then
+  printf 'foo\nbar\n'
+  exit 0
+fi
+exit 1
+`)
+	resetPluginCacheForTest(t)
+
+	params, err := buildSearchQuery(&CLI{
+		Owner: CSVFlag{Values: []string{"acme", "other"}},
+		Topic: "platform",
+	}, &Config{Plugin: pluginPath})
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"is:pr archived:false state:open (user:acme OR user:other) "+
+			"(repo:acme/foo OR repo:acme/bar)",
+		params.Query,
+	)
+}
+
 func TestBuildSearchQuery_NegatedOwnerDoesNotQualifyTopicRepos(t *testing.T) {
 	dir := t.TempDir()
 	pluginPath := writeExecutable(t, dir, "prl-plugin-example", `#!/bin/sh
