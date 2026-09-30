@@ -253,6 +253,7 @@ func reviewModelValueStyles() map[string]lg.Style {
 		codexReviewModel56Luna:  lg.NewStyle().Foreground(lg.Color("3")),
 		codexReviewModel56Terra: lg.NewStyle().Foreground(ld(lg.Color("130"), lg.Color("208"))),
 		codexReviewModel56Sol:   lg.NewStyle().Foreground(lg.Color("1")),
+		codexReviewModel61Sol:   lg.NewStyle().Foreground(lg.Color("1")),
 		codexReviewModel6Astra:  lg.NewStyle().Bold(true).Foreground(lg.Color("1")),
 		geminiReviewModelFlash:  lg.NewStyle().Foreground(lg.Color("2")),
 		geminiReviewModel31Pro:  lg.NewStyle().Foreground(lg.Color("1")),

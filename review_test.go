@@ -897,6 +897,7 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
+			{label: codexReviewModel61Sol, value: codexReviewModel61Sol},
 			{label: codexReviewModel6Astra, value: codexReviewModel6Astra},
 		},
 		reviewModelChoices(nil, reviewProviderCodex),
@@ -918,6 +919,37 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 		codexReviewEffortHigh,
 		defaultReviewEffort(nil, reviewProviderCodex, codexReviewModel56Sol),
 	)
+}
+
+func TestCodex61SolEfforts(t *testing.T) {
+	require.Equal(
+		t,
+		codexReviewEffortMedium,
+		defaultReviewEffort(nil, reviewProviderCodex, codexReviewModel61Sol),
+	)
+	require.Equal(t, []filterChoice{
+		{label: codexReviewEffortLow, value: codexReviewEffortLow},
+		{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+		{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+		{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+		{label: codexReviewEffortMax, value: codexReviewEffortMax},
+	}, reviewEffortChoices(nil, reviewProviderCodex, codexReviewModel61Sol))
+	require.False(
+		t,
+		isValidReviewEffort(
+			nil,
+			reviewProviderCodex,
+			codexReviewModel61Sol,
+			codexReviewEffortUltra,
+		),
+	)
+	cmd := buildAIReviewCommand(testReviewPullRequest(), "/tmp/prl-prompt.txt", nil, reviewLaunch{
+		provider: reviewProviderCodex,
+		model:    codexReviewModel61Sol,
+		effort:   codexReviewEffortMax,
+	})
+	require.Equal(t, expectedAIReviewBaseCommand(testReviewPullRequest())+
+		`codex --sandbox read-only -m gpt-6.1-sol -c model_reasoning_effort=max "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
 }
 
 func TestBuildAIReviewCommandUsesCodex6AstraByDefault(t *testing.T) {
