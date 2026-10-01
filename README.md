@@ -192,7 +192,7 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 
 `--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`. AI reviews open in a new tab of the host terminal: inside a Herdr session (`HERDR_ENV=1`) a Herdr tab, otherwise Ghostty, iTerm2, or Kitty on macOS, or Windows Terminal when running in WSL.
 
-Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --approval-mode plan` for Gemini, `--permission-mode plan` for Claude. Gemini's sandbox needs Docker or Podman, or macOS Seatbelt. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude, `--approval-mode yolo` (and no sandbox) for Gemini. The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
+Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --mode plan` for Gemini through `agy`, `--permission-mode plan` for Claude. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude and Gemini (and no sandbox). The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
 
 For Windows Terminal, run the Linux build of `prl` inside WSL. Detection uses `WSL_DISTRO_NAME` and `WT_SESSION`. The launcher tries `wt.exe` directly from `PATH`. If it cannot start, it falls back to `cmd.exe`, checking `PATH` and then `/mnt/c/Windows/System32/cmd.exe`; adding System32 to your Linux `PATH` is unnecessary with the default Windows mount. Windows interoperability must be enabled. If Windows is mounted elsewhere, put `wt.exe` or `cmd.exe` on `PATH`. A running `wt.exe` that reports an error is not retried, to avoid opening duplicate tabs.
 
@@ -298,7 +298,7 @@ tui:
           URL: {prURL}
       codex:
         # Optional: override the available model/effort choices.
-        # models: [gpt-6-astra, gpt-6.1-sol, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini]
+        # models: [gpt-6-astra, gpt-6.1-sol, gpt-6-sol, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5]
         # efforts: [low, medium, high, xhigh, max, ultra]
         # ultra is supported by gpt-6-astra, gpt-5.6-sol, and gpt-5.6-terra.
         prompt: |
@@ -307,11 +307,10 @@ tui:
           URL: {prURL}
       gemini:
         # Optional: override the available model/effort choices.
-        # models: [gemini-3.1-pro, gemini-2.5-flash]
+        # models: [gemini-4-argon, gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.1-pro]
         # efforts:
-        #   Gemini 3.1 Pro: [low, medium, high]
-        #   Gemini 3 Flash: [minimal, low, medium, high]
-        #   Gemini 2.5 Flash budgets: [0, 1024, 8192, 24576, dynamic]
+        #   Gemini 3.1 Pro: [low, high]
+        #   Gemini Flash and Argon: [low, medium, high]
         prompt: |
           Review PR #{prNumber} in {ownerWithRepo}.
 
@@ -341,8 +340,7 @@ authors:
 - `vcs`: controls whether `--clone` uses `git` or `jj`
 - `tui.refresh`, `tui.sort`, `tui.filters`: starting defaults you manage. Interactive changes in the TUI (toggling auto-refresh, sorting columns, applying filters) are **not** written back to `config.yaml`. They're saved to a separate state file at `$XDG_STATE_HOME/prl/state.yaml` (default `~/.local/state/prl/state.yaml`), which mirrors the `tui:` subtree and takes precedence over config. This keeps your version-controlled config stable while remembering your last session.
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
-- Gemini review effort uses provider-specific semantics:
-  `Gemini 3` maps effort to `thinkingLevel`, while `gemini-2.5-flash` maps effort to `thinkingBudget`
+- Gemini reviews require the Antigravity CLI (`agy`). Model and effort selections map to its model slugs (for example, `gemini-3.8-flash` with `high` selects `gemini-3.8-flash-high`) and `--effort` flag.
 
 ## Plugins
 

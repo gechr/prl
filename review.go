@@ -81,12 +81,12 @@ const (
 	claudeReviewModelFable  = "fable"
 	codexReviewModel6Astra  = "gpt-6-astra"
 	codexReviewModel61Sol   = "gpt-6.1-sol"
+	codexReviewModel6Sol    = "gpt-6-sol"
+	codexReviewModel6Luna   = "gpt-6-luna"
 	codexReviewModel56Sol   = "gpt-5.6-sol"
 	codexReviewModel56Terra = "gpt-5.6-terra"
 	codexReviewModel56Luna  = "gpt-5.6-luna"
 	codexReviewModel55      = "gpt-5.5"
-	codexReviewModel54      = "gpt-5.4"
-	codexReviewModel54Mini  = "gpt-5.4-mini"
 
 	claudeReviewEffortLow    = "low"
 	claudeReviewEffortMedium = "medium"
@@ -101,24 +101,18 @@ const (
 	codexReviewEffortMax     = "max"
 	codexReviewEffortUltra   = "ultra"
 
-	geminiReviewEffortMinimal = "minimal"
-	geminiReviewEffortLow     = "low"
-	geminiReviewEffortMedium  = "medium"
-	geminiReviewEffortHigh    = "high"
-	geminiReviewEffortOff     = "0"
-	geminiReviewEffort1024    = "1024"
-	geminiReviewEffort8192    = "8192"
-	geminiReviewEffort24576   = "24576"
-	geminiReviewEffortDynamic = "dynamic"
+	geminiReviewEffortLow    = "low"
+	geminiReviewEffortMedium = "medium"
+	geminiReviewEffortHigh   = "high"
 
-	geminiReviewModel31Pro = "gemini-3.1-pro"
-	geminiReviewModelFlash = "gemini-2.5-flash"
+	geminiReviewModel31Pro   = "gemini-3.1-pro"
+	geminiReviewModel36Flash = "gemini-3.6-flash"
+	geminiReviewModel37Flash = "gemini-3.7-flash"
+	geminiReviewModel38Flash = "gemini-3.8-flash"
+	geminiReviewModel4Argon  = "gemini-4-argon"
 
-	geminiModelPatternExact   = "gemini"
-	geminiModelPatternAll     = "gemini-*"
-	geminiModelPattern31Pro   = "gemini-3.1-pro*"
-	geminiModelPattern3       = "gemini-3*"
-	geminiModelPattern25Flash = "gemini-2.5-flash*"
+	geminiModelPattern31Pro = "gemini-3.1-pro*"
+	geminiModelPatternAll   = "*"
 )
 
 // reviewLaunch = one review's picked settings. Yolo is per-launch only.
@@ -157,12 +151,12 @@ var claudeReviewConfig = reviewProviderConfig{
 
 var codexReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
-		{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
-		{label: codexReviewModel54, value: codexReviewModel54},
 		{label: codexReviewModel55, value: codexReviewModel55},
 		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 		{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
+		{label: codexReviewModel6Luna, value: codexReviewModel6Luna},
+		{label: codexReviewModel6Sol, value: codexReviewModel6Sol},
 		{label: codexReviewModel61Sol, value: codexReviewModel61Sol},
 		{label: codexReviewModel6Astra, value: codexReviewModel6Astra},
 	},
@@ -171,8 +165,11 @@ var codexReviewConfig = reviewProviderConfig{
 
 var geminiReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
-		{label: geminiReviewModelFlash, value: geminiReviewModelFlash},
+		{label: geminiReviewModel36Flash, value: geminiReviewModel36Flash},
+		{label: geminiReviewModel37Flash, value: geminiReviewModel37Flash},
+		{label: geminiReviewModel38Flash, value: geminiReviewModel38Flash},
 		{label: geminiReviewModel31Pro, value: geminiReviewModel31Pro},
+		{label: geminiReviewModel4Argon, value: geminiReviewModel4Argon},
 	},
 	defaultModel: geminiReviewModel31Pro,
 }
@@ -291,19 +288,10 @@ func defaultReviewEffortForModel(cfg *Config, provider reviewProvider, model str
 	return ""
 }
 
-type geminiThinkingMode string
-
-const (
-	geminiEffortModeNone           geminiThinkingMode = ""
-	geminiEffortModeThinkingLevel  geminiThinkingMode = "thinking_level"
-	geminiEffortModeThinkingBudget geminiThinkingMode = "thinking_budget"
-)
-
 type reviewEffortRule struct {
 	pattern string
 	choices []filterChoice
 	def     string
-	mode    geminiThinkingMode
 }
 
 var claudeEffortRules = []reviewEffortRule{
@@ -366,18 +354,18 @@ var codexUltraEffortChoices = []filterChoice{
 	{label: codexReviewEffortUltra, value: codexReviewEffortUltra},
 }
 
+var codexSolEffortChoices = []filterChoice{
+	{label: codexReviewEffortLow, value: codexReviewEffortLow},
+	{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+	{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+	{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+	{label: codexReviewEffortMax, value: codexReviewEffortMax},
+}
+
 var codexEffortRules = []reviewEffortRule{
-	{
-		pattern: codexReviewModel61Sol,
-		choices: []filterChoice{
-			{label: codexReviewEffortLow, value: codexReviewEffortLow},
-			{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
-			{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
-			{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
-			{label: codexReviewEffortMax, value: codexReviewEffortMax},
-		},
-		def: codexReviewEffortMedium,
-	},
+	{pattern: codexReviewModel61Sol, choices: codexSolEffortChoices, def: codexReviewEffortMedium},
+	{pattern: codexReviewModel6Sol, choices: codexSolEffortChoices, def: codexReviewEffortMedium},
+	{pattern: codexReviewModel6Luna, choices: codexSolEffortChoices, def: codexReviewEffortMedium},
 	{pattern: codexReviewModel6Astra, choices: codexUltraEffortChoices, def: codexReviewEffortHigh},
 	{pattern: codexReviewModel56Sol, choices: codexUltraEffortChoices, def: codexReviewEffortHigh},
 	{
@@ -410,47 +398,12 @@ var codexEffortRules = []reviewEffortRule{
 
 var geminiEffortRules = []reviewEffortRule{
 	{
-		pattern: geminiModelPattern25Flash,
-		choices: []filterChoice{
-			{label: geminiReviewEffortOff, value: geminiReviewEffortOff},
-			{label: geminiReviewEffort1024, value: geminiReviewEffort1024},
-			{label: geminiReviewEffort8192, value: geminiReviewEffort8192},
-			{label: geminiReviewEffort24576, value: geminiReviewEffort24576},
-			{label: geminiReviewEffortDynamic, value: geminiReviewEffortDynamic},
-		},
-		def:  geminiReviewEffortDynamic,
-		mode: geminiEffortModeThinkingBudget,
-	},
-	{
 		pattern: geminiModelPattern31Pro,
 		choices: []filterChoice{
 			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
-			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
 			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
 		},
-		def:  geminiReviewEffortHigh,
-		mode: geminiEffortModeThinkingLevel,
-	},
-	{
-		pattern: geminiModelPattern3,
-		choices: []filterChoice{
-			{label: geminiReviewEffortMinimal, value: geminiReviewEffortMinimal},
-			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
-			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
-			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
-		},
-		def:  geminiReviewEffortHigh,
-		mode: geminiEffortModeThinkingLevel,
-	},
-	{
-		pattern: geminiModelPatternExact,
-		choices: []filterChoice{
-			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
-			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
-			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
-		},
-		def:  geminiReviewEffortHigh,
-		mode: geminiEffortModeThinkingLevel,
+		def: geminiReviewEffortHigh,
 	},
 	{
 		pattern: geminiModelPatternAll,
@@ -459,13 +412,8 @@ var geminiEffortRules = []reviewEffortRule{
 			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
 			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
 		},
-		def:  geminiReviewEffortHigh,
-		mode: geminiEffortModeThinkingLevel,
+		def: geminiReviewEffortHigh,
 	},
-}
-
-func geminiEffortMode(model string) geminiThinkingMode {
-	return matchingReviewEffortRule(geminiEffortRules, model).mode
 }
 
 func matchingReviewEffortRule(rules []reviewEffortRule, model string) reviewEffortRule {
@@ -968,7 +916,7 @@ func buildAIReviewCommand(
 		)
 	case reviewProviderGemini:
 		return baseCmd +
-			buildGeminiReviewCommand(reviewDir, cmdModel, cmdEffort, prompt, launch.isYolo) +
+			buildGeminiReviewCommand(cmdModel, cmdEffort, prompt, launch.isYolo) +
 			cleanup
 	case reviewProviderUnknown, reviewProviderClaude:
 		return baseCmd + buildClaudeReviewCommand(cmdModel, cmdEffort, prompt, launch.isYolo) +
@@ -1025,12 +973,12 @@ func claudePermissionArg(yolo bool) string {
 	return "--permission-mode plan"
 }
 
-// Gemini sandbox needs Docker/Podman or macOS Seatbelt; yolo drops it.
+// Antigravity reviews use sandboxed plan mode unless yolo is enabled.
 func geminiSandboxArgs(yolo bool) string {
 	if yolo {
-		return "--approval-mode yolo"
+		return "--dangerously-skip-permissions"
 	}
-	return "--sandbox --approval-mode plan"
+	return "--sandbox --mode plan"
 }
 
 func claudeEffortArg(effort string) string {
@@ -1054,67 +1002,22 @@ func buildClaudeReviewCommand(model, effort, promptExpr string, yolo bool) strin
 
 // buildGeminiReviewCommand expects promptExpr to be an already shell-safe
 // expression (e.g. "$(/bin/cat /path)"); it must not be further quoted.
-func buildGeminiReviewCommand(reviewDir, model, effort, promptExpr string, yolo bool) string {
-	settingsJSON, err := json.Marshal(geminiReviewSettings(model, effort))
-	if err != nil {
-		return fmt.Sprintf(
-			"gemini --model %s --prompt-interactive %s",
-			shell.Quote(model),
-			promptExpr,
-		)
+func buildGeminiReviewCommand(model, effort, promptExpr string, yolo bool) string {
+	switch model {
+	case geminiReviewModel31Pro,
+		geminiReviewModel36Flash,
+		geminiReviewModel37Flash,
+		geminiReviewModel38Flash,
+		geminiReviewModel4Argon:
+		model += "-" + effort
 	}
 	return fmt.Sprintf(
-		"/bin/rm -rf %s/.gemini && /bin/mkdir -p %s/.gemini && printf '%%s' %s > %s/.gemini/settings.json && gemini %s --model %s --prompt-interactive %s",
-		shell.Quote(reviewDir),
-		shell.Quote(reviewDir),
-		shell.Quote(string(settingsJSON)),
-		shell.Quote(reviewDir),
+		"agy %s --model %s --effort %s --prompt-interactive %s",
 		geminiSandboxArgs(yolo),
-		shell.Quote("prl-review"),
+		shell.Quote(model),
+		shell.Quote(effort),
 		promptExpr,
 	)
-}
-
-func geminiReviewSettings(model, effort string) map[string]any {
-	modelConfig := map[string]any{"model": model}
-	if thinkingConfig := geminiThinkingConfig(model, effort); len(thinkingConfig) > 0 {
-		modelConfig["generateContentConfig"] = map[string]any{
-			"thinkingConfig": thinkingConfig,
-		}
-	}
-	return map[string]any{
-		"modelConfigs": map[string]any{
-			"customAliases": map[string]any{
-				"prl-review": map[string]any{
-					"modelConfig": modelConfig,
-				},
-			},
-		},
-	}
-}
-
-func geminiThinkingConfig(model, effort string) map[string]any {
-	if effort == "" {
-		return nil
-	}
-	switch geminiEffortMode(model) {
-	case geminiEffortModeThinkingLevel:
-		return map[string]any{
-			"thinkingLevel": strings.ToUpper(effort),
-		}
-	case geminiEffortModeThinkingBudget:
-		if effort == geminiReviewEffortDynamic {
-			return map[string]any{"thinkingBudget": -1}
-		}
-		budget, err := strconv.Atoi(effort)
-		if err != nil {
-			return nil
-		}
-		return map[string]any{"thinkingBudget": budget}
-	case geminiEffortModeNone:
-		return nil
-	}
-	return nil
 }
 
 func buildAIReviewAppleScript(launcher aiReviewLauncher) (string, error) {

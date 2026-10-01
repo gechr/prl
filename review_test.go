@@ -495,13 +495,13 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 		nil,
 		reviewLaunch{
 			provider: reviewProviderCodex,
-			model:    codexReviewModel54Mini,
+			model:    codexReviewModel6Luna,
 			effort:   codexReviewEffortXHigh,
 		},
 	)
 	require.Equal(
 		t,
-		baseCmd+"codex --sandbox read-only -m gpt-5.4-mini "+
+		baseCmd+"codex --sandbox read-only -m gpt-6-luna "+
 			"-c model_reasoning_effort=xhigh "+promptExpr+cleanup,
 		cmd,
 	)
@@ -514,11 +514,7 @@ func TestBuildAIReviewCommandUsesSelectedModel(t *testing.T) {
 	)
 	require.Equal(
 		t,
-		baseCmd+"/bin/rm -rf "+shell.Quote(aiReviewDir(pr, promptFile))+"/.gemini "+
-			"&& /bin/mkdir -p "+shell.Quote(aiReviewDir(pr, promptFile))+"/.gemini "+
-			`&& printf '%s' '{"modelConfigs":{"customAliases":{"prl-review":{"modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}},"model":"gemini-3.1-pro"}}}}}' > `+
-			shell.Quote(aiReviewDir(pr, promptFile))+"/.gemini/settings.json "+
-			"&& gemini --sandbox --approval-mode plan --model prl-review "+
+		baseCmd+"agy --sandbox --mode plan --model gemini-3.1-pro-high --effort high "+
 			"--prompt-interactive "+promptExpr+cleanup,
 		cmd,
 	)
@@ -534,7 +530,7 @@ func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 		nil,
 		reviewLaunch{
 			provider: reviewProviderCodex,
-			model:    codexReviewModel54,
+			model:    codexReviewModel6Sol,
 			effort:   codexReviewEffortMedium,
 		},
 	)
@@ -542,7 +538,7 @@ func TestBuildAIReviewCommandReadsPromptFromFile(t *testing.T) {
 	require.Equal(
 		t,
 		expectedAIReviewBaseCommand(pr)+
-			`codex --sandbox read-only -m gpt-5.4 -c model_reasoning_effort=medium "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+			`codex --sandbox read-only -m gpt-6-sol -c model_reasoning_effort=medium "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
 		cmd,
 	)
 }
@@ -652,29 +648,29 @@ Be thorough but concise.`,
 }
 
 func TestGeminiReviewHasEffortOptions(t *testing.T) {
-	require.Equal(
+	require.Equal(t, []filterChoice{
+		{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
+		{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
+	}, reviewEffortChoices(nil, reviewProviderGemini, geminiReviewModel31Pro))
+	require.False(
 		t,
-		[]filterChoice{
+		isValidReviewEffort(
+			nil,
+			reviewProviderGemini,
+			geminiReviewModel31Pro,
+			geminiReviewEffortMedium,
+		),
+	)
+	for _, model := range []string{geminiReviewModel36Flash, geminiReviewModel37Flash, geminiReviewModel38Flash, geminiReviewModel4Argon} {
+		require.Equal(t, []filterChoice{
 			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
 			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
 			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
-		},
-		reviewEffortChoices(nil, reviewProviderGemini, geminiReviewModel31Pro),
-	)
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: geminiReviewEffortOff, value: geminiReviewEffortOff},
-			{label: geminiReviewEffort1024, value: geminiReviewEffort1024},
-			{label: geminiReviewEffort8192, value: geminiReviewEffort8192},
-			{label: geminiReviewEffort24576, value: geminiReviewEffort24576},
-			{label: geminiReviewEffortDynamic, value: geminiReviewEffortDynamic},
-		},
-		reviewEffortChoices(nil, reviewProviderGemini, geminiReviewModelFlash),
-	)
+		}, reviewEffortChoices(nil, reviewProviderGemini, model))
+	}
 	require.True(t, reviewProviderHasEffort(nil, reviewProviderGemini, geminiReviewModel31Pro))
 	require.True(t, reviewProviderHasEffort(nil, reviewProviderClaude, claudeReviewModelSonnet))
-	require.True(t, reviewProviderHasEffort(nil, reviewProviderCodex, codexReviewModel54))
+	require.True(t, reviewProviderHasEffort(nil, reviewProviderCodex, codexReviewModel6Sol))
 }
 
 func TestGeminiPrepareAIReviewConfirmIncludesEffort(t *testing.T) {
@@ -798,31 +794,25 @@ func TestBuildAIReviewCommandUsesConfiguredFallbackChoices(t *testing.T) {
 	)
 }
 
-func TestBuildAIReviewCommandUsesGeminiBudgetFor25Flash(t *testing.T) {
-	pr := testReviewPullRequest()
-
-	cmd := buildAIReviewCommand(
-		pr,
-		"/tmp/prl-prompt.txt",
-		nil,
-		reviewLaunch{
-			provider: reviewProviderGemini,
-			model:    geminiReviewModelFlash,
-			effort:   geminiReviewEffort1024,
-		},
-	)
-
-	reviewDir := aiReviewDir(pr, "/tmp/prl-prompt.txt")
-	require.Equal(
-		t,
-		expectedAIReviewBaseCommand(pr)+
-			"/bin/rm -rf "+shell.Quote(reviewDir)+"/.gemini "+
-			"&& /bin/mkdir -p "+shell.Quote(reviewDir)+"/.gemini "+
-			`&& printf '%s' '{"modelConfigs":{"customAliases":{"prl-review":{"modelConfig":{"generateContentConfig":{"thinkingConfig":{"thinkingBudget":1024}},"model":"gemini-2.5-flash"}}}}}' > `+
-			shell.Quote(reviewDir)+"/.gemini/settings.json "+
-			`&& gemini --sandbox --approval-mode plan --model prl-review --prompt-interactive "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
-		cmd,
-	)
+func TestBuildAIReviewCommandUsesAntigravity(t *testing.T) {
+	for _, model := range []string{geminiReviewModel31Pro, geminiReviewModel36Flash, geminiReviewModel37Flash, geminiReviewModel38Flash, geminiReviewModel4Argon} {
+		t.Run(model, func(t *testing.T) {
+			for _, choice := range reviewEffortChoices(nil, reviewProviderGemini, model) {
+				t.Run(choice.value, func(t *testing.T) {
+					pr := testReviewPullRequest()
+					cmd := buildAIReviewCommand(pr, "/tmp/prl-prompt.txt", nil, reviewLaunch{
+						provider: reviewProviderGemini,
+						model:    model,
+						effort:   choice.value,
+					})
+					require.Equal(t, expectedAIReviewBaseCommand(pr)+
+						"agy --sandbox --mode plan --model "+model+"-"+choice.value+
+						" --effort "+choice.value+
+						` --prompt-interactive "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
+				})
+			}
+		})
+	}
 }
 
 func TestMatchesPatternTreatsPlainStringsAsExact(t *testing.T) {
@@ -891,12 +881,12 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 	require.Equal(
 		t,
 		[]filterChoice{
-			{label: codexReviewModel54Mini, value: codexReviewModel54Mini},
-			{label: codexReviewModel54, value: codexReviewModel54},
 			{label: codexReviewModel55, value: codexReviewModel55},
 			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
 			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
+			{label: codexReviewModel6Luna, value: codexReviewModel6Luna},
+			{label: codexReviewModel6Sol, value: codexReviewModel6Sol},
 			{label: codexReviewModel61Sol, value: codexReviewModel61Sol},
 			{label: codexReviewModel6Astra, value: codexReviewModel6Astra},
 		},
@@ -921,35 +911,44 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 	)
 }
 
-func TestCodex61SolEfforts(t *testing.T) {
-	require.Equal(
-		t,
-		codexReviewEffortMedium,
-		defaultReviewEffort(nil, reviewProviderCodex, codexReviewModel61Sol),
-	)
-	require.Equal(t, []filterChoice{
-		{label: codexReviewEffortLow, value: codexReviewEffortLow},
-		{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
-		{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
-		{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
-		{label: codexReviewEffortMax, value: codexReviewEffortMax},
-	}, reviewEffortChoices(nil, reviewProviderCodex, codexReviewModel61Sol))
-	require.False(
-		t,
-		isValidReviewEffort(
-			nil,
-			reviewProviderCodex,
-			codexReviewModel61Sol,
-			codexReviewEffortUltra,
-		),
-	)
-	cmd := buildAIReviewCommand(testReviewPullRequest(), "/tmp/prl-prompt.txt", nil, reviewLaunch{
-		provider: reviewProviderCodex,
-		model:    codexReviewModel61Sol,
-		effort:   codexReviewEffortMax,
-	})
-	require.Equal(t, expectedAIReviewBaseCommand(testReviewPullRequest())+
-		`codex --sandbox read-only -m gpt-6.1-sol -c model_reasoning_effort=max "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
+func TestCodexSolAndLunaEfforts(t *testing.T) {
+	for _, model := range []string{codexReviewModel61Sol, codexReviewModel6Sol, codexReviewModel6Luna} {
+		t.Run(model, func(t *testing.T) {
+			require.Equal(
+				t,
+				codexReviewEffortMedium,
+				defaultReviewEffort(nil, reviewProviderCodex, model),
+			)
+			require.Equal(t, []filterChoice{
+				{label: codexReviewEffortLow, value: codexReviewEffortLow},
+				{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
+				{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
+				{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
+				{label: codexReviewEffortMax, value: codexReviewEffortMax},
+			}, reviewEffortChoices(nil, reviewProviderCodex, model))
+			require.False(
+				t,
+				isValidReviewEffort(
+					nil,
+					reviewProviderCodex,
+					model,
+					codexReviewEffortUltra,
+				),
+			)
+			cmd := buildAIReviewCommand(
+				testReviewPullRequest(),
+				"/tmp/prl-prompt.txt",
+				nil,
+				reviewLaunch{
+					provider: reviewProviderCodex,
+					model:    model,
+					effort:   codexReviewEffortMax,
+				},
+			)
+			require.Equal(t, expectedAIReviewBaseCommand(testReviewPullRequest())+
+				"codex --sandbox read-only -m "+model+` -c model_reasoning_effort=max "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
+		})
+	}
 }
 
 func TestBuildAIReviewCommandUsesCodex6AstraByDefault(t *testing.T) {
@@ -982,14 +981,14 @@ func TestBuildAIReviewCommandYoloDropsSandboxAndApprovals(t *testing.T) {
 		nil,
 		reviewLaunch{
 			provider: reviewProviderCodex,
-			model:    codexReviewModel54,
+			model:    codexReviewModel6Sol,
 			effort:   codexReviewEffortHigh,
 			isYolo:   true,
 		},
 	)
 	require.Equal(
 		t,
-		baseCmd+"codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.4 "+
+		baseCmd+"codex --dangerously-bypass-approvals-and-sandbox -m gpt-6-sol "+
 			"-c model_reasoning_effort=high "+promptExpr+cleanup,
 		cmd,
 	)
@@ -1024,59 +1023,11 @@ func TestBuildAIReviewCommandYoloDropsSandboxAndApprovals(t *testing.T) {
 			isYolo:   true,
 		},
 	)
-	reviewDir := shell.Quote(aiReviewDir(pr, promptFile))
 	require.Equal(
 		t,
-		baseCmd+"/bin/rm -rf "+reviewDir+"/.gemini "+
-			"&& /bin/mkdir -p "+reviewDir+"/.gemini "+
-			`&& printf '%s' '{"modelConfigs":{"customAliases":{"prl-review":{"modelConfig":`+
-			`{"generateContentConfig":{"thinkingConfig":{"thinkingLevel":"HIGH"}},`+
-			`"model":"gemini-3.1-pro"}}}}}' > `+
-			reviewDir+"/.gemini/settings.json "+
-			"&& gemini --approval-mode yolo --model prl-review "+
+		baseCmd+"agy --dangerously-skip-permissions --model gemini-3.1-pro-high --effort high "+
 			"--prompt-interactive "+promptExpr+cleanup,
 		cmd,
-	)
-}
-
-func TestGeminiEffortRulesPreferSpecificGlobBeforeCatchAll(t *testing.T) {
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: geminiReviewEffortOff, value: geminiReviewEffortOff},
-			{label: geminiReviewEffort1024, value: geminiReviewEffort1024},
-			{label: geminiReviewEffort8192, value: geminiReviewEffort8192},
-			{label: geminiReviewEffort24576, value: geminiReviewEffort24576},
-			{label: geminiReviewEffortDynamic, value: geminiReviewEffortDynamic},
-		},
-		reviewEffortChoices(nil, reviewProviderGemini, "gemini-2.5-flash-preview"),
-	)
-	require.Equal(
-		t,
-		geminiReviewEffortDynamic,
-		defaultReviewEffort(nil, reviewProviderGemini, "gemini-2.5-flash-preview"),
-	)
-}
-
-func TestGemini3EffortRulesDistinguishProAndFlash(t *testing.T) {
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
-			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
-			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
-		},
-		reviewEffortChoices(nil, reviewProviderGemini, "gemini-3.1-pro-preview"),
-	)
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: geminiReviewEffortMinimal, value: geminiReviewEffortMinimal},
-			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
-			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
-			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
-		},
-		reviewEffortChoices(nil, reviewProviderGemini, "gemini-3.5-flash"),
 	)
 }
 
@@ -1095,24 +1046,6 @@ func TestGeminiEffortRulesUseCatchAllGlob(t *testing.T) {
 		geminiReviewEffortHigh,
 		defaultReviewEffort(nil, reviewProviderGemini, "gemini-2.0-pro"),
 	)
-}
-
-func TestGeminiEffortRulesUseExactMatchForBareGemini(t *testing.T) {
-	require.Equal(
-		t,
-		[]filterChoice{
-			{label: geminiReviewEffortLow, value: geminiReviewEffortLow},
-			{label: geminiReviewEffortMedium, value: geminiReviewEffortMedium},
-			{label: geminiReviewEffortHigh, value: geminiReviewEffortHigh},
-		},
-		reviewEffortChoices(nil, reviewProviderGemini, "gemini"),
-	)
-	require.Equal(
-		t,
-		geminiReviewEffortHigh,
-		defaultReviewEffort(nil, reviewProviderGemini, "gemini"),
-	)
-	require.True(t, reviewProviderHasEffort(nil, reviewProviderGemini, "gemini"))
 }
 
 func TestCodexUltraEffortCommands(t *testing.T) {
@@ -1139,7 +1072,7 @@ func TestCodexUltraEffortCommands(t *testing.T) {
 				` -c model_reasoning_effort=ultra "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
 		})
 	}
-	for _, model := range []string{codexReviewModel56Luna, codexReviewModel55, codexReviewModel54} {
+	for _, model := range []string{codexReviewModel56Luna, codexReviewModel55, codexReviewModel6Sol} {
 		require.False(
 			t,
 			isValidReviewEffort(nil, reviewProviderCodex, model, codexReviewEffortUltra),

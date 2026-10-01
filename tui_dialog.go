@@ -218,16 +218,6 @@ func reviewEffortValueStyles() map[string]lg.Style {
 			Foreground(ld(lg.Color("#d70000"), lg.Color("#ff0000"))),
 		codexReviewEffortUltra: lg.NewStyle().Bold(true).
 			Foreground(ld(lg.Color("#d70000"), lg.Color("#ff0000"))),
-		// Gemini-only efforts: minimal sits below low, and the thinking
-		// budgets ramp like the named levels, with off dimmed and dynamic in
-		// the statusline's fallback purple.
-		geminiReviewEffortMinimal: lg.NewStyle().Foreground(lg.Color("4")),
-		geminiReviewEffortOff:     lg.NewStyle().Faint(true),
-		geminiReviewEffort1024:    lg.NewStyle().Foreground(lg.Color("2")),
-		geminiReviewEffort8192:    lg.NewStyle().Foreground(lg.Color("3")),
-		geminiReviewEffort24576:   lg.NewStyle().Foreground(lg.Color("1")),
-		geminiReviewEffortDynamic: lg.NewStyle().
-			Foreground(ld(lg.Color("#7c5cbf"), lg.Color("#c4b5fd"))),
 	}
 }
 
@@ -244,19 +234,22 @@ func reviewYoloValueStyles() map[string]lg.Style {
 func reviewModelValueStyles() map[string]lg.Style {
 	ld := lg.LightDark(!paletteIsLight)
 	return map[string]lg.Style{
-		claudeReviewModelSonnet: lg.NewStyle().Foreground(lg.Color("2")),
-		claudeReviewModelOpus:   lg.NewStyle().Foreground(lg.Color("3")),
-		claudeReviewModelFable:  lg.NewStyle().Foreground(lg.Color("1")),
-		codexReviewModel54Mini:  lg.NewStyle().Foreground(lg.Color("4")),
-		codexReviewModel54:      lg.NewStyle().Foreground(lg.Color("2")),
-		codexReviewModel55:      lg.NewStyle().Foreground(lg.Color("2")),
-		codexReviewModel56Luna:  lg.NewStyle().Foreground(lg.Color("3")),
-		codexReviewModel56Terra: lg.NewStyle().Foreground(ld(lg.Color("130"), lg.Color("208"))),
-		codexReviewModel56Sol:   lg.NewStyle().Foreground(lg.Color("1")),
-		codexReviewModel61Sol:   lg.NewStyle().Foreground(lg.Color("1")),
-		codexReviewModel6Astra:  lg.NewStyle().Bold(true).Foreground(lg.Color("1")),
-		geminiReviewModelFlash:  lg.NewStyle().Foreground(lg.Color("2")),
-		geminiReviewModel31Pro:  lg.NewStyle().Foreground(lg.Color("1")),
+		claudeReviewModelSonnet:  lg.NewStyle().Foreground(lg.Color("2")),
+		claudeReviewModelOpus:    lg.NewStyle().Foreground(lg.Color("3")),
+		claudeReviewModelFable:   lg.NewStyle().Foreground(lg.Color("1")),
+		codexReviewModel55:       lg.NewStyle().Foreground(lg.Color("2")),
+		codexReviewModel56Luna:   lg.NewStyle().Foreground(lg.Color("3")),
+		codexReviewModel56Terra:  lg.NewStyle().Foreground(ld(lg.Color("130"), lg.Color("208"))),
+		codexReviewModel56Sol:    lg.NewStyle().Foreground(lg.Color("1")),
+		codexReviewModel6Sol:     lg.NewStyle().Foreground(lg.Color("1")),
+		codexReviewModel6Luna:    lg.NewStyle().Foreground(lg.Color("3")),
+		codexReviewModel61Sol:    lg.NewStyle().Foreground(lg.Color("1")),
+		codexReviewModel6Astra:   lg.NewStyle().Bold(true).Foreground(lg.Color("1")),
+		geminiReviewModel36Flash: lg.NewStyle().Foreground(lg.Color("2")),
+		geminiReviewModel37Flash: lg.NewStyle().Foreground(lg.Color("2")),
+		geminiReviewModel38Flash: lg.NewStyle().Foreground(lg.Color("2")),
+		geminiReviewModel4Argon:  lg.NewStyle().Bold(true).Foreground(lg.Color("1")),
+		geminiReviewModel31Pro:   lg.NewStyle().Foreground(lg.Color("1")),
 	}
 }
 
