@@ -118,7 +118,7 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool)
 			}
 			n := cloned.Add(1)
 			key, url, label := prLink(target)
-			clog.Info().
+			clog.Success().
 				Link(key, url, label).
 				Str("progress", fmt.Sprintf("%d/%d", n, total)).
 				Msg("Cloned")
@@ -135,7 +135,7 @@ func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool)
 	}
 
 	if total > 0 {
-		clog.Info().
+		clog.Success().
 			Int("count", total).
 			Msgf("All %s cloned", xhuman.Plural(total, "repository", "repositories"))
 	}

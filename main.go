@@ -57,7 +57,6 @@ func main() {
 	}
 	mode, _ := parseIconMode(cfg.Icons)
 	useIcons(iconsFor(resolveIconMode(mode)))
-	applyLogSymbols()
 
 	root := CLI{prl: prl, cfg: cfg}
 	prog, err := cli.New(app, &root,
@@ -94,13 +93,7 @@ func exitCode(err error) int {
 // configureClog layers prl's voice over conductor's defaults; conductor runs
 // it via App.ConfigureLog.
 func configureClog() {
-	applyLogSymbols()
-}
-
-func applyLogSymbols() {
-	symbols := clog.DefaultSymbols()
-	symbols[clog.LevelInfo] = activeIcons.Approved
-	clog.SetSymbols(symbols)
+	clog.ApplyPreset(clog.TersePreset())
 }
 
 // Run implements the kong entry point: conductor dispatches here after

@@ -95,7 +95,7 @@ func interactiveEdit(actions *ActionRunner, prs []PullRequest) error {
 		if err := actions.updatePR(owner, repo, pr.Number, result.Title, result.Body); err != nil {
 			return fmt.Errorf("updating %s: %w", pr.URL, err)
 		}
-		clog.Info().
+		clog.Success().
 			Link("pr", pr.URL, pr.Ref()).
 			Str("title", truncateTitle(result.Title)).
 			Msg("Updated")

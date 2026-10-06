@@ -468,7 +468,7 @@ func logSlackSend(prs []PullRequest, sendTo string, result slackSendResult) {
 	if len(result.Messages) > 1 {
 		for _, msg := range result.Messages {
 			sent := filterSkippedPRs(prs, msg.Skipped)
-			entry := clog.Info().Int("total", len(sent))
+			entry := clog.Success().Int("total", len(sent))
 			addSlackPRFields(entry, sent)
 			addSlackRecipientFields(entry, msg.Channel)
 			if len(msg.Reactions) > 0 {
@@ -479,7 +479,7 @@ func logSlackSend(prs []PullRequest, sendTo string, result slackSendResult) {
 		return
 	}
 
-	entry := clog.Info()
+	entry := clog.Success()
 	addSlackPRFields(entry, prs)
 	if sendTo != "" {
 		addSlackRecipientFields(entry, sendTo)
@@ -488,7 +488,7 @@ func logSlackSend(prs []PullRequest, sendTo string, result slackSendResult) {
 }
 
 func logSlackSendMessage(prs []PullRequest, msg slackSendMessage) {
-	entry := clog.Info()
+	entry := clog.Success()
 	addSlackPRFields(entry, prs)
 	addSlackRecipientFields(entry, msg.Channel)
 	if len(msg.Reactions) > 0 {

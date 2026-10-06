@@ -875,7 +875,7 @@ func initConfig() error {
 		return fmt.Errorf("writing config: %w", err)
 	}
 
-	clog.Info().Path("path", cp).Msg("Initialized default config")
+	clog.Success().Path("path", cp).Msg("Initialized default config")
 	return nil
 }
 

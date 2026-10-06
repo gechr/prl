@@ -73,7 +73,7 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 			if err := a.comment(owner, repo, pr.Number, cli.Comment); err != nil {
 				return err
 			}
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Commented")
@@ -189,7 +189,7 @@ func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
 	}
 
 	if len(failed) == 0 {
-		clog.Info().
+		clog.Success().
 			Int("count", len(prs)).
 			Msg("All PRs force-merged")
 	}
@@ -202,7 +202,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 	if cli.Update {
 		switch err := a.updateBranch(owner, repo, pr.Number); {
 		case err == nil:
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Updated branch")
@@ -220,7 +220,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.closePR(owner, repo, pr.Number, cli.Comment, cli.DeleteBranch); err != nil {
 			errs = append(errs, fmt.Sprintf("close %s: %v", pr.URL, err))
 		} else {
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Closed")
@@ -231,7 +231,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.approvePR(pr); err != nil {
 			errs = append(errs, fmt.Sprintf("approve %s: %v", pr.URL, err))
 		} else {
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Approved")
@@ -242,7 +242,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.markDraft(pr.NodeID); err != nil {
 			errs = append(errs, fmt.Sprintf("mark-draft %s: %v", pr.URL, err))
 		} else {
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Marked as draft")
@@ -253,7 +253,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.markReady(pr.NodeID); err != nil {
 			errs = append(errs, fmt.Sprintf("mark-ready %s: %v", pr.URL, err))
 		} else {
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Marked as ready")
@@ -265,7 +265,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("merge %s: %v", pr.URL, err))
 		} else {
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg(msg)
@@ -275,7 +275,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.disableAutomerge(pr.NodeID); err != nil {
 			errs = append(errs, fmt.Sprintf("disable-auto-merge %s: %v", pr.URL, err))
 		} else {
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Disabled automerge")
@@ -286,7 +286,7 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 		if err := a.requestReview(owner, repo, pr.Number, copilotReviewer); err != nil {
 			errs = append(errs, fmt.Sprintf("copilot-review %s: %v", pr.URL, err))
 		} else {
-			clog.Info().
+			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
 				Msg("Copilot review requested")
@@ -320,7 +320,7 @@ func (a *ActionRunner) unsubscribeAll(cli *CLI, owner, repo string, pr PullReque
 			errs = append(errs, fmt.Sprintf("unsubscribe %s: %v", pr.URL, err))
 			continue
 		}
-		clog.Info().
+		clog.Success().
 			Link("pr", pr.URL, pr.Ref()).
 			Str("title", truncateTitle(pr.Title)).
 			Msg("Unsubscribed")
