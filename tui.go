@@ -134,11 +134,15 @@ func tuiListPrefixWidth(total int) int {
 }
 
 func (m tuiModel) listPrefixWidth() int {
-	return tuiListPrefixWidth(len(m.rows))
+	return tuiListPrefixWidth(len(m.rows)) + m.stackExtraWidth()
 }
 
-func (m tuiModel) renderTuiIndex(num int, selected bool) string {
-	text := fmt.Sprintf("%*d", tuiIndexWidth(len(m.rows)), num)
+func (m tuiModel) renderTuiIndexLabel(label string, selected bool) string {
+	return m.renderTuiIndexWidth(label, selected, m.listIndexWidth())
+}
+
+func (m tuiModel) renderTuiIndexWidth(label string, selected bool, width int) string {
+	text := fmt.Sprintf("%-*s", width, label)
 	if selected {
 		return m.styles.selectedIndex.Render(text)
 	}
@@ -442,8 +446,9 @@ type tuiModel struct {
 	selected          prKeys
 
 	// Filter options overlay.
-	showOptions   bool
-	optionsPicker picker.Model
+	showOptions     bool
+	optionsPicker   picker.Model
+	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
 	// the filters just applied via the overlay. It keeps the list responsive
 	// while the authoritative refresh runs, and is dropped once it lands.
@@ -646,6 +651,11 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	if err != nil {
 		clog.Debug().Err(err).Msg("timeline filters failed")
 		mergedAllowed = map[string]bool{}
+	}
+	if r.gql != nil {
+		if stackErr := hydrateStackMetadata(r.gql, prs); stackErr != nil {
+			clog.Debug().Err(stackErr).Msg("stack metadata hydration failed")
+		}
 	}
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
 	needViewerApproval := r.cli.ReviewSelfRequired()
@@ -1018,6 +1028,10 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.view == tuiViewList && msg.Button == tea.MouseLeft {
+			if stack := m.stackGlyphAt(msg.X, msg.Y); stack != "" {
+				m.toggleStack(stack)
+				return m, nil
+			}
 			if idx, ok := m.rowIndexAt(msg.Y); ok {
 				m.cursor = idx
 			}
@@ -1244,7 +1258,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case jumpTimeoutMsg:
 		if msg.id == m.jumpID && m.jumpDigit > 0 {
-			visible := m.visibleIndices()
+			visible := m.jumpIndices()
 			target := m.jumpDigit - 1
 			if target >= 0 && target < len(visible) {
 				m.cursor = visible[target]
@@ -1311,16 +1325,12 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Fresh results are authoritative; drop the optimistic client-side
 		// filtering before recomputing cursor/offset against the new rows.
 		m.filterHidden = nil
-		// Re-apply sort to fresh rows before merging state.
-		rows := msg.rows
-		if m.sortColumn != "" {
-			renderer := m.tableRendererFor(len(msg.items))
-			rows = table.SortRows(rows, renderer.Columns(), m.sortColumn, m.sortAsc)
-		}
+		// Render with the current stack/sort settings; a refresh may have
+		// captured settings from before the options menu was applied.
+		m.items = msg.items
+		header, rows, widths := m.rerender()
 		m = m.mergeRefresh(rows, msg.items)
-		// Re-render header with current sort state; the background
-		// goroutine may have captured a stale sortColumn/sortAsc.
-		m.header, _, m.colWidths = m.rerender()
+		m.header, m.colWidths = header, widths
 		return m, tea.Batch(m.rescheduleRefresh(), m.startHeadValidation(msg.items))
 
 	case headValidationMsg:
@@ -1448,6 +1458,21 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if stack := m.cursorStackKey(); stack != "" {
+		switch msg.String() {
+		case key.Left, tuiKeybindVimLeft:
+			if !m.collapsedStacks[stack] {
+				m.toggleStack(stack)
+			}
+			return m, nil
+		case key.Right, tuiKeybindVimRight, key.Enter:
+			if m.collapsedStacks[stack] {
+				m.toggleStack(stack)
+				return m, nil
+			}
+		}
+	}
+
 	// Try action keybinds first.
 	if result, cmd, handled := m.updateListActions(msg); handled {
 		return result, cmd
@@ -1472,9 +1497,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tuiKeybindFilter:
 		// The filter bar takes one row from the viewport; bump offset so the
 		// cursor row doesn't get pushed off-screen.
-		visible := m.visibleIndices()
 		viewport := m.listViewport() - 1 // account for incoming filter bar
-		pos := slices.Index(visible, m.cursor)
+		pos := m.cursorLinePosition()
 		if pos >= 0 && pos >= m.offset+viewport {
 			m.offset = pos - viewport + 1
 		}
@@ -1567,6 +1591,9 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		visible := m.visibleIndices()
 		allSelected := len(visible) > 0
 		for _, idx := range visible {
+			if m.isCollapsedRow(idx) {
+				continue
+			}
 			if !m.selected[m.rowKeyAt(idx)] {
 				allSelected = false
 				break
@@ -1576,13 +1603,18 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selected = make(prKeys)
 		} else {
 			for _, idx := range visible {
-				m.selected[m.rowKeyAt(idx)] = true
+				if !m.isCollapsedRow(idx) {
+					m.selected[m.rowKeyAt(idx)] = true
+				}
 			}
 		}
 		return m, nil
 
 	case tuiKeybindInvertSelection:
 		for _, idx := range m.visibleIndices() {
+			if m.isCollapsedRow(idx) {
+				continue
+			}
 			key := m.rowKeyAt(idx)
 			if m.selected[key] {
 				delete(m.selected, key)
@@ -1626,14 +1658,14 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Second digit: combine with first (e.g. 1,0 -> row 10).
 			target := m.jumpDigit*10 + digit - 1
 			m.jumpDigit = 0
-			visible := m.visibleIndices()
+			visible := m.jumpIndices()
 			if target >= 0 && target < len(visible) {
 				m.cursor = visible[target]
 				m.offset = m.scrolledOffset()
 			}
 			return m, nil
 		}
-		visible := m.visibleIndices()
+		visible := m.jumpIndices()
 		if digit*10 > len(visible) {
 			target := digit - 1
 			if target >= 0 && target < len(visible) {
@@ -1696,9 +1728,10 @@ func (m tuiModel) View() tea.View {
 
 func (m tuiModel) viewList() tea.View {
 	var b strings.Builder
-	visible := m.visibleIndices()
+	visible := m.listLines()
 	viewport := m.listViewport()
-	indexPad := strings.Repeat(" ", tuiIndexWidth(len(m.rows)))
+	indexWidth := m.listIndexWidth()
+	indexPad := strings.Repeat(" ", indexWidth)
 
 	// Column header line.
 	if m.header != "" {
@@ -1716,9 +1749,31 @@ func (m tuiModel) viewList() tea.View {
 
 	filterVal := m.filterInput.Value()
 
-	for pos, idx := range visible[start:end] {
-		index := m.renderTuiIndex(start+pos+1, m.selected[m.rowKeyAt(idx)])
-		display := index + tuiNonCursorPrefix + m.rows[idx].Display
+	for _, entry := range visible[start:end] {
+		idx := entry.row
+		index := m.renderTuiIndexWidth(entry.label, m.selected[m.rowKeyAt(idx)], indexWidth)
+		if entry.header != "" {
+			line := tuiNonCursorPrefix + index + tuiNonCursorPrefix + styleStackArrow.Render(
+				entry.tree,
+			) + styleStackHeader.Render(
+				entry.header,
+			)
+			if m.width > 0 {
+				line = xansi.Truncate(line, m.width, valueEllipsis)
+			}
+			if idx == m.cursor {
+				line = m.styles.cursor.Render(
+					tuiCursorPrefix,
+				) + strings.TrimPrefix(
+					line,
+					tuiNonCursorPrefix,
+				)
+				line = layout.PreserveBackgroundWidth(line, cursorLineBG, m.width)
+			}
+			b.WriteString(line + nl)
+			continue
+		}
+		display := index + tuiNonCursorPrefix + styleRef.Render(entry.tree) + m.rows[idx].Display
 		if idx != m.cursor {
 			b.WriteString(tuiNonCursorPrefix + display + nl)
 			continue
@@ -2268,7 +2323,7 @@ func (m tuiModel) visibleIndices() []int {
 				indices = append(indices, i)
 			}
 		}
-		return indices
+		return m.visibleStackIndices(indices)
 	}
 
 	term := filter.Parse(f)
@@ -2284,7 +2339,7 @@ func (m tuiModel) visibleIndices() []int {
 			indices = append(indices, i)
 		}
 	}
-	return indices
+	return m.visibleStackIndices(indices)
 }
 
 func (m tuiModel) nextVisible(dir int) (int, bool) {
@@ -2322,24 +2377,20 @@ func (m tuiModel) adjustedCursor() int {
 
 func (m tuiModel) scrolledOffset() int {
 	viewport := m.listViewport()
-	visible := m.visibleIndices()
-	pos := 0
-	for i, idx := range visible {
-		if idx == m.cursor {
-			pos = i
-			break
-		}
+	visible := m.listLines()
+	pos := m.cursorLinePosition()
+	top := pos
+	if pos > 0 && viewport > 1 && visible[pos-1].row < 0 {
+		top-- // keep a stack header visible with its first member
 	}
 	offset := m.offset
-	if pos < offset {
-		offset = pos
+	if top < offset {
+		offset = top
 	} else if pos >= offset+viewport {
 		offset = pos - viewport + 1
 	}
 	// Clamp so we don't leave blank space at the bottom.
-	if maxOffset := len(visible) - viewport; maxOffset > 0 && offset > maxOffset {
-		offset = maxOffset
-	}
+	offset = min(offset, max(0, len(visible)-viewport))
 	return offset
 }
 
@@ -2363,7 +2414,7 @@ func (m tuiModel) tableRendererFor(totalRows int) *table.Renderer[PRRowModel] {
 			},
 		))
 	}
-	width := max(0, m.width-tuiListPrefixWidth(totalRows))
+	width := max(0, m.width-tuiListPrefixWidth(totalRows)-m.stackExtraWidth())
 	return m.p.newTableRenderer(m.cli, m.tty, width, opts...)
 }
 
@@ -2424,13 +2475,22 @@ func renderTUITable(
 }
 
 func (m tuiModel) rerender() (string, []TableRow, []int) {
-	termWidth := max(0, m.width-tuiListPrefixWidth(len(m.items)))
+	termWidth := max(0, m.width-tuiListPrefixWidth(len(m.items))-m.stackExtraWidth())
 	renderer := m.tableRendererFor(len(m.items))
-	return renderTUITable(renderer, m.items, m.sortColumn, m.sortAsc, termWidth)
+	if !m.stacksEnabled() {
+		return renderTUITable(renderer, m.items, m.sortColumn, m.sortAsc, termWidth)
+	}
+	header, rows, widths := renderTUITable(renderer, m.items, "", false, termWidth)
+	rows = groupStackRows(rows, renderer.Columns(), m.sortColumn, m.sortAsc)
+	if m.stackExtraWidth() > 0 {
+		header = strings.Repeat(" ", stackTreeWidth) + header
+	}
+	return header, rows, widths
 }
 
 func (m tuiModel) currentPR() *PullRequest {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) ||
+		m.isCollapsedRow(m.cursor) {
 		return nil
 	}
 	pr := m.rows[m.cursor].Item.PR
@@ -2438,7 +2498,8 @@ func (m tuiModel) currentPR() *PullRequest {
 }
 
 func (m *tuiModel) toggleCurrentSelection() bool {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) ||
+		m.isCollapsedRow(m.cursor) {
 		return false
 	}
 	key := m.rowKeyAt(m.cursor)
@@ -2454,14 +2515,18 @@ func (m *tuiModel) extendSelectionAndMove(dir int) {
 	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) {
 		return
 	}
-	m.selected[m.rowKeyAt(m.cursor)] = true
+	if !m.isCollapsedRow(m.cursor) {
+		m.selected[m.rowKeyAt(m.cursor)] = true
+	}
 	next, ok := m.nextVisible(dir)
 	if !ok {
 		return
 	}
 	m.cursor = next
 	m.offset = m.scrolledOffset()
-	m.selected[m.rowKeyAt(m.cursor)] = true
+	if !m.isCollapsedRow(m.cursor) {
+		m.selected[m.rowKeyAt(m.cursor)] = true
+	}
 }
 
 func (m tuiModel) listHelpPairs() []key.Hint {
@@ -2936,7 +3001,8 @@ func (m tuiModel) mergeRefresh(newRows []TableRow, newItems []PRRowModel) tuiMod
 	m.items = newItems
 	m.rows = newRows
 	m.cursor = newCursor
-	m.offset = m.scrolledOffset()
+	m.restoreFoldedCursor()
+	m.resyncCursorAndOffset()
 	return m
 }
 
@@ -2951,7 +3017,9 @@ func (m tuiModel) reindexRows(oldRows, newRows []TableRow) tuiModel {
 			}
 		}
 	}
-	m.offset = m.scrolledOffset()
+	m.rows = newRows
+	m.restoreFoldedCursor()
+	m.resyncCursorAndOffset()
 	return m
 }
 
@@ -2993,11 +3061,11 @@ func (m tuiModel) headerColumnAt(x int) string {
 func (m tuiModel) rowIndexAt(y int) (int, bool) {
 	const headerLines = 1 // header is always rendered on Y=0
 	row := y - headerLines + m.offset
-	visible := m.visibleIndices()
-	if row < 0 || row >= len(visible) {
+	visible := m.listLines()
+	if row < 0 || row >= len(visible) || visible[row].row < 0 {
 		return 0, false
 	}
-	return visible[row], true
+	return visible[row].row, true
 }
 
 // toggleSort cycles a column through: default direction -> reverse -> off.
@@ -3198,6 +3266,7 @@ func runTui(
 		styles:          newTuiStyles(),
 		removed:         make(prKeys),
 		selected:        make(prKeys),
+		collapsedStacks: foldedStackKeys(cfg.TUI.FoldedStacks),
 		filterInput:     fi,
 		diffView:        newScrollView(),
 		detailView:      newScrollView(),
@@ -3211,12 +3280,10 @@ func runTui(
 		metadataCache:   r.cache,
 	}
 
-	// Apply persisted sort settings.
-	if cfg.TUI.Sort.Key != "" {
-		model.sortColumn = cfg.TUI.Sort.Key
-		model.sortAsc = cfg.TUI.Sort.Order == valueAsc
-		model.header, model.rows, model.colWidths = model.rerender()
-	}
+	// Apply persisted sort and stack settings before showing the first frame.
+	model.sortColumn = cfg.TUI.Sort.Key
+	model.sortAsc = cfg.TUI.Sort.Order == valueAsc
+	model.header, model.rows, model.colWidths = model.rerender()
 	if cachedOK {
 		model.initCmd = model.startRefresh(false)
 	}

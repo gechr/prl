@@ -575,7 +575,8 @@ func applyListMetadata(
 ) ([]PullRequest, error) {
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
 	needViewerApproval := cli.ReviewSelfRequired()
-	if !needTimeline && !needMergeStatus && !needAutomerge && !needViewerApproval {
+	if !needTimeline && !needMergeStatus && !needAutomerge && !needViewerApproval &&
+		!cli.IsInteractive() {
 		return prs, nil
 	}
 
@@ -586,6 +587,12 @@ func applyListMetadata(
 		}
 		clog.Debug().Err(err).Msg("skipping list metadata hydration")
 		return prs, nil
+	}
+
+	if cli.IsInteractive() {
+		if stackErr := hydrateStackMetadata(g, prs); stackErr != nil {
+			clog.Debug().Err(stackErr).Msg("skipping stack metadata hydration")
+		}
 	}
 
 	actors, err := hydrateListMetadataCached(g, prs, listMetadataRequest{

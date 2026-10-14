@@ -155,6 +155,11 @@ const searchPRsGoldenQuery = `query SearchPullRequests($query: String!, $first: 
 							updatedAt
 							mergedAt
 							headRefOid
+							headRefName
+							baseRefName
+							headRepository { name nameWithOwner }
+							stack { id baseRefName }
+							stackEntry { position }
 							autoMergeRequest { enabledAt }
 							author { login }
 							repository { name nameWithOwner }

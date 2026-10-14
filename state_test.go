@@ -77,6 +77,8 @@ func TestSaveTUIStateMirrorsConfigSubtree(t *testing.T) {
   sort:
     key: updated
     order: desc
+  stacks:
+    enabled: false
 `, string(data))
 }
 

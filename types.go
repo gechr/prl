@@ -117,6 +117,11 @@ type PullRequest struct {
 	NodeID         string      `json:"-"`
 	Number         int         `json:"number"`
 	HeadSHA        string      `json:"-"`
+	HeadRefName    string      `json:"-"`
+	BaseRefName    string      `json:"-"`
+	HeadRepoNWO    string      `json:"-"`
+	Stack          *PRStack    `json:"-"`
+	StackPosition  int         `json:"-"`
 	ReviewDecision string      `json:"-"`
 	Repository     Repository  `json:"repository"`
 	State          string      `json:"state"`

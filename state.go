@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/gechr/clog"
 	"github.com/gechr/x/shell"
@@ -24,10 +25,12 @@ import (
 // tuiState is the persisted subset of TUIConfig, reusing the config types so
 // the state file is a structural mirror of the config's `tui:` subtree.
 type tuiState struct {
-	Filters TUIFiltersConfig     `yaml:"filters"`
-	Refresh TUIAutoRefreshConfig `yaml:"refresh"`
-	Review  tuiReviewState       `yaml:"review"`
-	Sort    TUISortConfig        `yaml:"sort"`
+	Filters      TUIFiltersConfig     `yaml:"filters"`
+	Refresh      TUIAutoRefreshConfig `yaml:"refresh"`
+	Review       tuiReviewState       `yaml:"review"`
+	Sort         TUISortConfig        `yaml:"sort"`
+	Stacks       TUIStacksConfig      `yaml:"stacks"`
+	FoldedStacks []string             `yaml:"folded_stacks,omitempty"`
 }
 
 // tuiReviewState nests the remembered review defaults under `review.default`,
@@ -86,10 +89,12 @@ func saveTUIState(cfg *Config) error {
 		return fmt.Errorf("creating state directory: %w", mkErr)
 	}
 	doc := stateDocument{TUI: tuiState{
-		Filters: cfg.TUI.Filters,
-		Refresh: cfg.TUI.AutoRefresh,
-		Review:  tuiReviewState{Default: cfg.TUI.Review.Default},
-		Sort:    cfg.TUI.Sort,
+		Filters:      cfg.TUI.Filters,
+		Refresh:      cfg.TUI.AutoRefresh,
+		Review:       tuiReviewState{Default: cfg.TUI.Review.Default},
+		Sort:         cfg.TUI.Sort,
+		Stacks:       cfg.TUI.Stacks,
+		FoldedStacks: cfg.TUI.FoldedStacks,
 	}}
 	data, err := goyaml.Marshal(doc)
 	if err != nil {
@@ -110,6 +115,8 @@ func applyTUIState(cfg *Config, st *tuiState) {
 	cfg.TUI.Filters = st.Filters
 	cfg.TUI.AutoRefresh = st.Refresh
 	cfg.TUI.Sort = st.Sort
+	cfg.TUI.Stacks = st.Stacks
+	cfg.TUI.FoldedStacks = slices.Clone(st.FoldedStacks)
 	applyReviewState(cfg, st.Review.Default)
 }
 

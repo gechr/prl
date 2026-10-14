@@ -637,11 +637,18 @@ type graphQLSearchPRNode struct {
 	AutoMergeRequest *struct {
 		EnabledAt string `json:"enabledAt"`
 	} `json:"autoMergeRequest"`
-	CreatedAt  time.Time `json:"createdAt"`
-	HeadRefOID string    `json:"headRefOid"`
-	ID         string    `json:"id"`
-	IsDraft    bool      `json:"isDraft"`
-	Labels     struct {
+	CreatedAt      time.Time   `json:"createdAt"`
+	HeadRefOID     string      `json:"headRefOid"`
+	HeadRefName    string      `json:"headRefName"`
+	BaseRefName    string      `json:"baseRefName"`
+	HeadRepository *Repository `json:"headRepository"`
+	Stack          *PRStack    `json:"stack"`
+	StackEntry     *struct {
+		Position int `json:"position"`
+	} `json:"stackEntry"`
+	ID      string `json:"id"`
+	IsDraft bool   `json:"isDraft"`
+	Labels  struct {
 		Nodes []struct {
 			Name string `json:"name"`
 		} `json:"nodes"`
@@ -686,6 +693,11 @@ func executeSearchGraphQL(gql *api.GraphQLClient, params *SearchParams) ([]PullR
 							updatedAt
 							mergedAt
 							headRefOid
+							headRefName
+							baseRefName
+							headRepository { name nameWithOwner }
+							stack { id baseRefName }
+							stackEntry { position }
 							autoMergeRequest { enabledAt }
 							author { login }
 							repository { name nameWithOwner }
@@ -749,25 +761,40 @@ func toPullRequestGraphQL(node graphQLSearchPRNode) PullRequest {
 		author = node.Author.Login
 	}
 
+	headRepo := ""
+	if node.HeadRepository != nil {
+		headRepo = node.HeadRepository.NameWithOwner
+	}
+
+	position := 0
+	if node.StackEntry != nil {
+		position = node.StackEntry.Position
+	}
+
 	// Merge status and review decision are left unloaded here;
 	// hydrateListMetadata fills them in for both the GraphQL and REST search
 	// paths. Auto-merge stays because it is a plain scalar lookup, not one of
 	// the per-node rollups that made a full page too expensive to return.
 	return PullRequest{
-		Automerge:  node.AutoMergeRequest != nil,
-		Author:     Author{Login: author},
-		CreatedAt:  node.CreatedAt,
-		HeadSHA:    node.HeadRefOID,
-		IsDraft:    node.IsDraft,
-		Labels:     labels,
-		NodeID:     node.ID,
-		Number:     node.Number,
-		Repository: node.Repository,
-		State:      state,
-		Title:      strings.TrimSpace(node.Title),
-		TitleRaw:   node.Title,
-		UpdatedAt:  node.UpdatedAt,
-		URL:        node.URL,
+		Automerge:     node.AutoMergeRequest != nil,
+		Author:        Author{Login: author},
+		CreatedAt:     node.CreatedAt,
+		HeadSHA:       node.HeadRefOID,
+		HeadRefName:   node.HeadRefName,
+		BaseRefName:   node.BaseRefName,
+		HeadRepoNWO:   headRepo,
+		Stack:         node.Stack,
+		StackPosition: position,
+		IsDraft:       node.IsDraft,
+		Labels:        labels,
+		NodeID:        node.ID,
+		Number:        node.Number,
+		Repository:    node.Repository,
+		State:         state,
+		Title:         strings.TrimSpace(node.Title),
+		TitleRaw:      node.Title,
+		UpdatedAt:     node.UpdatedAt,
+		URL:           node.URL,
 
 		automergeLoaded: true,
 	}

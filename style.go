@@ -17,6 +17,7 @@ var (
 	// Primary interactive palette.
 	colorAccent           color.Color // cursor, help keys, separators, borders
 	colorRef              color.Color // PR refs, hyperlinks
+	colorStackArrow       color.Color // stack disclosure arrows
 	colorHighlight        color.Color // selected index, on-state, additions
 	colorOK               color.Color // success, selected items, focused text
 	colorDanger           color.Color // errors, confirm No
@@ -78,36 +79,38 @@ var (
 
 // Base styles - add .Bold(true), .Faint(true), etc. at call sites as needed.
 var (
-	styleAccent     lg.Style
-	styleRef        lg.Style
-	styleHighlight  lg.Style
-	styleOK         lg.Style
-	styleDanger     lg.Style
-	styleClosed     lg.Style
-	styleWarning    lg.Style
-	styleHeading    lg.Style
-	styleTitle      lg.Style
-	styleLabel      lg.Style
-	styleHelp       lg.Style
-	styleFilter     lg.Style
-	styleDim        lg.Style
-	styleSubtle     lg.Style
-	styleText       lg.Style
-	styleGreen      lg.Style
-	styleRed        lg.Style
-	styleYellow     lg.Style
-	styleMagenta    lg.Style
-	styleDraft      lg.Style
-	styleMerged     lg.Style
-	styleAdd        lg.Style
-	styleDelete     lg.Style
-	styleDraftLbl   lg.Style
-	styleDirty      lg.Style
-	styleDismiss    lg.Style
-	styleFilterTag  lg.Style
-	styleDefault    lg.Style
-	styleCheckDur   lg.Style
-	styleHelpKeyDim lg.Style
+	styleAccent      lg.Style
+	styleRef         lg.Style
+	styleHighlight   lg.Style
+	styleOK          lg.Style
+	styleDanger      lg.Style
+	styleClosed      lg.Style
+	styleWarning     lg.Style
+	styleHeading     lg.Style
+	styleTitle       lg.Style
+	styleLabel       lg.Style
+	styleHelp        lg.Style
+	styleFilter      lg.Style
+	styleDim         lg.Style
+	styleSubtle      lg.Style
+	styleText        lg.Style
+	styleStackHeader lg.Style
+	styleStackArrow  lg.Style
+	styleGreen       lg.Style
+	styleRed         lg.Style
+	styleYellow      lg.Style
+	styleMagenta     lg.Style
+	styleDraft       lg.Style
+	styleMerged      lg.Style
+	styleAdd         lg.Style
+	styleDelete      lg.Style
+	styleDraftLbl    lg.Style
+	styleDirty       lg.Style
+	styleDismiss     lg.Style
+	styleFilterTag   lg.Style
+	styleDefault     lg.Style
+	styleCheckDur    lg.Style
+	styleHelpKeyDim  lg.Style
 )
 
 // Pre-rendered styled strings.
@@ -133,7 +136,8 @@ func initPalette(isLight bool) {
 	ld := lg.LightDark(!isLight)
 
 	// Primary interactive palette.
-	colorAccent = ld(lg.Color("162"), lg.Color("198"))   // deep/hot pink
+	colorAccent = ld(lg.Color("162"), lg.Color("198")) // deep/hot pink
+	colorStackArrow = ld(lg.Color("#005aaa"), lg.Color("#59a5ef"))
 	colorRef = ld(lg.Color("26"), lg.Color("117"))       // blue
 	colorHighlight = ld(lg.Color("28"), lg.Color("118")) // green
 	colorOK = ld(lg.Color("29"), lg.Color("48"))         // sea/spring green
@@ -198,6 +202,8 @@ func initPalette(isLight bool) {
 	styleDim = lg.NewStyle().Foreground(colorDim)
 	styleSubtle = lg.NewStyle().Foreground(colorSubtle)
 	styleText = lg.NewStyle().Foreground(colorText)
+	styleStackHeader = lg.NewStyle().Faint(true).Italic(true)
+	styleStackArrow = lg.NewStyle().Foreground(colorStackArrow)
 	styleGreen = lg.NewStyle().Foreground(colorGreen)
 	styleRed = lg.NewStyle().Foreground(colorRed)
 	styleYellow = lg.NewStyle().Foreground(colorYellow)

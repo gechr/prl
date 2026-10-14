@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -74,6 +75,7 @@ type filterRow int
 // Filter row indices (correspond to filterOptionDefs entries).
 const (
 	filterRowState filterRow = iota
+	filterRowStacks
 	filterRowDraft
 	filterRowBots
 	filterRowArchived
@@ -103,6 +105,7 @@ var filterOptionDefs = [...]filterOptionDef{
 		{valueReady, valueReady},
 		{valueAll, valueAll},
 	}},
+	{"Stacks", []filterChoice{{tuiHelpShow, filterChoiceTrue}, {valueHide, filterChoiceFalse}}},
 	{
 		"Drafts",
 		[]filterChoice{{tuiHelpShow, ""}, {valueHide, filterChoiceFalse}},
@@ -137,42 +140,47 @@ func (m tuiModel) currentFilterValues() []int {
 	vals := make([]int, len(filterOptionDefs))
 
 	// State - use canonical string from the parsed enum.
-	vals[0] = filterChoiceIndex(filterRowState, m.cli.PRState().String())
+	vals[filterRowState] = filterChoiceIndex(filterRowState, m.cli.PRState().String())
 
 	// Draft
 	switch {
 	case m.cli.Draft == nil:
-		vals[1] = filterChoiceIndex(filterRowDraft, "")
+		vals[filterRowDraft] = filterChoiceIndex(filterRowDraft, "")
 	case *m.cli.Draft:
-		vals[1] = filterChoiceIndex(filterRowDraft, "")
+		vals[filterRowDraft] = filterChoiceIndex(filterRowDraft, "")
 	default:
-		vals[1] = filterChoiceIndex(filterRowDraft, filterChoiceFalse)
+		vals[filterRowDraft] = filterChoiceIndex(filterRowDraft, filterChoiceFalse)
 	}
 
 	// Bots (NoBot: true=hide=index 1, false=show=index 0)
 	if m.cli.NoBot {
-		vals[2] = filterChoiceIndex(filterRowBots, filterChoiceTrue)
+		vals[filterRowBots] = filterChoiceIndex(filterRowBots, filterChoiceTrue)
 	} else {
-		vals[2] = filterChoiceIndex(filterRowBots, filterChoiceFalse)
+		vals[filterRowBots] = filterChoiceIndex(filterRowBots, filterChoiceFalse)
 	}
 
 	// Archived (true=show=index 0, false=hide=index 1)
 	if m.cli.Archived {
-		vals[3] = filterChoiceIndex(filterRowArchived, filterChoiceTrue)
+		vals[filterRowArchived] = filterChoiceIndex(filterRowArchived, filterChoiceTrue)
 	} else {
-		vals[3] = filterChoiceIndex(filterRowArchived, filterChoiceFalse)
+		vals[filterRowArchived] = filterChoiceIndex(filterRowArchived, filterChoiceFalse)
 	}
 
 	// CI - normalize from canonical CIStatus
-	vals[4] = filterChoiceIndex(filterRowCI, "")
+	vals[filterRowCI] = filterChoiceIndex(filterRowCI, "")
 	if ci := m.cli.CI; ci != "" {
 		if parsed, ok := parseCIStatus(ci); ok {
-			vals[4] = filterChoiceIndex(filterRowCI, parsed.String())
+			vals[filterRowCI] = filterChoiceIndex(filterRowCI, parsed.String())
 		}
 	}
 
 	// Review
-	vals[5] = filterChoiceIndex(filterRowReview, m.cli.Review)
+	vals[filterRowReview] = filterChoiceIndex(filterRowReview, m.cli.Review)
+	value := filterChoiceFalse
+	if m.stacksEnabled() {
+		value = filterChoiceTrue
+	}
+	vals[filterRowStacks] = filterChoiceIndex(filterRowStacks, value)
 
 	return vals
 }
@@ -217,6 +225,8 @@ func (m tuiModel) defaultFilterChoice(row filterRow) int {
 		return filterChoiceIndex(row, filterChoiceFalse)
 	case filterRowArchived:
 		return filterChoiceIndex(row, filterChoiceFalse)
+	case filterRowStacks:
+		return filterChoiceIndex(row, filterChoiceTrue)
 	case filterRowCI, filterRowReview:
 		return filterChoiceIndex(row, "")
 	}
@@ -225,6 +235,8 @@ func (m tuiModel) defaultFilterChoice(row filterRow) int {
 
 func (m *tuiModel) applyFilterRow(row filterRow) {
 	switch row {
+	case filterRowStacks:
+		m.cfg.TUI.Stacks.Enabled = m.selectedFilterValue(row) == filterChoiceTrue
 	case filterRowState:
 		if m.optionsPicker.IsReset[row] {
 			m.cli.State = m.defaultStateValue()
@@ -267,6 +279,8 @@ func (m *tuiModel) applyFilterRow(row filterRow) {
 
 func (m tuiModel) persistedFilterValue(row filterRow) any {
 	switch row {
+	case filterRowStacks:
+		return m.cfg.TUI.Stacks.Enabled
 	case filterRowState:
 		if m.optionsPicker.IsReset[row] {
 			return ""
@@ -314,6 +328,8 @@ func (m tuiModel) isFilterRowLocked(row filterRow) bool {
 		return m.cli.ciExplicit
 	case filterRowReview:
 		return m.cli.reviewExplicit
+	case filterRowStacks:
+		return false
 	}
 	return false
 }
@@ -343,6 +359,9 @@ func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	m.showOptions = false
+	oldFilters := m.currentFilterValues()
+	oldFilters[filterRowStacks] = 0
+	oldStacks := m.stacksEnabled()
 
 	// Map overlay values back to CLI fields, skipping CLI-explicit ones.
 	if !m.cli.stateExplicit {
@@ -362,6 +381,19 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	}
 	if !m.cli.reviewExplicit {
 		m.applyFilterRow(filterRowReview)
+	}
+
+	m.applyFilterRow(filterRowStacks)
+	if oldStacks != m.stacksEnabled() {
+		header, rows, widths := m.rerender()
+		m = m.reindexRows(m.rows, rows)
+		m.header, m.rows, m.colWidths = header, rows, widths
+	}
+	newFilters := m.currentFilterValues()
+	newFilters[filterRowStacks] = 0
+	if oldStacks != m.stacksEnabled() && slices.Equal(oldFilters, newFilters) {
+		m.persistFilterState()
+		return m, nil
 	}
 
 	// Rebuild search params.
@@ -386,13 +418,9 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 
 // persistFilterState mirrors the current non-explicit filter values into config
 // and writes a state snapshot to disk. CLI-explicit rows are session-only, so
-// they're left untouched, preserving the user's persisted choice. If every row
-// is CLI-locked there's nothing to persist.
+// they're left untouched, preserving the user's persisted choice. The stack
+// display setting is always persisted.
 func (m tuiModel) persistFilterState() {
-	if m.cli.stateExplicit && m.cli.ciExplicit && m.cli.reviewExplicit &&
-		m.cli.draftExplicit && m.cli.noBotExplicit && m.cli.archivedExplicit {
-		return
-	}
 	f := &m.cfg.TUI.Filters
 	if !m.cli.stateExplicit {
 		f.State, _ = m.persistedFilterValue(filterRowState).(string)

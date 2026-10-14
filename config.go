@@ -66,6 +66,7 @@ const (
 	keyTUIFilterReview       = "tui.filters.review"
 	keyTUIFilterState        = "tui.filters.state"
 	keyTUIScreenRepair       = "tui.screen_repair"
+	keyTUIStacksEnabled      = "tui.stacks.enabled"
 	keyTUISortKey            = "tui.sort.key"
 	keyTUISortOrder          = "tui.sort.order"
 	keyVCS                   = "vcs"
@@ -160,6 +161,11 @@ func (c TUIReviewConfig) providerConfig(provider reviewProvider) TUIReviewProvid
 	return c.Providers.Claude
 }
 
+// TUIStacksConfig holds stacked PR display settings.
+type TUIStacksConfig struct {
+	Enabled bool `koanf:"enabled" yaml:"enabled"`
+}
+
 // TUIConfig holds TUI-specific configuration.
 type TUIConfig struct {
 	AutoRefresh  TUIAutoRefreshConfig `koanf:"refresh"`
@@ -167,6 +173,8 @@ type TUIConfig struct {
 	Filters      TUIFiltersConfig     `koanf:"filters"`
 	Sort         TUISortConfig        `koanf:"sort"`
 	ScreenRepair bool                 `koanf:"screen_repair"`
+	Stacks       TUIStacksConfig      `koanf:"stacks"`
+	FoldedStacks []string             `koanf:"folded_stacks"`
 }
 
 // Config holds all prl configuration.
@@ -246,6 +254,7 @@ func defaultConfig() map[string]any {
 		keyTUIFilterDraft:        nil,
 		keyTUIFilterReview:       "",
 		keyTUIFilterState:        "",
+		keyTUIStacksEnabled:      true,
 		keyTUISortKey:            "",
 		keyTUISortOrder:          "",
 		// Empty so buildSpinner can pick the background-adaptive default.
@@ -772,12 +781,16 @@ tui:
         prompt: |
 %[12]s
 
-  # Default filter overrides for TUI mode. The filter menu (alt+f) writes the
+  # Default filter overrides for TUI mode. The filter menu (Shift+O) writes the
   # active filters to the state file; values here seed the first session.
   # filters:
   #   state: merged
   #   draft: false
   #   bots: false
+
+  # Group stacked PRs into hierarchies. Shift+O changes this for later sessions.
+  stacks:
+    enabled: true
 
   sort:
     # Default sort column and direction. Clicking column headers in the TUI

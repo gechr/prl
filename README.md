@@ -192,6 +192,8 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 
 `--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`. AI reviews open in a new tab of the host terminal: inside a Herdr session (`HERDR_ENV=1`) a Herdr tab, otherwise Ghostty, iTerm2, or Kitty on macOS, or Windows Terminal when running in WSL.
 
+Stacked PRs are grouped by default, with IDs such as `1a`, `1b`, and `1c` from top to bottom; the next standalone PR is `2`. Sorting uses only the top PR in each stack. Open **Shift+O** and set **Stacks** to **show** or **hide** to switch views. Click the stack header or any tree connector to collapse or expand a stack, or use Left/Right on a stack. The display preference and folded stacks are saved between sessions.
+
 Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --mode plan` for Gemini through `agy`, `--permission-mode plan` for Claude. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude and Gemini (and no sandbox). The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
 
 For Windows Terminal, run the Linux build of `prl` inside WSL. Detection uses `WSL_DISTRO_NAME` and `WT_SESSION`. The launcher tries `wt.exe` directly from `PATH`. If it cannot start, it falls back to `cmd.exe`, checking `PATH` and then `/mnt/c/Windows/System32/cmd.exe`; adding System32 to your Linux `PATH` is unnecessary with the default Windows mount. Windows interoperability must be enabled. If Windows is mounted elsewhere, put `wt.exe` or `cmd.exe` on `PATH`. A running `wt.exe` that reports an error is not retried, to avoid opening duplicate tabs.
@@ -316,6 +318,8 @@ tui:
 
           URL: {prURL}
   filters: {}
+  stacks:
+    enabled: true
   sort: {}
 
 plugin: ""
@@ -338,7 +342,7 @@ authors:
 - `plugin`: if empty, auto-discovers `prl-plugin-*` on `PATH`
 - `icons`: `auto` selects Nerd Font icons when `NERD_FONTS` is non-empty and Unicode icons otherwise; use `nerd` or `unicode` to choose explicitly
 - `vcs`: controls whether `--clone` uses `git` or `jj`
-- `tui.refresh`, `tui.sort`, `tui.filters`: starting defaults you manage. Interactive changes in the TUI (toggling auto-refresh, sorting columns, applying filters) are **not** written back to `config.yaml`. They're saved to a separate state file at `$XDG_STATE_HOME/prl/state.yaml` (default `~/.local/state/prl/state.yaml`), which mirrors the `tui:` subtree and takes precedence over config. This keeps your version-controlled config stable while remembering your last session.
+- `tui.refresh`, `tui.sort`, `tui.filters`, `tui.stacks.enabled`: starting defaults you manage. Interactive changes in the TUI (toggling auto-refresh, sorting columns, applying filters) are **not** written back to `config.yaml`. They're saved to a separate state file at `$XDG_STATE_HOME/prl/state.yaml` (default `~/.local/state/prl/state.yaml`), which mirrors the `tui:` subtree and takes precedence over config. This keeps your version-controlled config stable while remembering your last session.
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
 - Gemini reviews require the Antigravity CLI (`agy`). Model and effort selections map to its model slugs (for example, `gemini-3.8-flash` with `high` selects `gemini-3.8-flash-high`) and `--effort` flag.
 

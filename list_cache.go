@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	listResultCacheVersion   = 2
+	listResultCacheVersion   = 3
 	listResultCacheDirPerm   = 0o755
 	listResultCacheFilePerm  = 0o600
 	tuiListResultCacheMaxAge = 15 * time.Minute
@@ -34,6 +34,11 @@ type cachedPullRequest struct {
 	Author               Author     `json:"author"`
 	CreatedAt            time.Time  `json:"createdAt"`
 	HeadSHA              string     `json:"headSha"`
+	HeadRefName          string     `json:"headRefName"`
+	BaseRefName          string     `json:"baseRefName"`
+	HeadRepoNWO          string     `json:"headRepoNWO"`
+	Stack                *PRStack   `json:"stack"`
+	StackPosition        int        `json:"stackPosition"`
 	IsDraft              bool       `json:"draft"`
 	Labels               []Label    `json:"labels"`
 	MergeStatus          int        `json:"mergeStatus"`
@@ -88,6 +93,11 @@ func cachedPR(pr PullRequest) cachedPullRequest {
 		Author:               pr.Author,
 		CreatedAt:            pr.CreatedAt,
 		HeadSHA:              pr.HeadSHA,
+		HeadRefName:          pr.HeadRefName,
+		BaseRefName:          pr.BaseRefName,
+		HeadRepoNWO:          pr.HeadRepoNWO,
+		Stack:                pr.Stack,
+		StackPosition:        pr.StackPosition,
 		IsDraft:              pr.IsDraft,
 		Labels:               append([]Label(nil), pr.Labels...),
 		MergeStatus:          int(pr.MergeStatus),
@@ -113,6 +123,11 @@ func (pr cachedPullRequest) pullRequest() PullRequest {
 		Author:               pr.Author,
 		CreatedAt:            pr.CreatedAt,
 		HeadSHA:              pr.HeadSHA,
+		HeadRefName:          pr.HeadRefName,
+		BaseRefName:          pr.BaseRefName,
+		HeadRepoNWO:          pr.HeadRepoNWO,
+		Stack:                pr.Stack,
+		StackPosition:        pr.StackPosition,
 		IsDraft:              pr.IsDraft,
 		Labels:               append([]Label(nil), pr.Labels...),
 		MergeStatus:          MergeStatus(pr.MergeStatus),

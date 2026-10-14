@@ -1893,7 +1893,7 @@ func TestCurrentFilterValuesDefaultCLI(t *testing.T) {
 	// testCLI() Normalize sets NoBot=true (from Default.Bots=false),
 	// so Bots is "hide" (index 1). Draft defaults to "show" (index 0), CI/Review default to "all",
 	// and Archived defaults to "hide" (index 1).
-	require.Equal(t, []int{0, 0, 1, 1, 3, 5}, vals)
+	require.Equal(t, []int{0, 1, 0, 1, 1, 3, 5}, vals)
 }
 
 func TestCurrentFilterValuesMapsStateCorrectly(t *testing.T) {
@@ -1903,7 +1903,7 @@ func TestCurrentFilterValuesMapsStateCorrectly(t *testing.T) {
 
 	vals := m.currentFilterValues()
 
-	require.Equal(t, 2, vals[0]) // "merged" is index 2
+	require.Equal(t, 2, vals[filterRowState]) // "merged" is index 2
 }
 
 func TestCurrentFilterValuesMapsCIFromAlias(t *testing.T) {
@@ -1913,7 +1913,7 @@ func TestCurrentFilterValuesMapsCIFromAlias(t *testing.T) {
 
 	vals := m.currentFilterValues()
 
-	require.Equal(t, 0, vals[4]) // "success" is index 0
+	require.Equal(t, 0, vals[filterRowCI]) // "success" is index 0
 }
 
 func TestCurrentFilterValuesDraft(t *testing.T) {
@@ -1923,7 +1923,7 @@ func TestCurrentFilterValuesDraft(t *testing.T) {
 
 	vals := m.currentFilterValues()
 
-	require.Equal(t, 1, vals[1]) // "hide" is index 1
+	require.Equal(t, 1, vals[filterRowDraft]) // "hide" is index 1
 }
 
 func TestCurrentFilterValuesDraftTrueMapsToShow(t *testing.T) {
@@ -1933,7 +1933,7 @@ func TestCurrentFilterValuesDraftTrueMapsToShow(t *testing.T) {
 
 	vals := m.currentFilterValues()
 
-	require.Equal(t, 0, vals[1]) // "show" is index 0
+	require.Equal(t, 0, vals[filterRowDraft]) // "show" is index 0
 }
 
 func TestCurrentFilterValuesNoBots(t *testing.T) {
@@ -1943,7 +1943,7 @@ func TestCurrentFilterValuesNoBots(t *testing.T) {
 
 	vals := m.currentFilterValues()
 
-	require.Equal(t, 1, vals[2]) // "hide" is index 1
+	require.Equal(t, 1, vals[filterRowBots]) // "hide" is index 1
 }
 
 func TestCurrentFilterValuesArchived(t *testing.T) {
@@ -1953,7 +1953,7 @@ func TestCurrentFilterValuesArchived(t *testing.T) {
 
 	vals := m.currentFilterValues()
 
-	require.Equal(t, 0, vals[3]) // "show" is index 0
+	require.Equal(t, 0, vals[filterRowArchived]) // "show" is index 0
 }
 
 func TestUpdateOptionsOverlayNavigation(t *testing.T) {
@@ -1969,7 +1969,7 @@ func TestUpdateOptionsOverlayNavigation(t *testing.T) {
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, int(filterRowDraft), bm.optionsPicker.Cursor)
+	require.Equal(t, int(filterRowStacks), bm.optionsPicker.Cursor)
 
 	// Up from 1 → 0
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
@@ -2156,7 +2156,7 @@ func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
 	require.Equal(
 		t,
 		"\x1b[38;5;198m│\x1b[m  \x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m❯ \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m  Drafts  \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;218m\x1b[48;2;40;10;30mshow\x1b[m\x1b[48;2;40;10;30m  \x1b[2m\x1b[48;2;40;10;30mhide\x1b[m\x1b[48;2;40;10;30m                                  \x1b[0m  \x1b[38;5;198m│\x1b[m",
-		strings.Split(overlay, nl)[3],
+		strings.Split(overlay, nl)[4],
 	)
 }
 

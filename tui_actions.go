@@ -36,7 +36,7 @@ func (m tuiModel) targetPRs() []targetPR {
 	if len(m.selected) > 0 {
 		var targets []targetPR
 		for _, idx := range m.visibleIndices() {
-			if m.selected[m.rowKeyAt(idx)] {
+			if !m.isCollapsedRow(idx) && m.selected[m.rowKeyAt(idx)] {
 				targets = append(targets, targetPR{idx, m.rows[idx].Item.PR})
 			}
 		}

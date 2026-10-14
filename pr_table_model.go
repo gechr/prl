@@ -26,6 +26,8 @@ type PRRowModel struct {
 	MergeStatus MergeStatus
 	MergeReason string
 	Review      string
+	StackKey    prKey
+	StackHeader string
 }
 
 // AuthorModel holds resolved author information for display.
