@@ -74,6 +74,10 @@ type iconSet struct {
 	PillRight         string
 	ChevronLeft       string
 	ChevronRight      string
+	StackExpanded     string
+	StackCollapsed    string
+	SortAscending     string
+	SortDescending    string
 	StatusMerged      string
 	StatusDraft       string
 	StatusClosed      string
@@ -105,6 +109,10 @@ var iconsUnicode = iconSet{
 	PillRight:         "",
 	ChevronLeft:       "",
 	ChevronRight:      "",
+	StackExpanded:     "▾",
+	StackCollapsed:    "▸",
+	SortAscending:     "▲",
+	SortDescending:    "▼",
 	StatusMerged:      "",
 	StatusDraft:       "",
 	StatusClosed:      "",
@@ -136,6 +144,10 @@ var iconsNerd = iconSet{
 	PillRight:         "\ue0b4", // nf-ple-right_half_circle_thick
 	ChevronLeft:       "\uf104", // nf-fa-angle_left
 	ChevronRight:      "\uf105", // nf-fa-angle_right
+	StackExpanded:     "\uf47c", // nf-oct-chevron_down
+	StackCollapsed:    "\uf460", // nf-oct-chevron_right
+	SortAscending:     "\ueab7", // nf-cod-chevron_up
+	SortDescending:    "\ueab4", // nf-cod-chevron_down
 	StatusMerged:      "\uf419", // nf-oct-git_merge
 	StatusDraft:       "\uf4dd", // nf-oct-git_pull_request_draft
 	StatusClosed:      "\uf4dc", // nf-oct-git_pull_request_closed

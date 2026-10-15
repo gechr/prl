@@ -93,7 +93,7 @@ func (m tuiModel) listLines() []tuiListLine {
 					row:      idx,
 					label:    label,
 					header:   item.StackHeader,
-					tree:     "▸  ",
+					tree:     activeIcons.StackCollapsed + "  ",
 					stackKey: item.StackKey,
 				},
 			)
@@ -106,14 +106,14 @@ func (m tuiModel) listLines() []tuiListLine {
 				row:      -1,
 				label:    label,
 				header:   item.StackHeader,
-				tree:     "▾  ",
+				tree:     activeIcons.StackExpanded + "  ",
 				stackKey: item.StackKey,
 			},
 		)
 		for i := pos; i < end; i++ {
 			tree := "├─ "
 			if i == end-1 {
-				tree = "└─ "
+				tree = "╰─ "
 			}
 			lines = append(
 				lines,

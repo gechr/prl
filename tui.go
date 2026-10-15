@@ -133,8 +133,20 @@ func tuiListPrefixWidth(total int) int {
 	)
 }
 
+func (m tuiModel) indexGap() string {
+	if m.stacksEnabled() {
+		return " "
+	}
+	return tuiNonCursorPrefix
+}
+
+func (m tuiModel) tablePrefixWidth(total int) int {
+	width := tuiListPrefixWidth(total) + m.stackExtraWidth()
+	return width + len(m.indexGap()) - len(tuiNonCursorPrefix)
+}
+
 func (m tuiModel) listPrefixWidth() int {
-	return tuiListPrefixWidth(len(m.rows)) + m.stackExtraWidth()
+	return m.tablePrefixWidth(len(m.rows))
 }
 
 func (m tuiModel) renderTuiIndexLabel(label string, selected bool) string {
@@ -1732,13 +1744,14 @@ func (m tuiModel) viewList() tea.View {
 	viewport := m.listViewport()
 	indexWidth := m.listIndexWidth()
 	indexPad := strings.Repeat(" ", indexWidth)
+	indexGap := m.indexGap()
 
 	// Column header line.
 	if m.header != "" {
-		prefix := tuiNonCursorPrefix + indexPad + tuiNonCursorPrefix
+		prefix := tuiNonCursorPrefix + indexPad + indexGap
 		if m.refreshing && len(m.spinner.frames) > 0 {
 			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
-			prefix = frame + " " + indexPad + tuiNonCursorPrefix
+			prefix = frame + " " + indexPad + indexGap
 		}
 		b.WriteString(prefix + m.header + nl)
 	}
@@ -1753,7 +1766,11 @@ func (m tuiModel) viewList() tea.View {
 		idx := entry.row
 		index := m.renderTuiIndexWidth(entry.label, m.selected[m.rowKeyAt(idx)], indexWidth)
 		if entry.header != "" {
-			line := tuiNonCursorPrefix + index + tuiNonCursorPrefix + styleStackArrow.Render(
+			arrowStyle := styleStackArrow
+			if m.collapsedStacks[entry.stackKey] {
+				arrowStyle = styleHeading
+			}
+			line := tuiNonCursorPrefix + index + indexGap + arrowStyle.Render(
 				entry.tree,
 			) + styleStackHeader.Render(
 				entry.header,
@@ -1773,7 +1790,11 @@ func (m tuiModel) viewList() tea.View {
 			b.WriteString(line + nl)
 			continue
 		}
-		display := index + tuiNonCursorPrefix + styleRef.Render(entry.tree) + m.rows[idx].Display
+		tree := entry.tree
+		if m.p != nil && m.p.theme != nil && m.p.theme.MarkdownText != nil {
+			tree = m.p.theme.MarkdownText.Render(tree)
+		}
+		display := index + indexGap + tree + m.rows[idx].Display
 		if idx != m.cursor {
 			b.WriteString(tuiNonCursorPrefix + display + nl)
 			continue
@@ -2406,15 +2427,18 @@ func (m tuiModel) tableRendererFor(totalRows int) *table.Renderer[PRRowModel] {
 				if name != sortColumn || header == "" {
 					return rendered
 				}
-				indicator := " ▼"
+				indicator := " " + activeIcons.SortDescending
 				if sortAsc {
-					indicator = " ▲"
+					indicator = " " + activeIcons.SortAscending
+				}
+				if activeIcons == iconsNerd {
+					return rendered + styleStackArrow.Render(indicator)
 				}
 				return rendered + ctx.Theme.RenderDim(indicator)
 			},
 		))
 	}
-	width := max(0, m.width-tuiListPrefixWidth(totalRows)-m.stackExtraWidth())
+	width := max(0, m.width-m.tablePrefixWidth(totalRows))
 	return m.p.newTableRenderer(m.cli, m.tty, width, opts...)
 }
 
@@ -2475,7 +2499,7 @@ func renderTUITable(
 }
 
 func (m tuiModel) rerender() (string, []TableRow, []int) {
-	termWidth := max(0, m.width-tuiListPrefixWidth(len(m.items))-m.stackExtraWidth())
+	termWidth := max(0, m.width-m.tablePrefixWidth(len(m.items)))
 	renderer := m.tableRendererFor(len(m.items))
 	if !m.stacksEnabled() {
 		return renderTUITable(renderer, m.items, m.sortColumn, m.sortAsc, termWidth)

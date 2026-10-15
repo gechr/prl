@@ -176,6 +176,7 @@ func TestStackListIDsAndHitTesting(t *testing.T) {
 	require.Equal(t, []string{"1", "1a", "1b", "1c", "2"}, labels)
 	require.Equal(t, "1 ", ansi.Strip(m.renderTuiIndexLabel("1", false)))
 	require.Equal(t, "1a", ansi.Strip(m.renderTuiIndexLabel("1a", false)))
+	require.Regexp(t, `(?m)^❯ 1a ├─ `, ansi.Strip(m.viewList().Content))
 	_, ok := m.rowIndexAt(1)
 	require.False(t, ok, "expanded headers are not action targets")
 	idx, ok := m.rowIndexAt(2)
@@ -376,7 +377,7 @@ func TestStackFilteringKeepsHeadersOutOfActions(t *testing.T) {
 	lines := m.listLines()
 	require.Len(t, lines, 2)
 	require.Equal(t, "1a", lines[1].label)
-	require.Equal(t, "└─ ", lines[1].tree)
+	require.Equal(t, "╰─ ", lines[1].tree)
 	require.Equal(t, 1, m.currentPR().Number)
 	m.toggleStack(lines[0].stackKey)
 	require.Len(t, m.listLines(), 1)
@@ -402,19 +403,59 @@ func TestStackLetterBeyond26Entries(t *testing.T) {
 	require.Equal(t, "ba", stackLetter(52))
 }
 
-func TestStackGlyphsRenderBlueOnBothThemes(t *testing.T) {
-	t.Cleanup(func() { initPalette(false) })
-	for _, light := range []bool{false, true} {
-		initPalette(light)
-		m := newStackTestModel(t)
-		m.cursor = 3 // keep stack lines free of the cursor's background escapes
-		output := m.viewList().Content
-		require.Regexp(t, regexp.QuoteMeta(styleStackArrow.Render("▾  ")), output)
-		for _, glyph := range []string{"├─ ", "└─ "} {
-			require.Regexp(t, regexp.QuoteMeta(styleRef.Render(glyph)), output)
+func TestStackGlyphsAdaptToThemeAndIconMode(t *testing.T) {
+	original := activeIcons
+	t.Cleanup(func() {
+		activeIcons = original
+		initPalette(false)
+	})
+	for _, tc := range []struct {
+		icons     iconSet
+		expanded  string
+		collapsed string
+		sortUp    string
+		sortDown  string
+	}{
+		{iconsUnicode, "▾  ", "▸  ", "▲", "▼"},
+		{iconsNerd, "\uf47c  ", "\uf460  ", "\ueab7", "\ueab4"},
+	} {
+		useIcons(tc.icons)
+		for _, light := range []bool{false, true} {
+			initPalette(light)
+			m := newStackTestModel(t)
+			m.cursor = 3 // keep stack lines free of the cursor's background escapes
+			lines := m.listLines()
+			require.Equal(
+				t,
+				[]string{"├─ ", "├─ ", "╰─ "},
+				[]string{lines[1].tree, lines[2].tree, lines[3].tree},
+			)
+			for _, asc := range []bool{true, false} {
+				sorted := m
+				sorted.sortAsc = asc
+				header, _, _ := sorted.rerender()
+				glyph := tc.sortDown
+				if asc {
+					glyph = tc.sortUp
+				}
+				expected := m.p.RenderDim(" " + glyph)
+				if tc.icons == iconsNerd {
+					expected = styleStackArrow.Render(" " + glyph)
+				}
+				require.Regexp(t, regexp.QuoteMeta(expected), header)
+			}
+			output := m.viewList().Content
+			require.Regexp(t, regexp.QuoteMeta(styleStackArrow.Render(tc.expanded)), output)
+			for _, glyph := range []string{"├─ ", "╰─ "} {
+				require.Regexp(t, regexp.QuoteMeta(m.p.theme.MarkdownText.Render(glyph)), output)
+			}
+			m.toggleStack(m.rows[0].Item.StackKey)
+			require.Regexp(
+				t,
+				regexp.QuoteMeta(styleHeading.Render(tc.collapsed)),
+				m.viewList().Content,
+			)
 		}
-		m.toggleStack(m.rows[0].Item.StackKey)
-		require.Regexp(t, regexp.QuoteMeta(styleStackArrow.Render("▸  ")), m.viewList().Content)
 	}
 }
 
