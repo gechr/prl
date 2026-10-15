@@ -131,8 +131,8 @@ func TestNerdConfirmDialogsRenderPillCapsWithoutShifting(t *testing.T) {
 
 	bm := openPlainConfirm(t, plainConfirmModel())
 	activeRow := strings.Split(bm.dialogs.Top().Content(bm.width), nl)[2]
-	require.Equal(t, 2, strings.Count(activeRow, activeIcons.PillLeft))
-	require.Equal(t, 2, strings.Count(activeRow, activeIcons.PillRight))
+	require.Equal(t, 1, strings.Count(activeRow, activeIcons.PillLeft))
+	require.Equal(t, 1, strings.Count(activeRow, activeIcons.PillRight))
 
 	model, cmd := bm.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 	require.Nil(t, cmd)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"image/color"
+	"strings"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -325,11 +326,16 @@ func pillWrap(rendered string, capColor color.Color, dim bool) string {
 // pillButtonStyle adapts a Primer button style so its label is rendered first,
 // then wrapped with separately styled caps. Keeping the wrapper as the outer
 // transform prevents the button background and padding from reaching the caps.
+// Blurred buttons reserve the cap width with spaces so focus changes don't shift them.
 func pillButtonStyle(body lg.Style, capColor color.Color, dim bool) lg.Style {
 	if activeIcons.PillLeft == "" {
 		return body
 	}
 	return lg.NewStyle().Transform(func(label string) string {
+		if dim {
+			return strings.Repeat(" ", lg.Width(activeIcons.PillLeft)) + body.Render(label) +
+				strings.Repeat(" ", lg.Width(activeIcons.PillRight))
+		}
 		return pillWrap(body.Render(label), capColor, dim)
 	})
 }
