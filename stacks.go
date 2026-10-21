@@ -201,7 +201,12 @@ func stackLabel(rows []TableRow) string {
 	label := strings.TrimRight(string(prefix), "/-_")
 	if label == "" ||
 		!strings.Contains(label, "/") && strings.HasPrefix(rows[0].Item.PR.HeadRefName, label+"/") {
-		label = rows[len(rows)-1].Item.PR.HeadRefName
+		return rows[len(rows)-1].Item.PR.HeadRefName
+	}
+	for _, row := range rows {
+		if row.Item.PR.HeadRefName != label {
+			return label + valueEllipsis
+		}
 	}
 	return label
 }

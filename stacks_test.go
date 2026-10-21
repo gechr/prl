@@ -112,7 +112,7 @@ func TestStackDefaultOrderUsesTopPRPosition(t *testing.T) {
 	rows := stackRows([]PullRequest{prs[0], prs[3], prs[2], prs[1]})
 	grouped := groupStackRows(rows, nil, "", false)
 	require.Equal(t, []int{10, 2, 99, 1}, stackRowNumbers(grouped))
-	require.Equal(t, "repo · feature/layer · 3 PRs onto main", grouped[1].Item.StackHeader)
+	require.Equal(t, "repo · feature/layer… · 3 PRs onto main", grouped[1].Item.StackHeader)
 }
 
 func TestStackNativeIdentityHandlesMissingIntermediatePR(t *testing.T) {
@@ -120,7 +120,7 @@ func TestStackNativeIdentityHandlesMissingIntermediatePR(t *testing.T) {
 	grouped := groupStackRows(stackRows([]PullRequest{prs[0], prs[2]}), nil, "", false)
 	require.Equal(t, []int{2, 1}, stackRowNumbers(grouped))
 	require.Equal(t, grouped[0].Item.StackKey, grouped[1].Item.StackKey)
-	require.Equal(t, "repo · feature/layer · 2 PRs onto main", grouped[0].Item.StackHeader)
+	require.Equal(t, "repo · feature/layer… · 2 PRs onto main", grouped[0].Item.StackHeader)
 }
 
 func TestStackLegacyBranchChain(t *testing.T) {
@@ -506,4 +506,29 @@ func TestStackLabelPreservesUnicode(t *testing.T) {
 		{Item: PRRowModel{PR: PullRequest{HeadRefName: "feature/être"}}},
 	}
 	require.Equal(t, "feature/être", stackLabel(rows))
+}
+
+func TestStackLabelMarksShortenedPrefixes(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		branches []string
+		want     string
+	}{
+		{"partial word", []string{"topic/refactor-cache", "topic/remove-cache"}, "topic/re…"},
+		{"layer suffix", []string{"feature/layer-3", "feature/layer-1"}, "feature/layer…"},
+		{"single-character suffix", []string{"topic/cacheA", "topic/cacheB"}, "topic/cache…"},
+		{"unicode prefix", []string{"topic/éclair", "topic/école"}, "topic/éc…"},
+		{"no prefix", []string{"add-metrics", "enable-cache"}, "enable-cache"},
+		{"namespace only", []string{"dev/add-cache", "dev/remove-cache"}, "dev/remove-cache"},
+		{"complete branch", []string{"feature/cache", "feature/cache"}, "feature/cache"},
+		{"one branch extends the other", []string{"feature/cache-more", "feature/cache"}, "feature/cache…"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := make([]TableRow, len(tc.branches))
+			for i, branch := range tc.branches {
+				rows[i].Item.PR.HeadRefName = branch
+			}
+			require.Equal(t, tc.want, stackLabel(rows))
+		})
+	}
 }
