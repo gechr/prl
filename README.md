@@ -47,6 +47,10 @@ prl -s all
 # PRs for a specific repo
 prl --repo owner/repo
 
+# GitHub URLs work too, with or without the scheme
+prl -R https://github.com/owner/repo -a any
+prl -R github.com/owner/repo -a any
+
 # PRs with "fix" in the title/body/comments
 prl fix
 

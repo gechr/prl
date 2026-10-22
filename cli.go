@@ -10,6 +10,7 @@ import (
 	"github.com/gechr/clog"
 	"github.com/gechr/conductor"
 	cli "github.com/gechr/conductor/cli/kong"
+	"github.com/gechr/forge"
 	xfilepath "github.com/gechr/x/filepath"
 	xslices "github.com/gechr/x/slices"
 	xstrings "github.com/gechr/x/strings"
@@ -151,16 +152,30 @@ func (c *CLI) ConductorFlags() conductor.Flags {
 func (c *CLI) Validate() error {
 	c.Review = normalizeReviewFilterValue(c.Review)
 
-	// Resolve filesystem paths to their GitHub remote owner/repo.
+	// Resolve repository URLs and filesystem paths to owner/repo.
 	for i, v := range c.Repo.Values {
-		if !xfilepath.LooksLikePath(v) {
+		value := strings.TrimLeft(v, "-!")
+		prefix := v[:len(v)-len(value)]
+		var owner, repo string
+		var err error
+		if xfilepath.LooksLikePath(value) {
+			owner, repo, err = gitRemoteOwnerRepo(value)
+		} else if ref, ok := forge.ParseURL(value); ok {
+			if ref.Host != forge.HostGitHub {
+				return fmt.Errorf("--repo URL must refer to a GitHub repository")
+			}
+			owner, repo = ref.Owner, ref.Name
+		} else {
+			if strings.Contains(value, "://") || strings.HasPrefix(value, "git@") ||
+				strings.HasPrefix(value, forge.HostGitHub+"/") {
+				return fmt.Errorf("invalid --repo URL")
+			}
 			continue
 		}
-		owner, repo, err := gitRemoteOwnerRepo(v)
 		if err != nil {
-			return err
+			return fmt.Errorf("invalid --repo value: %w", err)
 		}
-		c.Repo.Values[i] = owner + "/" + repo
+		c.Repo.Values[i] = prefix + owner + "/" + repo
 	}
 	for i, v := range c.Owner.Values {
 		if !xfilepath.LooksLikePath(v) {

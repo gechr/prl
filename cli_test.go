@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -110,6 +113,84 @@ func TestValidate_AllowsAuthorAndTeamTogether(t *testing.T) {
 	}
 
 	require.NoError(t, cli.Validate())
+}
+
+func TestValidate_RepositoryURLs(t *testing.T) {
+	for _, input := range []string{
+		"https://github.com/owner/repo",
+		"github.com/owner/repo",
+		"https://github.com/owner/repo/",
+		"https://github.com/owner/repo.git",
+		"git@github.com:owner/repo.git",
+		"ssh://git@github.com/owner/repo.git",
+		"https://github.com/owner/repo/pull/42",
+		"github.com/owner/repo#42",
+		"owner/repo",
+	} {
+		t.Run(input, func(t *testing.T) {
+			cli := &CLI{
+				Repo:   CSVFlag{Values: []string{input}},
+				Author: &CSVFlag{Values: []string{"any"}},
+			}
+			require.NoError(t, cli.Validate())
+			require.Equal(t, []string{"owner/repo"}, cli.Repo.Values)
+			cli.Normalize(&Config{})
+			params, err := buildSearchQuery(cli, &Config{})
+			require.NoError(t, err)
+			require.Equal(t, "is:pr archived:false state:open repo:owner/repo", params.Query)
+		})
+	}
+}
+
+func TestValidate_RepositoryPaths(t *testing.T) {
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", dir},
+		{"-C", dir, "remote", "add", "origin", "https://github.com/owner/repo.git"},
+	} {
+		err := exec.CommandContext(t.Context(), "git", args...).Run()
+		require.NoError(t, err)
+	}
+	subdir := filepath.Join(dir, "subdir")
+	require.NoError(t, os.Mkdir(subdir, 0o755))
+	t.Chdir(subdir)
+
+	for _, path := range []string{dir, ".", "..", "../subdir"} {
+		for _, prefix := range []string{"", "!", "-"} {
+			cli := &CLI{Repo: CSVFlag{Values: []string{prefix + path}}}
+			require.NoError(t, cli.Validate())
+			require.Equal(t, []string{prefix + "owner/repo"}, cli.Repo.Values)
+		}
+	}
+}
+
+func TestValidate_RepositoryURLsPreserveExclusions(t *testing.T) {
+	cli := &CLI{Repo: CSVFlag{Values: []string{
+		"github.com/owner/repo",
+		"!https://github.com/owner/excluded",
+		"-git@github.com:owner/other.git",
+	}}}
+	require.NoError(t, cli.Validate())
+	params, err := buildSearchQuery(cli, &Config{})
+	require.NoError(t, err)
+	require.Equal(t,
+		"is:pr archived:false state:open repo:owner/repo -repo:owner/excluded -repo:owner/other",
+		params.Query,
+	)
+}
+
+func TestValidate_RejectsInvalidRepositoryURLs(t *testing.T) {
+	for _, input := range []string{
+		"https://github.com/owner",
+		"github.com/owner",
+		"https://github.com.evil.tld/owner/repo",
+		"git@notgithub.com:owner/repo.git",
+	} {
+		t.Run(input, func(t *testing.T) {
+			cli := &CLI{Repo: CSVFlag{Values: []string{input}}}
+			require.Error(t, cli.Validate())
+		})
+	}
 }
 
 func TestValidate_RejectsNegatedRequestedForUnsubscribe(t *testing.T) {
