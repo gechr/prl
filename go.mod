@@ -15,14 +15,14 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/cli/go-gh/v2 v2.17.0
-	github.com/gechr/clib v0.8.1
-	github.com/gechr/clive v0.4.12
-	github.com/gechr/clog v0.17.3
-	github.com/gechr/conductor v0.1.19
-	github.com/gechr/forge v0.0.6
+	github.com/gechr/clib v0.8.2
+	github.com/gechr/clive v0.4.13
+	github.com/gechr/clog v0.17.4
+	github.com/gechr/conductor v0.1.20
+	github.com/gechr/forge v0.0.7
 	github.com/gechr/gorules v0.0.4
-	github.com/gechr/primer v0.2.8
-	github.com/gechr/x v0.6.3
+	github.com/gechr/primer v0.2.9
+	github.com/gechr/x v0.6.4
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/confmap v1.0.1
