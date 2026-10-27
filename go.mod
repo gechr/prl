@@ -15,7 +15,7 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/cli/go-gh/v2 v2.17.0
-	github.com/gechr/clib v0.8.2
+	github.com/gechr/clib v0.8.3
 	github.com/gechr/clive v0.4.13
 	github.com/gechr/clog v0.17.4
 	github.com/gechr/conductor v0.1.20

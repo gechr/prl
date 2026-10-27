@@ -704,6 +704,8 @@ func resolveMergeStatus(
 	switch {
 	case ciState == valueCIFailure || ciState == valueCIError:
 		return MergeStatusCIFailed
+	case ciState == valueCIStartupFailed:
+		return MergeStatusCIError
 	case ciState == valueCIPending || ciState == valueCIExpected:
 		return MergeStatusCIPending
 	case ciState == valueCISuccess &&
@@ -721,6 +723,7 @@ func checkSuitesCIState(suites listCheckSuites) (string, bool) {
 	}
 
 	ran := false
+	startupFailed := false
 	readable := 0
 	for _, suite := range suites.Nodes {
 		// A suite the token cannot read arrives as null. Reporting the set as
@@ -734,9 +737,14 @@ func checkSuitesCIState(suites listCheckSuites) (string, bool) {
 		if suite.Conclusion != nil {
 			conclusion = *suite.Conclusion
 		}
-		if isFailingCheckSuiteConclusion(conclusion) &&
-			(checkSuiteRan(suite) || isTerminalFailCheckSuiteConclusion(conclusion)) {
+		if isFailingCheckSuiteConclusion(conclusion) && checkSuiteRan(suite) {
 			return valueCIFailure, true
+		}
+		// A workflow that fails to start never creates check runs, so GitHub
+		// leaves it out of the rollup and reports the checks as passing. Keep it
+		// visible, but apart from a real failure.
+		if conclusion == valueCIStartupFailed && !checkSuiteRan(suite) {
+			startupFailed = true
 		}
 		if checkSuiteRan(suite) {
 			ran = true
@@ -748,6 +756,9 @@ func checkSuitesCIState(suites listCheckSuites) (string, bool) {
 
 	if readable == 0 {
 		return "", false
+	}
+	if startupFailed {
+		return valueCIStartupFailed, true
 	}
 	if !ran {
 		return "", true
@@ -773,10 +784,6 @@ func isFailingCheckSuiteConclusion(conclusion string) bool {
 	default:
 		return false
 	}
-}
-
-func isTerminalFailCheckSuiteConclusion(conclusion string) bool {
-	return conclusion == valueCIStartupFailed
 }
 
 func applyMergeStatusResult(
@@ -1373,7 +1380,8 @@ const hydrateChunkSize = 15
 
 // filterByCI keeps only PRs whose enriched MergeStatus matches the given CI status.
 // CISuccess matches PRs where CI passed (MergeStatusReady or MergeStatusBlocked).
-// CIFailure matches MergeStatusCIFailed. CIPending matches MergeStatusCIPending.
+// CIFailure matches MergeStatusCIFailed and MergeStatusCIError. CIPending matches
+// MergeStatusCIPending.
 func filterByCI(prs []PullRequest, ci CIStatus) []PullRequest {
 	result := make([]PullRequest, 0, len(prs))
 	for _, pr := range prs {
@@ -1390,7 +1398,7 @@ func matchesCI(pr PullRequest, ci CIStatus) bool {
 	case CISuccess:
 		return pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusBlocked
 	case CIFailure:
-		return pr.MergeStatus == MergeStatusCIFailed
+		return pr.MergeStatus == MergeStatusCIFailed || pr.MergeStatus == MergeStatusCIError
 	case CIPending:
 		return pr.MergeStatus == MergeStatusCIPending
 	case CINone:

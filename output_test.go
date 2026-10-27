@@ -1002,6 +1002,7 @@ func TestResolveMergeStatus(t *testing.T) {
 		want             MergeStatus
 	}{
 		{"ci failed", valueCIFailure, &approved, "", MergeStatusCIFailed},
+		{"ci startup failure", valueCIStartupFailed, &approved, "", MergeStatusCIError},
 		{"ci pending", valueCIPending, &approved, "", MergeStatusCIPending},
 		{"ci success + approved", valueCISuccess, &approved, "", MergeStatusReady},
 		// CODEOWNERS-only repos: required_reviewers=0 leaves reviewDecision empty but mergeStateStatus=CLEAN
@@ -1062,10 +1063,27 @@ func TestCheckSuitesCIStateIgnoresPhantomSuites(t *testing.T) {
 	require.Empty(t, got)
 }
 
-func TestCheckSuitesCIStateCountsStartupFailuresWithoutRuns(t *testing.T) {
+func TestCheckSuitesCIStateReportsStartupFailuresWithoutRuns(t *testing.T) {
 	suites := listCheckSuites{
-		TotalCount: 1,
-		Nodes:      []*listCheckSuite{testCheckSuite(new(valueCIStartupFailed), 0)},
+		TotalCount: 2,
+		Nodes: []*listCheckSuite{
+			testCheckSuite(new(valueCIStartupFailed), 0),
+			testCheckSuite(new(valueCISuccess), 1),
+		},
+	}
+
+	got, ok := checkSuitesCIState(suites)
+	require.True(t, ok)
+	require.Equal(t, valueCIStartupFailed, got)
+}
+
+func TestCheckSuitesCIStatePrefersFailureOverStartupFailure(t *testing.T) {
+	suites := listCheckSuites{
+		TotalCount: 2,
+		Nodes: []*listCheckSuite{
+			testCheckSuite(new(valueCIStartupFailed), 0),
+			testCheckSuite(new(valueCIFailure), 1),
+		},
 	}
 
 	got, ok := checkSuitesCIState(suites)

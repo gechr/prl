@@ -2229,6 +2229,8 @@ func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 		)
 	case resolvedCIFailed:
 		return statusBadge("CI failed", activeIcons.StatusCIFailed, colorGitHubClosed, styleClosed)
+	case resolvedCIError:
+		return statusBadge("CI error", activeIcons.StatusCIFailed, colorGitHubClosed, styleClosed)
 	case resolvedBlocked:
 		return statusBadge(
 			"Needs review",

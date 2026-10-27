@@ -100,12 +100,13 @@ const (
 // MergeStatus.String() display strings. Distinct from the GitHub API
 // check-state enum values below (valueCIPending, valueCIFailure).
 const (
+	valueMergeCIError   = "ci_error"
 	valueMergeCIFailed  = "ci_failed"
 	valueMergeCIPending = "ci_pending"
 )
 
-// PR table-model status strings (pr_table_model.go). valueMergeCIPending
-// above is shared.
+// PR table-model status strings (pr_table_model.go). valueMergeCIError and
+// valueMergeCIPending above are shared.
 const (
 	valueCIFail        = "ci_fail"
 	valueMergeConflict = "merge_conflict"

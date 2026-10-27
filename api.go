@@ -764,6 +764,7 @@ func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage,
 			Commits struct {
 				Nodes []struct {
 					Commit struct {
+						CheckSuites       listCheckSuites `json:"checkSuites"`
 						StatusCheckRollup *struct {
 							State    string `json:"state"`
 							Contexts struct {
@@ -809,6 +810,13 @@ func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage,
 					commits(last: 1) {
 						nodes {
 							commit {
+								checkSuites(first: 50) {
+									totalCount
+									nodes {
+										conclusion
+										checkRuns(first: 1) { totalCount }
+									}
+								}
 								statusCheckRollup {
 									state
 									contexts(first: 100) {
@@ -850,7 +858,10 @@ func (a *ActionRunner) fetchPRDetailFirstPage(nodeID string) (prDetailFirstPage,
 
 	ciState := ""
 	if len(result.Node.Commits.Nodes) > 0 {
-		if rollup := result.Node.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+		commit := result.Node.Commits.Nodes[0].Commit
+		if checkState, ok := checkSuitesCIState(commit.CheckSuites); ok {
+			ciState = checkState
+		} else if rollup := commit.StatusCheckRollup; rollup != nil {
 			ciState = rollup.State
 		}
 	}

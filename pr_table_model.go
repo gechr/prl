@@ -142,6 +142,8 @@ func deriveMergeReason(pr PullRequest) string {
 		return valueMergeCIPending
 	case MergeStatusCIFailed:
 		return valueCIFail
+	case MergeStatusCIError:
+		return valueMergeCIError
 	case MergeStatusBlocked:
 		if pr.ReviewDecision == valueReviewChanges {
 			// Same vocabulary as the review column and the --review filter.
