@@ -722,14 +722,14 @@ func TestCyclePreset(t *testing.T) {
 	}
 	require.Equal(
 		t,
-		[]string{"Waiting for CI", "Approved by you", "Mergeable", "Needs attention", ""},
+		[]string{"Waiting for CI", "Approved by you", "Mergeable", "Outdated", "Blocked", ""},
 		seen,
 	)
 	require.Empty(t, m.cfg.TUI.Filters.Preset)
 	require.True(t, isShown(m, key), "no preset shows every row again")
 
 	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
-	require.Equal(t, "Needs attention", m.cli.preset)
+	require.Equal(t, "Blocked", m.cli.preset)
 	require.True(t, isShown(m, key))
 	require.False(t, isShown(m, makePRKey(approvalTestPR(2))))
 

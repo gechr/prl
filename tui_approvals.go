@@ -312,6 +312,7 @@ func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
 	m.updatePR(msg.key, func(item *PRRowModel) {
 		if fresh.reviewDecisionLoaded {
 			item.PR.MergeStatus = fresh.MergeStatus
+			item.PR.behind = fresh.behind
 			item.PR.ReviewDecision = fresh.ReviewDecision
 			item.PR.reviewDecisionLoaded = true
 			if fresh.HeadSHA != "" {

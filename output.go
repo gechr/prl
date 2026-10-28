@@ -37,6 +37,7 @@ type listMetadataCacheEntry struct {
 	headSHA              string
 	mergeStatus          MergeStatus
 	mergeStatusLoaded    bool
+	behind               bool
 	automerge            bool
 	automergeLoaded      bool
 	reviewDecision       string
@@ -103,6 +104,7 @@ func (c *listMetadataCache) apply(
 			return false
 		}
 		pr.MergeStatus = entry.mergeStatus
+		pr.behind = entry.behind
 		pr.ReviewDecision = entry.reviewDecision
 		pr.reviewDecisionLoaded = true
 		if req.automerge {
@@ -219,6 +221,7 @@ func (c *listMetadataCache) store(
 	if req.mergeStatus && pr.State == valueOpen {
 		entry.headSHA = pr.HeadSHA
 		entry.mergeStatus = pr.MergeStatus
+		entry.behind = pr.behind
 		entry.mergeStatusLoaded = true
 		entry.reviewDecision = pr.ReviewDecision
 		entry.reviewLoaded = pr.reviewDecisionLoaded
@@ -711,6 +714,9 @@ func resolveMergeStatus(
 	case ciState == valueCISuccess &&
 		reviewDecision != nil &&
 		*reviewDecision == valueReviewApproved:
+		if mergeStateStatus == valueMergeStateBehind {
+			return MergeStatusBehind
+		}
 		return MergeStatusReady
 	default:
 		return MergeStatusBlocked
@@ -810,6 +816,7 @@ func applyMergeStatusResult(
 	for _, idx := range indices {
 		prs[idx].HeadSHA = headSHA
 		prs[idx].MergeStatus = status
+		prs[idx].behind = mergeStateStatus == valueMergeStateBehind
 		if automergeLoaded {
 			prs[idx].Automerge = automergeEnabled
 			prs[idx].automergeLoaded = true
@@ -902,6 +909,7 @@ func applyConflictNode(
 	for _, idx := range indices {
 		prs[idx].HeadSHA = node.HeadRefOID
 		prs[idx].MergeStatus = MergeStatusConflict
+		prs[idx].behind = false
 		if includeAutomerge {
 			prs[idx].Automerge = node.AutomergeRequest != nil
 			prs[idx].automergeLoaded = true
@@ -1390,13 +1398,15 @@ func filterByCI(prs []PullRequest, ci CIFilter) []PullRequest {
 }
 
 // matchesCI reports whether a PR's enriched MergeStatus has the given CI status.
-// CISuccess matches PRs where CI passed (MergeStatusReady or MergeStatusBlocked).
+// CISuccess matches PRs where CI passed (MergeStatusReady, MergeStatusBehind or
+// MergeStatusBlocked).
 // CIFailure matches MergeStatusCIFailed and MergeStatusCIError. CIPending matches
 // MergeStatusCIPending.
 func matchesCI(pr PullRequest, ci CIStatus) bool {
 	switch ci {
 	case CISuccess:
-		return pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusBlocked
+		return pr.MergeStatus == MergeStatusReady || pr.MergeStatus == MergeStatusBehind ||
+			pr.MergeStatus == MergeStatusBlocked
 	case CIFailure:
 		return pr.MergeStatus == MergeStatusCIFailed || pr.MergeStatus == MergeStatusCIError
 	case CIPending:

@@ -35,18 +35,21 @@ var defaultPresets = []TUIPresetConfig{
 	},
 	{Name: "Approved by you", Filter: "approved !mine", Color: "green"},
 	{Name: "Mergeable", Filter: presetTermMergeable, Color: "magenta"},
-	{Name: "Needs attention", Filter: presetTermBroken, Color: "red"},
+	{Name: "Outdated", Filter: presetTermOutdated, Color: "yellow"},
+	{Name: "Blocked", Filter: presetTermBlocked, Color: "red"},
 }
 
 // Preset filter terms.
 const (
 	presetTermApproved   = "approved"
 	presetTermApprovable = "approvable"
+	presetTermBlocked    = "blocked"
 	presetTermBroken     = "broken"
 	presetTermConflict   = "conflict"
 	presetTermDraft      = "draft"
 	presetTermMergeable  = "mergeable"
 	presetTermMine       = "mine"
+	presetTermOutdated   = "outdated"
 	presetTermReady      = "ready"
 	presetPrefixCI       = "ci:"
 	presetPrefixReview   = "review:"
@@ -64,7 +67,9 @@ type presetTerm struct {
 // negated with a leading "!" or "-":
 //
 //	mine, draft, approved (by you), approvable, mergeable, ready, conflict,
-//	broken (failing CI or merge conflicts),
+//	broken (failing CI or merge conflicts), blocked (not a draft, and broken
+//	or changes requested), outdated (not a draft, and behind a base branch
+//	that requires it to be up to date),
 //	ci:<success|failure|pending>, review:<required|approved|changes_requested|none>
 func parsePresetFilter(s string) (presetFilter, error) {
 	fields := strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == ',' })
@@ -111,6 +116,19 @@ func presetTermMatcher(name string) (func(PullRequest, bool) bool, error) {
 		// Something the author must fix: failing CI or merge conflicts.
 		return func(pr PullRequest, _ bool) bool {
 			return matchesCI(pr, CIFailure) || pr.MergeStatus == MergeStatusConflict
+		}, nil
+	case presetTermBlocked:
+		// Open, not a draft, and unmergeable until someone acts, as opposed to
+		// waiting on review or running CI.
+		return func(pr PullRequest, _ bool) bool {
+			return !pr.IsDraft && strings.EqualFold(pr.State, valueOpen) &&
+				(matchesCI(pr, CIFailure) ||
+					pr.MergeStatus == MergeStatusConflict ||
+					deriveReviewStatus(pr) == valueReviewFilterChanges)
+		}, nil
+	case presetTermOutdated:
+		return func(pr PullRequest, _ bool) bool {
+			return !pr.IsDraft && strings.EqualFold(pr.State, valueOpen) && pr.behind
 		}, nil
 	case presetTermReady:
 		return func(pr PullRequest, _ bool) bool { return pr.MergeStatus == MergeStatusReady }, nil

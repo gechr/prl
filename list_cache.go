@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	listResultCacheVersion   = 3
+	listResultCacheVersion   = 4
 	listResultCacheDirPerm   = 0o755
 	listResultCacheFilePerm  = 0o600
 	tuiListResultCacheMaxAge = 15 * time.Minute
@@ -31,6 +31,7 @@ type listResultCacheFile struct {
 type cachedPullRequest struct {
 	Automerge            bool       `json:"automerge"`
 	AutomergeLoaded      bool       `json:"automergeLoaded"`
+	Behind               bool       `json:"behind"`
 	Author               Author     `json:"author"`
 	CreatedAt            time.Time  `json:"createdAt"`
 	HeadSHA              string     `json:"headSha"`
@@ -92,6 +93,7 @@ func cachedPR(pr PullRequest) cachedPullRequest {
 		Automerge:            pr.Automerge,
 		AutomergeLoaded:      pr.automergeLoaded,
 		Author:               pr.Author,
+		Behind:               pr.behind,
 		CreatedAt:            pr.CreatedAt,
 		HeadSHA:              pr.HeadSHA,
 		HeadRefName:          pr.HeadRefName,
@@ -142,6 +144,7 @@ func (pr cachedPullRequest) pullRequest() PullRequest {
 		UpdatedAt:            pr.UpdatedAt,
 		URL:                  pr.URL,
 		automergeLoaded:      pr.AutomergeLoaded,
+		behind:               pr.Behind,
 		reviewDecisionLoaded: pr.ReviewDecisionLoaded,
 		viewerApprovalLoaded: pr.ViewerApprovalLoaded,
 		viewerApproved:       pr.ViewerApproved,

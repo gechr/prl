@@ -2275,7 +2275,8 @@ func (m tuiModel) renderDetailContent() []string {
 			strings.Join(parts, " · "))
 	}
 	lines = append(lines, detailIndent+labelStyle.Render(" Status: ")+m.renderDetailStatus(pr))
-	if m.detail.MergeableState == valueBehind {
+	// The Outdated badge already says so.
+	if m.detail.MergeableState == valueBehind && resolvePRStatus(pr) != resolvedBehind {
 		lines = append(lines, detailIndent+labelStyle.Render(" State: ")+
 			styleWarning.Render("Branch out-of-date"))
 	}
@@ -2423,6 +2424,13 @@ func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 			activeIcons.StatusConflict,
 			colorGitHubClosed,
 			styleHeading,
+		)
+	case resolvedBehind:
+		return statusBadge(
+			"Outdated",
+			activeIcons.StatusConflict,
+			colorGitHubAttention,
+			styleWarning,
 		)
 	case resolvedUnknown:
 		return statusBadge("Unknown", activeIcons.StatusUnknown, colorGitHubDraft, styleDim)

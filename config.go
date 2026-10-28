@@ -801,6 +801,8 @@ tui:
   # with !).
   # Terms: mine, draft, approved (by you), approvable, mergeable, ready,
   #        conflict, broken (failing CI or merge conflicts),
+  #        blocked (not a draft, and broken or changes requested),
+  #        outdated (not a draft, and behind the base),
   #        ci:<success|failure|pending>,
   #        review:<required|approved|changes_requested|none>
   # If omitted, prl uses these presets:
@@ -818,8 +820,11 @@ tui:
   #     - name: Mergeable
   #       filter: mergeable
   #       color: magenta
-  #     - name: Needs attention
-  #       filter: broken
+  #     - name: Outdated
+  #       filter: outdated
+  #       color: yellow
+  #     - name: Blocked
+  #       filter: blocked
   #       color: red
 
   # Group stacked PRs into hierarchies. Shift+O changes this for later sessions.

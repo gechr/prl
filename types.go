@@ -24,6 +24,7 @@ const (
 	MergeStatusCIFailed              // CI failed or errored
 	MergeStatusConflict              // merge conflicts with base branch
 	MergeStatusCIError               // a workflow failed to start; no check failed
+	MergeStatusBehind                // CI passing + approved, but the base requires an up-to-date head
 )
 
 func (m MergeStatus) String() string {
@@ -42,6 +43,8 @@ func (m MergeStatus) String() string {
 		return valueConflict
 	case MergeStatusCIError:
 		return valueMergeCIError
+	case MergeStatusBehind:
+		return valueBehind
 	}
 	return "unknown"
 }
@@ -65,6 +68,7 @@ const (
 	resolvedCIError                    // open + workflow failed to start
 	resolvedBlocked                    // open + awaiting review
 	resolvedConflict                   // open + merge conflicts
+	resolvedBehind                     // open + CI pass + approved, but out of date
 	resolvedUnknown                    // unknown state
 )
 
@@ -99,6 +103,8 @@ func resolvePRStatus(pr PullRequest) resolvedStatus {
 		return resolvedBlocked
 	case MergeStatusConflict:
 		return resolvedConflict
+	case MergeStatusBehind:
+		return resolvedBehind
 	case MergeStatusUnknown:
 		return resolvedUnknown
 	}
@@ -137,7 +143,10 @@ type PullRequest struct {
 	UpdatedAt      time.Time   `json:"updatedAt"`
 	URL            string      `json:"url"`
 
-	automergeLoaded      bool
+	automergeLoaded bool
+	// behind is whether the base branch requires the head to be brought up
+	// to date before merging.
+	behind               bool
 	reviewDecisionLoaded bool
 	viewerApproved       bool
 	viewerApprovalLoaded bool

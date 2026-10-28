@@ -32,6 +32,22 @@ func TestPresetFilterMatches(t *testing.T) {
 	pending := open
 	pending.MergeStatus = MergeStatusCIPending
 
+	changesRequested := open
+	changesRequested.ReviewDecision = valueReviewChanges
+
+	behind := ready
+	behind.MergeStatus = MergeStatusBehind
+	behind.behind = true
+
+	failingDraft := failing
+	failingDraft.IsDraft = true
+
+	behindDraft := behind
+	behindDraft.IsDraft = true
+
+	closedFailing := failing
+	closedFailing.State = valueClosed
+
 	tests := []struct {
 		filter string
 		pr     PullRequest
@@ -53,6 +69,23 @@ func TestPresetFilterMatches(t *testing.T) {
 		{"broken", conflicted, false, true},
 		{"broken", failing, false, true},
 		{"broken", pending, false, false},
+		{"broken", changesRequested, false, false},
+		{"blocked", failing, false, true},
+		{"blocked", conflicted, false, true},
+		{"blocked", changesRequested, false, true},
+		{"blocked", draft, false, false},
+		{"blocked", failingDraft, false, false},
+		{"blocked", behind, false, false},
+		{"outdated", behind, false, true},
+		{"outdated", ready, false, false},
+		{"outdated", behindDraft, false, false},
+		{"blocked", closedFailing, false, false},
+		{"blocked", open, false, false},
+		{"blocked", pending, false, false},
+		{"blocked", ready, false, false},
+		{"mergeable", behind, false, false},
+		{"ready", behind, false, false},
+		{"ci:success", behind, false, true},
 		{"approvable", conflicted, false, false},
 		{"!mine !draft !approved !review:approved ci:pending", pending, false, true},
 		{"!mine !draft !approved !review:approved ci:pending", open, false, false},

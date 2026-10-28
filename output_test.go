@@ -365,6 +365,39 @@ func TestHydrateListMetadataKeepsReviewDecisionOnConflicts(t *testing.T) {
 	require.Equal(t, valueReviewChanges, prs[0].ReviewDecision)
 }
 
+func TestHydrateListMetadataMarksBehindBranches(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "/graphql", req.URL.Path)
+		readBody(t, req.Body)
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			fmt.Sprintf(`{"data":{"mergeNodes":[
+				{"id":"PR_1","headRefOid":"sha-1","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[]}},
+				{"id":"PR_2","headRefOid":"sha-2","mergeStateStatus":%q,"reviewDecision":%q,"commits":{"nodes":[]}}
+			]}}`, valueMergeStateBehind, valueReviewApproved, valueMergeStateClean, valueReviewApproved),
+		), nil
+	})
+
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	prs := []PullRequest{
+		{NodeID: "PR_1", State: valueOpen},
+		{NodeID: "PR_2", State: valueOpen, behind: true},
+	}
+
+	_, err = hydrateListMetadata(gql, prs, listMetadataRequest{mergeStatus: true})
+	require.NoError(t, err)
+
+	require.True(t, prs[0].behind)
+	require.False(t, prs[1].behind)
+}
+
 func TestHydrateListMetadataKeepsPartialResponseData(t *testing.T) {
 	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		require.Equal(t, "/graphql", req.URL.Path)
@@ -1005,6 +1038,27 @@ func TestResolveMergeStatus(t *testing.T) {
 		{"ci startup failure", valueCIStartupFailed, &approved, "", MergeStatusCIError},
 		{"ci pending", valueCIPending, &approved, "", MergeStatusCIPending},
 		{"ci success + approved", valueCISuccess, &approved, "", MergeStatusReady},
+		{
+			"behind + ci success + approved",
+			valueCISuccess,
+			&approved,
+			valueMergeStateBehind,
+			MergeStatusBehind,
+		},
+		{
+			"behind + ci failed",
+			valueCIFailure,
+			&approved,
+			valueMergeStateBehind,
+			MergeStatusCIFailed,
+		},
+		{
+			"behind + ci success + no approval",
+			valueCISuccess,
+			nil,
+			valueMergeStateBehind,
+			MergeStatusBlocked,
+		},
 		// CODEOWNERS-only repos: required_reviewers=0 leaves reviewDecision empty but mergeStateStatus=CLEAN
 		{
 			"clean + ci success + empty reviewDecision",
