@@ -408,8 +408,11 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	}
 	newFilters := m.currentFilterValues()
 	newFilters[filterRowStacks] = 0
-	if oldStacks != m.stacksEnabled() && slices.Equal(oldFilters, newFilters) {
+	// CI is filtered locally; only the other rows change what is fetched.
+	oldFilters[filterRowCI], newFilters[filterRowCI] = 0, 0
+	if slices.Equal(oldFilters, newFilters) {
 		m.persistFilterState()
+		m.resyncCursorAndOffset()
 		return m, nil
 	}
 
@@ -437,24 +440,54 @@ func (m tuiModel) applyFilterChange() (tea.Model, tea.Cmd) {
 	return m, m.startRefresh(true)
 }
 
-// ciFilterCycle is the order f steps through CI filters: all, not failing,
-// passing, failing.
-var ciFilterCycle = [...]string{"", ciFilterNotFailing, ciStatusSuccess, ciStatusFailure}
-
-// cycleCIFilter steps the CI filter forwards (dir 1) or backwards (dir -1)
-// through ciFilterCycle. An expression outside the cycle counts as "all".
-func (m tuiModel) cycleCIFilter(dir int) (tea.Model, tea.Cmd) {
-	if m.cli.ciExplicit {
-		return m, tuiFlashMessage(&m, "CI filter is set by --ci", true)
+// cyclePreset steps forwards (dir 1) or backwards (dir -1) through the
+// configured presets, with "no preset" after the last one. An unknown active
+// preset counts as "no preset".
+func (m tuiModel) cyclePreset(dir int) (tea.Model, tea.Cmd) {
+	presets := configuredPresets(m.cfg)
+	n := len(presets) + 1 // the extra slot is "no preset"
+	idx := slices.IndexFunc(presets, func(p TUIPresetConfig) bool {
+		return p.Name == m.cli.preset
+	})
+	if idx < 0 {
+		idx = len(presets)
 	}
-	idx := max(0, slices.Index(ciFilterCycle[:], m.cli.CIFilter().String()))
-	n := len(ciFilterCycle)
-	m.cli.CI = ciFilterCycle[(idx+dir+n)%n]
-	m.cfg.TUI.Filters.CI = m.cli.CI
+	idx = (idx + dir + n) % n
+	m.cli.preset = ""
+	if idx < len(presets) {
+		m.cli.preset = presets[idx].Name
+	}
+	m.cfg.TUI.Filters.Preset = m.cli.preset
 	if err := saveTUIState(m.cfg); err != nil {
 		warnStateSaveErr(err, "filter settings")
 	}
-	return m.applyFilterChange()
+	// Presets apply when rows are shown, so no refetch is needed.
+	m.resyncCursorAndOffset()
+	return m, nil
+}
+
+// displayFilter holds the filters applied whenever rows are shown - the CI
+// filter and the active preset - parsed once per pass over the rows.
+type displayFilter struct {
+	ci     CIFilter
+	preset presetFilter
+}
+
+func (m tuiModel) displayFilter() displayFilter {
+	if m.cli == nil {
+		return displayFilter{}
+	}
+	preset, _ := presetFilterByName(m.cfg, m.cli.preset)
+	return displayFilter{ci: m.cli.CIFilter(), preset: preset}
+}
+
+// shows reports whether a row passes the display filters.
+func (m tuiModel) shows(df displayFilter, item PRRowModel) bool {
+	pr := item.PR
+	if df.ci.Active() && !df.ci.Matches(pr) {
+		return false
+	}
+	return df.preset == nil || df.preset.Matches(pr, m.isCurrentUserPR(pr) || pr.viewerIsAuthor)
 }
 
 // persistFilterState mirrors the current non-explicit filter values into config
@@ -536,9 +569,7 @@ func (m tuiModel) matchesLocalFilters(item PRRowModel) bool {
 	if m.cli.NoBot && item.Author.IsBot {
 		return false
 	}
-	if ci := m.cli.CIFilter(); ci.Active() && !ci.Matches(pr) {
-		return false
-	}
+
 	return m.matchesLocalReviewFilter(pr)
 }
 
@@ -600,6 +631,10 @@ func applyTUIFilterDefaults(cli *CLI, cfg *Config) bool {
 		cli.Review = f.Review
 		changed = true
 	}
+	// Presets filter locally, so restoring one needs no new search.
+	if _, ok := presetFilterByName(cfg, f.Preset); ok {
+		cli.preset = f.Preset
+	}
 	return changed
 }
 
@@ -611,6 +646,9 @@ func (m tuiModel) activeFilterTags() []string {
 		return nil
 	}
 	var tags []string
+	if _, ok := presetFilterByName(m.cfg, m.cli.preset); ok {
+		tags = append(tags, m.cli.preset)
+	}
 	if s := m.cli.PRState(); s != StateOpen {
 		tags = append(tags, "state:"+s.String())
 	}

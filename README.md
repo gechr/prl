@@ -200,7 +200,7 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 
 Stacked PRs are grouped by default, with IDs such as `1a`, `1b`, and `1c` from top to bottom; the next standalone PR is `2`. Sorting uses only the top PR in each stack. Open **Shift+O** and set **Stacks** to **show** or **hide** to switch views. Click the stack header or any tree connector to collapse or expand a stack, or use Left/Right on a stack. The display preference and folded stacks are saved between sessions.
 
-Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle the CI filter through not failing, passing, failing and all; `F` steps back.
+Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle through filter presets such as Approvable and Mergeable, and `F` to step back. prl remembers the active preset, and `tui.presets.filters` sets your own.
 
 Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --mode plan` for Gemini through `agy`, `--permission-mode plan` for Claude. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude and Gemini (and no sandbox). The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
 
@@ -326,6 +326,14 @@ tui:
 
           URL: {prURL}
   filters: {}
+  presets:
+    filters:
+      - name: Approvable
+        filter: approvable
+        color: blue
+      - name: Waiting for CI
+        filter: "!mine !draft !approved !review:approved ci:pending"
+        color: "208"
   stacks:
     enabled: true
   sort: {}
@@ -351,6 +359,7 @@ authors:
 - `icons`: `auto` selects Nerd Font icons when `NERD_FONTS` is non-empty and Unicode icons otherwise; use `nerd` or `unicode` to choose explicitly
 - `vcs`: controls whether `--clone` uses `git` or `jj`
 - `tui.refresh`, `tui.sort`, `tui.filters`, `tui.stacks.enabled`: starting defaults you manage. Interactive changes in the TUI (toggling auto-refresh, sorting columns, applying filters) are **not** written back to `config.yaml`. They're saved to a separate state file at `$XDG_STATE_HOME/prl/state.yaml` (default `~/.local/state/prl/state.yaml`), which mirrors the `tui:` subtree and takes precedence over config. This keeps your version-controlled config stable while remembering your last session.
+- `tui.presets.filters`: the named filters `f` cycles through in the TUI, shown by name. A filter is a space- or comma-separated list of terms that must all match: `mine`, `draft`, `approved` (approved by you), `approvable` (not yours, not a draft, not yet approved, CI passing), `mergeable` (not a draft, approved, CI passing, no conflicts), `ready`, `conflict`, `broken` (failing CI or merge conflicts), `ci:<status>` and `review:<decision>`. Prefix a term with `!` or `-` to negate it, and quote a filter that starts with `!`. `color` sets the name's colour: a name such as `blue`, a hex value or an ANSI number. Without this key, prl uses Approvable, Waiting for CI, Approved by you, Mergeable and Needs attention.
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
 - Gemini reviews require the Antigravity CLI (`agy`). Model and effort selections map to its model slugs (for example, `gemini-3.8-flash` with `high` selects `gemini-3.8-flash-high`) and `--effort` flag.
 

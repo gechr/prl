@@ -255,3 +255,67 @@ func TestLoadConfigMigratesLegacySlackDefaultOutput(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, valueTable, cfg.Default.Output)
 }
+
+func TestLoadConfigReadsPresetFilters(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(t, os.WriteFile(cp, []byte(`tui:
+  presets:
+    filters:
+      - name: Mine
+        filter: mine
+      - name: Not mine
+        filter: "!mine"
+`), 0o600))
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, []TUIPresetConfig{
+		{Name: "Mine", Filter: "mine"},
+		{Name: "Not mine", Filter: "!mine"},
+	}, configuredPresets(cfg))
+}
+
+func TestLoadConfigRejectsInvalidPresetFilter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(t, os.WriteFile(cp, []byte(`tui:
+  presets:
+    filters:
+      - name: Odd
+        filter: sometimes
+`), 0o600))
+
+	_, err = loadConfig()
+	require.EqualError(t, err, `tui.presets.filters "Odd": unknown term "sometimes"`)
+}
+
+func TestLoadConfigDefaultsPresets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, defaultPresets, configuredPresets(cfg))
+}
+
+func TestLoadConfigAcceptsNumericPresetColor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(t, os.WriteFile(cp, []byte(`tui:
+  presets:
+    filters:
+      - name: Orange
+        filter: mine
+        color: 208
+`), 0o600))
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, "208", configuredPresets(cfg)[0].Color)
+}

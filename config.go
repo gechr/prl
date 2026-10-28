@@ -114,6 +114,8 @@ type TUIFiltersConfig struct {
 	Archived *bool  `koanf:"archived" yaml:"archived"`
 	CI       string `koanf:"ci"       yaml:"ci"`
 	Review   string `koanf:"review"   yaml:"review"`
+	// Preset is the name of the active preset from tui.presets.filters.
+	Preset string `koanf:"preset" yaml:"preset,omitempty"`
 }
 
 type TUIReviewProviderConfig struct {
@@ -171,6 +173,7 @@ type TUIConfig struct {
 	AutoRefresh  TUIAutoRefreshConfig `koanf:"refresh"`
 	Review       TUIReviewConfig      `koanf:"review"`
 	Filters      TUIFiltersConfig     `koanf:"filters"`
+	Presets      TUIPresetsConfig     `koanf:"presets"`
 	Sort         TUISortConfig        `koanf:"sort"`
 	ScreenRepair bool                 `koanf:"screen_repair"`
 	Stacks       TUIStacksConfig      `koanf:"stacks"`
@@ -354,6 +357,9 @@ func loadConfig() (*Config, error) {
 		if _, ok := parsePRState(cfg.TUI.Filters.State); !ok {
 			return nil, fmt.Errorf("invalid tui.filters.state %q", cfg.TUI.Filters.State)
 		}
+	}
+	if err := validatePresets(cfg.TUI.Presets.Filters); err != nil {
+		return nil, err
 	}
 	if cfg.TUI.Filters.CI != "" {
 		if _, ok := parseCIFilter(cfg.TUI.Filters.CI); !ok {
@@ -787,6 +793,34 @@ tui:
   #   state: merged
   #   draft: false
   #   bots: false
+
+  # Named filters that f cycles through in the TUI (F steps back). The name is
+  # what the TUI shows, in the optional color (a name such as blue, a hex
+  # value or an ANSI number). Terms are space- or comma-separated and must all
+  # match; prefix a term with ! or - to negate it (quote a filter that starts
+  # with !).
+  # Terms: mine, draft, approved (by you), approvable, mergeable, ready,
+  #        conflict, broken (failing CI or merge conflicts),
+  #        ci:<success|failure|pending>,
+  #        review:<required|approved|changes_requested|none>
+  # If omitted, prl uses these presets:
+  # presets:
+  #   filters:
+  #     - name: Approvable
+  #       filter: approvable
+  #       color: blue
+  #     - name: Waiting for CI
+  #       filter: "!mine !draft !approved !review:approved ci:pending"
+  #       color: "208"
+  #     - name: Approved by you
+  #       filter: approved !mine
+  #       color: green
+  #     - name: Mergeable
+  #       filter: mergeable
+  #       color: magenta
+  #     - name: Needs attention
+  #       filter: broken
+  #       color: red
 
   # Group stacked PRs into hierarchies. Shift+O changes this for later sessions.
   stacks:

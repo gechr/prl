@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -63,6 +65,12 @@ func pressKey(t *testing.T, m tuiModel, keyText string) (tuiModel, tea.Cmd) {
 	return updateModel(t, m, tea.KeyPressMsg{Code: rune(keyText[0]), Text: keyText})
 }
 
+// isShown reports whether key's row is in the visible list.
+func isShown(m tuiModel, key prKey) bool {
+	idx := m.resolveIndex(key, -1)
+	return idx >= 0 && !m.isRowHidden(idx)
+}
+
 func approvedMsg(key prKey, err error) actionMsg {
 	return actionMsg{key: key, index: -1, ref: string(key), action: tuiActionApproved, err: err}
 }
@@ -116,7 +124,7 @@ func TestApprovalFailureKeepsRowHiddenWhenNewFilterExcludesIt(t *testing.T) {
 
 	m, _ = updateModel(t, m, approvedMsg(key, errApproveTest))
 
-	require.True(t, m.filterHidden[key])
+	require.False(t, isShown(m, key))
 	require.False(t, m.rows[0].Item.PR.viewerApproved)
 }
 
@@ -529,7 +537,7 @@ func TestAlignHeaderTruncatesTitleBeforeStatus(t *testing.T) {
 	)
 }
 
-func TestCycleCIFilter(t *testing.T) {
+func TestCyclePreset(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", "")
 	failing := approvalTestPR(1)
@@ -538,43 +546,121 @@ func TestCycleCIFilter(t *testing.T) {
 	m.cfg = &Config{}
 	key := makePRKey(failing)
 
-	m, cmd := pressKey(t, m, tuiKeybindCycleCI)
-	require.NotNil(t, cmd)
-	require.Equal(t, ciFilterNotFailing, m.cli.CI)
-	require.Equal(t, ciFilterNotFailing, m.cfg.TUI.Filters.CI)
-	require.True(t, m.filterHidden[key])
-	require.True(t, m.refreshing)
+	m, cmd := pressKey(t, m, tuiKeybindCyclePreset)
+	require.Nil(t, cmd, "presets filter locally, without a refetch")
+	require.False(t, m.refreshing)
+	require.Equal(t, "Approvable", m.cli.preset)
+	require.Equal(t, "Approvable", m.cfg.TUI.Filters.Preset)
+	require.False(t, isShown(m, key), "failing CI is not approvable")
+	require.Equal(t, "Approvable", m.activeFilterTags()[0])
 
 	var seen []string
-	for range ciFilterCycle {
-		m.refreshing = false
-		m, _ = pressKey(t, m, tuiKeybindCycleCI)
-		seen = append(seen, m.cli.CI)
+	for range defaultPresets {
+		m, _ = pressKey(t, m, tuiKeybindCyclePreset)
+		seen = append(seen, m.cli.preset)
 	}
 	require.Equal(
 		t,
-		[]string{ciStatusSuccess, ciStatusFailure, "", ciFilterNotFailing},
+		[]string{"Waiting for CI", "Approved by you", "Mergeable", "Needs attention", ""},
 		seen,
 	)
+	require.Empty(t, m.cfg.TUI.Filters.Preset)
+	require.True(t, isShown(m, key), "no preset shows every row again")
 
-	m, _ = pressKey(t, m, tuiKeybindCycleCIBack)
-	require.Empty(t, m.cli.CI)
-	m, _ = pressKey(t, m, tuiKeybindCycleCIBack)
-	require.Equal(t, ciStatusFailure, m.cli.CI)
+	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
+	require.Equal(t, "Needs attention", m.cli.preset)
+	require.True(t, isShown(m, key))
+	require.False(t, isShown(m, makePRKey(approvalTestPR(2))))
 
-	// An expression outside the cycle counts as "all".
-	m.cli.CI = ciStatusPending
-	m, _ = pressKey(t, m, tuiKeybindCycleCI)
-	require.Equal(t, ciFilterNotFailing, m.cli.CI)
+	// An unknown active preset counts as "no preset".
+	m.cli.preset = "Removed from config"
+	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
+	require.Equal(t, "Approvable", m.cli.preset)
 }
 
-func TestCycleCIFilterIsRestoredOnNextLaunch(t *testing.T) {
+func TestCyclePresetUsesConfiguredPresets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+	failing := approvalTestPR(1)
+	failing.MergeStatus = MergeStatusCIFailed
+	m := approvalTestModel("", failing, approvalTestPR(2))
+	m.cfg = &Config{}
+	m.cfg.TUI.Presets.Filters = []TUIPresetConfig{{Name: "Broken", Filter: "ci:failure"}}
+
+	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
+
+	require.Equal(t, "Broken", m.cli.preset)
+	require.True(t, isShown(m, makePRKey(failing)))
+	require.False(t, isShown(m, makePRKey(approvalTestPR(2))))
+
+	m.refreshing = false
+	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
+	require.Empty(t, m.cli.preset)
+}
+
+func TestLocalFiltersSurviveRefresh(t *testing.T) {
+	failing := approvalTestPR(1)
+	failing.MergeStatus = MergeStatusCIFailed
+	m := approvalTestModel("", approvalTestPR(2))
+	m.cli.CI = ciFilterNotFailing
+
+	fresh := []PRRowModel{{PR: failing}, {PR: approvalTestPR(2)}}
+	m, _ = updateModel(t, m, refreshResultMsg{queryGen: m.queryGen, items: fresh})
+
+	require.Len(t, m.rows, 2, "rows outside the CI filter are kept, hidden")
+	require.False(t, isShown(m, makePRKey(failing)))
+	require.True(t, isShown(m, makePRKey(approvalTestPR(2))))
+}
+
+func TestOverlayCIOnlyChangeAppliesWithoutRefetch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+	failing := approvalTestPR(1)
+	failing.MergeStatus = MergeStatusCIFailed
+	m := approvalTestModel("", failing, approvalTestPR(2))
+	m.cfg = &Config{}
+	m.showOptions = true
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Values[filterRowCI] = filterChoiceIndex(filterRowCI, ciFilterNotFailing)
+
+	model, cmd := m.applyFilterOptions()
+	m, ok := model.(tuiModel)
+	require.True(t, ok)
+
+	require.Nil(t, cmd)
+	require.False(t, m.refreshing)
+	require.Equal(t, ciFilterNotFailing, m.cli.CI)
+	require.False(t, isShown(m, makePRKey(failing)))
+}
+
+func TestTagSeparatorSetsPresetApart(t *testing.T) {
+	m := approvalTestModel("")
+	m.cfg = &Config{}
+	m.cli.preset = "Approvable"
+	m.cli.NoBot = true
+
+	line := ansi.Strip(m.renderTagSeparator(m.activeFilterTags(), -1))
+
+	require.Equal(
+		t,
+		" bots:hide · Approvable ──",
+		line[len(line)-len(" bots:hide · Approvable ──"):],
+	)
+
+	// Narrow: the option filters are shortened, the preset stays whole.
+	m.width = 22
+	m.cli.State = valueMerged
+	line = ansi.Strip(m.renderTagSeparator(m.activeFilterTags(), -1))
+	require.Equal(t, " stat… · Approvable ──", line)
+}
+
+func TestCyclePresetIsRestoredOnNextLaunch(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", "")
 	m := approvalTestModel("", approvalTestPR(1))
 	m.cfg = &Config{}
 
-	_, _ = pressKey(t, m, tuiKeybindCycleCI)
+	_, _ = pressKey(t, m, tuiKeybindCyclePreset)
 
 	st, err := loadTUIState()
 	require.NoError(t, err)
@@ -582,18 +668,7 @@ func TestCycleCIFilterIsRestoredOnNextLaunch(t *testing.T) {
 	applyTUIState(cfg, st)
 	cli := testCLI()
 	applyTUIFilterDefaults(cli, cfg)
-	require.Equal(t, ciFilterNotFailing, cli.CI)
-}
-
-func TestCycleCIFilterLockedByExplicitCI(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cli.CI = ciStatusSuccess
-	m.cli.ciExplicit = true
-
-	m, _ = pressKey(t, m, tuiKeybindCycleCI)
-
-	require.Equal(t, ciStatusSuccess, m.cli.CI)
-	require.False(t, m.refreshing)
+	require.Equal(t, "Approvable", cli.preset)
 }
 
 func TestDiffArrowKeysNavigateQueue(t *testing.T) {
@@ -608,4 +683,29 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
 	require.Empty(t, m.diffHistory)
 	require.Equal(t, k1, m.diffAwaitKey)
+}
+
+func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {
+	failing := approvalTestPR(1)
+	failing.MergeStatus = MergeStatusCIFailed
+	m := approvalTestModel("", failing)
+	m.filterInput = textinput.New()
+	m.cfg = &Config{}
+	m.cli.preset = "Approvable"
+	require.Equal(t, "No pull requests match the current filter", emptyOverlayHeadline(m))
+
+	m.removed[makePRKey(failing)] = true
+	require.Equal(t, "All pull requests have been processed", emptyOverlayHeadline(m))
+
+	m.rows, m.items, m.removed = nil, nil, make(prKeys)
+	require.Equal(t, "No pull requests found for the current query", emptyOverlayHeadline(m))
+}
+
+func emptyOverlayHeadline(m tuiModel) string {
+	for line := range strings.SplitSeq(ansi.Strip(m.renderEmptyOverlay()), "\n") {
+		if text := strings.Trim(line, "│ "); text != "" && !strings.HasPrefix(text, "╭") {
+			return text
+		}
+	}
+	return ""
 }

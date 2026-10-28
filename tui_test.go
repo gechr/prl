@@ -2084,11 +2084,12 @@ func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
 	model, cmd := m.updateOptionsOverlay(
 		tea.KeyPressMsg{Code: 'O', Text: "O"},
 	)
-	require.NotNil(t, cmd)
+	// Every row is locked, so nothing changed and nothing is refetched.
+	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.False(t, bm.showOptions)
-	require.True(t, bm.refreshing)
+	require.False(t, bm.refreshing)
 }
 
 func TestUpdateOptionsOverlayLockedRowsAreNoOps(t *testing.T) {

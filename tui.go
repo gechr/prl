@@ -471,9 +471,10 @@ type tuiModel struct {
 	optionsPicker   picker.Model
 	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
-	// the filters just applied via the overlay, or because an approval took
-	// them out of the filter. It keeps the list responsive while the
-	// authoritative refresh runs, and is rebuilt once it lands.
+	// the search filters just applied via the overlay, or because an approval
+	// took them out of the filter. It keeps the list responsive while the
+	// authoritative refresh runs, and is rebuilt once it lands. The CI filter
+	// and presets are separate: they always apply when rows are shown.
 	filterHidden prKeys
 
 	// Optimistic approvals: sent but not yet confirmed. approvalGen bumps on
@@ -717,9 +718,8 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	if r.cli.PRState() == StateReady {
 		prs = filterReady(prs)
 	}
-	if ci := r.cli.CIFilter(); ci.Active() {
-		prs = filterByCI(prs, ci)
-	}
+	// The CI filter and presets are applied when rows are shown (see
+	// displayFilter), so changing them needs no refetch.
 
 	ownerFilter := singleOwner(r.cli.Owner.Values)
 	return buildPRRowModels(prs, ownerFilter, r.resolver), nil
@@ -1677,11 +1677,11 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 		return m, nil
 
-	case tuiKeybindCycleCI:
-		return m.cycleCIFilter(1)
+	case tuiKeybindCyclePreset:
+		return m.cyclePreset(1)
 
-	case tuiKeybindCycleCIBack:
-		return m.cycleCIFilter(-1)
+	case tuiKeybindCyclePresetBack:
+		return m.cyclePreset(-1)
 
 	case tuiKeybindToggleRefresh:
 		m.autoRefresh = !m.autoRefresh
@@ -2040,6 +2040,21 @@ func (m tuiModel) renderListSeparator(junctionCol ...int) string {
 func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	filterTagStyle := styleFilterTag.Faint(true)
 	filterTagKeyStyle := filterTagStyle.Bold(true)
+	// The active preset follows the option filters, in its own colour, set
+	// apart from them by a dot.
+	var presetTag string
+	if preset, ok := presetByName(
+		m.cfg,
+		m.cli.preset,
+	); ok && len(tags) > 0 &&
+		tags[0] == preset.Name {
+		style := filterTagKeyStyle
+		if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
+			style = lg.NewStyle().Foreground(c).Bold(true)
+		}
+		presetTag = style.Render(preset.Name)
+		tags = tags[1:]
+	}
 	renderedTags := make([]string, 0, len(tags))
 	for _, tag := range tags {
 		if key, value, ok := strings.Cut(tag, ":"); ok {
@@ -2051,7 +2066,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 			renderedTags = append(renderedTags, filterTagKeyStyle.Render(tag))
 		}
 	}
-	indicator := strings.Join(renderedTags, " ")
+	options := strings.Join(renderedTags, " ")
 	suffixText := strings.Repeat("─", 2) //nolint:mnd // fixed suffix width
 	suffix := m.styles.separator.Render(" " + suffixText)
 	const indicatorPrefix = " "
@@ -2059,6 +2074,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	if available <= 0 {
 		return xansi.Truncate(suffix, m.width, "")
 	}
+	indicator := m.joinPresetTag(options, presetTag, available)
 	if lg.Width(indicator) > available {
 		indicator = xansi.Truncate(indicator, available, valueEllipsis)
 	}
@@ -2067,6 +2083,23 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 		indicatorPrefix +
 		indicator +
 		suffix
+}
+
+// joinPresetTag appends the preset tag to the option filters, shortening the
+// options first so the preset stays visible within width.
+func (m tuiModel) joinPresetTag(options, presetTag string, width int) string {
+	if presetTag == "" {
+		return options
+	}
+	gap := m.styles.separator.Render(" · ")
+	room := width - lg.Width(gap) - lg.Width(presetTag)
+	if options == "" || room <= 0 {
+		return presetTag
+	}
+	if lg.Width(options) > room {
+		options = xansi.Truncate(options, room, valueEllipsis)
+	}
+	return options + gap + presetTag
 }
 
 func (m tuiModel) viewDetail() tea.View {
@@ -2436,19 +2469,25 @@ func (m tuiModel) plainBodyLines(body string) []string {
 	return lines
 }
 
-// isRowHidden reports whether a row is excluded from the list, either because
-// it was acted on (removed) or because it no longer matches the filters applied
-// while a refresh is still in flight.
-func (m tuiModel) isRowHidden(key prKey) bool {
-	return m.removed[key] || m.filterHidden[key]
+// isRowHidden reports whether the row at idx is excluded from the list:
+// acted on (removed), hidden while a refresh catches up, or outside the CI
+// filter or active preset.
+func (m tuiModel) isRowHidden(idx int) bool {
+	return m.rowHiddenBy(m.displayFilter(), idx)
+}
+
+func (m tuiModel) rowHiddenBy(df displayFilter, idx int) bool {
+	key := m.rowKeyAt(idx)
+	return m.removed[key] || m.filterHidden[key] || !m.shows(df, m.rows[idx].Item)
 }
 
 func (m tuiModel) visibleIndices() []int {
 	indices := make([]int, 0, len(m.rows))
 	f := strings.TrimSpace(m.filterInput.Value())
+	df := m.displayFilter()
 	if f == "" {
 		for i := range m.rows {
-			if !m.isRowHidden(m.rowKeyAt(i)) {
+			if !m.rowHiddenBy(df, i) {
 				indices = append(indices, i)
 			}
 		}
@@ -2457,7 +2496,7 @@ func (m tuiModel) visibleIndices() []int {
 
 	term := filter.Parse(f)
 	for i := range m.rows {
-		if m.isRowHidden(m.rowKeyAt(i)) {
+		if m.rowHiddenBy(df, i) {
 			continue
 		}
 		text := rowFilterText(m.rows[i])
@@ -2621,7 +2660,7 @@ func (m tuiModel) rerender() (string, []TableRow, []int) {
 }
 
 func (m tuiModel) currentPR() *PullRequest {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) ||
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.cursor) ||
 		m.isCollapsedRow(m.cursor) {
 		return nil
 	}
@@ -2630,7 +2669,7 @@ func (m tuiModel) currentPR() *PullRequest {
 }
 
 func (m *tuiModel) toggleCurrentSelection() bool {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) ||
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.cursor) ||
 		m.isCollapsedRow(m.cursor) {
 		return false
 	}
@@ -2644,7 +2683,7 @@ func (m *tuiModel) toggleCurrentSelection() bool {
 }
 
 func (m *tuiModel) extendSelectionAndMove(dir int) {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.rowKeyAt(m.cursor)) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.isRowHidden(m.cursor) {
 		return
 	}
 	if !m.isCollapsedRow(m.cursor) {
@@ -2868,7 +2907,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		{Key: tuiKeybindSlackNoConfirm, Desc: tuiDescSendSlackNoConf},
 		{Key: key.Tab, Desc: tuiDescCycleSortOrder},
 		{Key: tuiKeybindOptions, Desc: tuiDescOptions},
-		{Key: tuiKeybindCycleCI + "/" + tuiKeybindCycleCIBack, Desc: tuiDescCycleCI},
+		{Key: tuiKeybindCyclePreset + "/" + tuiKeybindCyclePresetBack, Desc: tuiDescCyclePreset},
 		{Key: tuiKeybindToggleRefresh, Desc: tuiDescRefresh},
 		{Key: tuiKeybindHelp, Desc: tuiDescHelp},
 		{Key: tuiKeybindQuit, Desc: tuiDescQuit},
@@ -3005,6 +3044,17 @@ func (m tuiModel) helpLines(pairs []key.Hint) int {
 	}.Lines()
 }
 
+// hasFilteredRows reports whether the query returned PRs that are still
+// open to action but all hidden by filters.
+func (m tuiModel) hasFilteredRows() bool {
+	for i := range m.rows {
+		if !m.removed[m.rowKeyAt(i)] {
+			return true
+		}
+	}
+	return false
+}
+
 func (m tuiModel) renderEmptyOverlay() string {
 	dim := m.styles.helpText
 	key := m.styles.helpKey
@@ -3028,9 +3078,12 @@ func (m tuiModel) renderEmptyOverlay() string {
 		return box.Render(line1 + "\n\n" + line2)
 	}
 	var line1 string
-	if len(m.removed) > 0 {
+	switch {
+	case m.hasFilteredRows():
+		line1 = dim.Render("No pull requests match the current filter")
+	case len(m.removed) > 0:
 		line1 = dim.Render("All pull requests have been processed")
-	} else {
+	default:
 		line1 = dim.Render("No pull requests found for the current query")
 	}
 	line2 := dim.Render("Press ") + key.Render("q") + dim.Render(" to quit, or ") +
@@ -3418,6 +3471,9 @@ func runTui(
 	model.sortColumn = cfg.TUI.Sort.Key
 	model.sortAsc = cfg.TUI.Sort.Order == valueAsc
 	model.header, model.rows, model.colWidths = model.rerender()
+	if visible := model.visibleIndices(); len(visible) > 0 {
+		model.cursor = visible[0]
+	}
 	if cachedOK {
 		model.initCmd = model.startRefresh(false)
 	}
