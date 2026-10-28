@@ -406,52 +406,10 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			return m, nil, true
 		}
-		actions := m.actions
-		batch := make([]targetPR, len(targets))
-		copy(batch, targets)
-		m.confirmAction = tuiActionApproveMerge
-		if len(targets) == 1 {
-			m.confirmSubject = targets[0].pr.Ref()
-			m.confirmURL = targets[0].pr.URL
-			m.confirmPrompt = "Approve & merge " + styledRef(&targets[0].pr) + "?"
-			t := targets[0]
-			m.confirmCmd = func() tea.Msg {
-				owner, repo := prOwnerRepo(t.pr)
-				if _, err := actions.approvePR(t.pr); err != nil {
-					return actionMsg{
-						index:  t.index,
-						key:    makePRKey(t.pr),
-						action: tuiActionApproved,
-						err:    err,
-					}
-				}
-				result, err := actions.mergeOrAutomerge(owner, repo, t.pr)
-				return actionMsg{
-					index:  t.index,
-					key:    makePRKey(t.pr),
-					action: parseMergeResult(result),
-					err:    err,
-				}
-			}
-		} else {
-			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
-			m.confirmPrompt = fmt.Sprintf("Approve & merge %d PRs?", len(targets))
-			m.confirmCmd = func() tea.Msg {
-				return runBatchAction(
-					actions,
-					batch,
-					tuiActionMerged,
-					func(a *ActionRunner, pr PullRequest) error {
-						owner, repo := prOwnerRepo(pr)
-						if _, err := a.approvePR(pr); err != nil {
-							return err
-						}
-						_, err := a.mergeOrAutomerge(owner, repo, pr)
-						return err
-					},
-				)
-			}
-		}
+		setupConfirmPrompt(&m, targets, tuiActionApproveMerge, "Approve & merge")
+		m.confirmCmd = approveMergeTargetsCmd(m.actions, targets)
+		keys := targetKeys(targets)
+		m.confirmOnAccept = func(m *tuiModel) { m.beginApproval(keys) }
 		return m, nil, true
 
 	case tuiKeybindForceMerge:
@@ -1172,7 +1130,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var approve tea.Cmd
 		reason := m.approvalBlockReason(ctx.key, ctx.pr)
 		if reason == "" {
-			approve = approveCmd(m.actions, targetPR{ctx.idx, ctx.pr}, true)
+			approve = approveCmd(m.actions, targetPR{ctx.idx, ctx.pr})
 			m.beginApproval([]prKey{ctx.key})
 		}
 		navCmd := m.advanceOrExitDiff()
@@ -1285,25 +1243,9 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, flashResult(&m, resultApprovalPending, pr.Ref(), pr.URL, false)
 		}
 		flashPending(&m, statusApproveMerging, &pr)
-		actions := m.actions
-		return m, func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			if _, err := actions.approvePR(pr); err != nil {
-				return actionMsg{
-					index:  idx,
-					key:    makePRKey(pr),
-					action: tuiActionApproved,
-					err:    err,
-				}
-			}
-			result, err := actions.mergeOrAutomerge(owner, repo, pr)
-			return actionMsg{
-				index:  idx,
-				key:    makePRKey(pr),
-				action: parseMergeResult(result),
-				err:    err,
-			}
-		}
+		cmd := approveMergeTargetsCmd(m.actions, []targetPR{{index: idx, pr: pr}})
+		m.beginApproval([]prKey{makePRKey(pr)})
+		return m, cmd
 	}
 	return m, nil
 }
@@ -1353,7 +1295,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, flashResult(&m, reason, ctx.pr.Ref(), ctx.pr.URL, false)
 		}
 		target := targetPR{ctx.idx, ctx.pr}
-		cmd := approveCmd(m.actions, target, false)
+		cmd := approveCmd(m.actions, target)
 		keys := []prKey{ctx.key}
 		refreshCmd := m.exitDetailView()
 		if msg.String() == tuiKeybindApproveNoConfirm {

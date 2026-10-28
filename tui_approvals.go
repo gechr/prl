@@ -36,7 +36,7 @@ func isViewerApproved(pr PullRequest) bool {
 }
 
 // approveCmd approves a single PR in the background.
-func approveCmd(actions *ActionRunner, t targetPR, navigated bool) tea.Cmd {
+func approveCmd(actions *ActionRunner, t targetPR) tea.Cmd {
 	return func() tea.Msg {
 		outcome, err := actions.approvePR(t.pr)
 		return actionMsg{
@@ -46,7 +46,7 @@ func approveCmd(actions *ActionRunner, t targetPR, navigated bool) tea.Cmd {
 			url:       t.pr.URL,
 			action:    tuiActionApproved,
 			outcome:   outcome,
-			navigated: navigated,
+			navigated: true,
 			err:       err,
 		}
 	}
@@ -55,7 +55,7 @@ func approveCmd(actions *ActionRunner, t targetPR, navigated bool) tea.Cmd {
 // approveTargetsCmd approves one PR or a batch in the background.
 func approveTargetsCmd(actions *ActionRunner, targets []targetPR) tea.Cmd {
 	if len(targets) == 1 {
-		return approveCmd(actions, targets[0], false)
+		return approveCmd(actions, targets[0])
 	}
 	batch := make([]targetPR, len(targets))
 	copy(batch, targets)
@@ -71,6 +71,56 @@ func approveTargetsCmd(actions *ActionRunner, targets []targetPR) tea.Cmd {
 				return err
 			})
 		msg.outcomes = outcomes
+		return msg
+	}
+}
+
+// approveAndMerge keeps the approval outcome separate from the merge outcome.
+func approveAndMerge(actions *ActionRunner, pr PullRequest) (string, approvalResult, error) {
+	outcome, err := actions.approvePR(pr)
+	approval := approvalResult{key: makePRKey(pr), outcome: outcome, err: err}
+	if err != nil {
+		return "", approval, err
+	}
+	owner, repo := prOwnerRepo(pr)
+	result, err := actions.mergeOrAutomerge(owner, repo, pr)
+	return result, approval, err
+}
+
+func approveMergeTargetsCmd(actions *ActionRunner, targets []targetPR) tea.Cmd {
+	if len(targets) == 1 {
+		t := targets[0]
+		return func() tea.Msg {
+			result, approval, err := approveAndMerge(actions, t.pr)
+			action := parseMergeResult(result)
+			if approval.err != nil {
+				action = tuiActionApproved
+			}
+			return actionMsg{
+				index:     t.index,
+				key:       makePRKey(t.pr),
+				ref:       t.pr.Ref(),
+				url:       t.pr.URL,
+				action:    action,
+				outcome:   approval.outcome,
+				approvals: []approvalResult{approval},
+				err:       err,
+			}
+		}
+	}
+	batch := append([]targetPR(nil), targets...)
+	return func() tea.Msg {
+		var mu sync.Mutex
+		approvals := make([]approvalResult, 0, len(batch))
+		msg := runBatchAction(actions, batch, tuiActionMerged,
+			func(a *ActionRunner, pr PullRequest) error {
+				_, approval, err := approveAndMerge(a, pr)
+				mu.Lock()
+				approvals = append(approvals, approval)
+				mu.Unlock()
+				return err
+			})
+		msg.approvals = approvals
 		return msg
 	}
 }
@@ -158,13 +208,13 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 	if m.approvalGen == nil {
 		m.approvalGen = make(map[prKey]int)
 	}
-	posted, missing := false, false
+	approved, missing := false, false
 	for _, r := range results {
 		pending, wasPending := m.pendingApprovals[r.key]
 		delete(m.pendingApprovals, r.key)
 		m.approvalGen[r.key]++
 		if r.err == nil && r.outcome != approveSkippedAggregate {
-			posted = posted || r.outcome == approvePosted
+			approved = true
 			m.updatePR(r.key, setViewerApproval(true, true))
 			m.reconcileVisibility(r.key)
 			continue
@@ -182,10 +232,10 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 	}
 	m.resyncCursorAndOffset()
 
-	// A new approval makes cached review metadata stale. Swap in a fresh cache
+	// A confirmed approval makes cached review metadata stale. Swap in a fresh cache
 	// (in-flight hydrations keep writing to the old one) and restart any
 	// refresh that started before the approval landed.
-	if posted {
+	if approved {
 		m.metadataCache = newListMetadataCache()
 		if m.refreshing {
 			m.invalidateRefresh()

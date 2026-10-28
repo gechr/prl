@@ -25,12 +25,13 @@ func (m *tuiModel) fetchDiffCmd(key prKey) tea.Cmd {
 		owner, repo := prOwnerRepo(pr)
 		diff, headSHA, err := actions.fetchDiff(owner, repo, pr.Number)
 		return diffFetchedMsg{
-			gen:     gen,
-			index:   idx,
-			key:     key,
-			diff:    diff,
-			headSHA: headSHA,
-			err:     err,
+			gen:              gen,
+			index:            idx,
+			key:              key,
+			diff:             diff,
+			headSHA:          headSHA,
+			requestedHeadSHA: pr.HeadSHA,
+			err:              err,
 		}
 	}
 }
@@ -130,6 +131,13 @@ func (m tuiModel) handleDiffFetched(msg diffFetchedMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(flashCmd, m.scheduleDetailRefresh())
 		}
 		return m, flashCmd
+	}
+	// A refresh may learn about a push while a prefetch is in flight. If
+	// promoted to the foreground, that fetch must still pass the head check.
+	// A fresh response ahead of the dispatch-time row is allowed through.
+	if pr := m.prForKey(msg.key); pr != nil && pr.HeadSHA != msg.requestedHeadSHA &&
+		!prefetchIsCurrent(*pr, msg) {
+		return m, m.openDiff(msg.key)
 	}
 	return m, m.showDiff(msg)
 }

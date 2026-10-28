@@ -339,9 +339,10 @@ type actionMsg struct {
 	url    string
 	action tuiAction
 	// outcome is set for approvals.
-	outcome approveOutcome
-	// navigated is true when the view already moved on when the action was
-	// sent, so the completion must not navigate again.
+	outcome   approveOutcome
+	approvals []approvalResult // approval legs of approve-and-merge
+	// navigated is true when navigation is handled at dispatch, so a
+	// background completion must preserve the current view.
 	navigated bool
 	err       error
 }
@@ -356,22 +357,24 @@ type detailFetchedMsg struct {
 
 // diffFetchedMsg is sent when a diff has been fetched.
 type diffFetchedMsg struct {
-	gen     int // diff session generation; stale replies are dropped
-	index   int
-	key     prKey // stable lookup after refresh
-	diff    string
-	headSHA string
-	err     error
+	gen              int // diff session generation; stale replies are dropped
+	index            int
+	key              prKey // stable lookup after refresh
+	diff             string
+	headSHA          string
+	requestedHeadSHA string // head known when the fetch started
+	err              error
 }
 
 // batchActionMsg is sent when a batch action (multi-select) completes.
 type batchActionMsg struct {
-	action   tuiAction
-	count    int
-	failed   int
-	keys     []prKey
-	failures []batchResult
-	outcomes map[prKey]approveOutcome // set for approvals
+	action    tuiAction
+	count     int
+	failed    int
+	keys      []prKey
+	failures  []batchResult
+	outcomes  map[prKey]approveOutcome // set for approvals
+	approvals []approvalResult         // approval legs of approve-and-merge
 }
 
 type batchResult struct {
@@ -1095,22 +1098,29 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionMsg:
-		if msg.action == tuiActionApproved {
-			// Settle first: the row may already have left the list.
-			settleCmd := m.settleApprovals([]approvalResult{
+		// Settle first: the row may already have left the list, and a failed
+		// merge may still have submitted its approval successfully.
+		var settleCmd tea.Cmd
+		if len(msg.approvals) > 0 {
+			settleCmd = m.settleApprovals(msg.approvals)
+		} else if msg.action == tuiActionApproved {
+			settleCmd = m.settleApprovals([]approvalResult{
 				{key: msg.key, outcome: msg.outcome, err: msg.err},
 			})
+		}
+		if msg.action == tuiActionApproved {
 			if msg.navigated || m.resolveIndex(msg.key, msg.index) < 0 {
 				return m, tea.Batch(m.approvalFlash(msg), settleCmd)
 			}
-			model, cmd := m.handleActionResult(msg)
-			return model, tea.Batch(cmd, settleCmd)
 		}
-		return m.handleActionResult(msg)
+		model, cmd := m.handleActionResult(msg)
+		return model, tea.Batch(cmd, settleCmd)
 
 	case batchActionMsg:
 		var settleCmd tea.Cmd
-		if msg.action == tuiActionApproved {
+		if len(msg.approvals) > 0 {
+			settleCmd = m.settleApprovals(msg.approvals)
+		} else if msg.action == tuiActionApproved {
 			results := make([]approvalResult, 0, msg.count)
 			for _, key := range msg.keys {
 				results = append(results, approvalResult{key: key, outcome: msg.outcomes[key]})

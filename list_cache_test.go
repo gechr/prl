@@ -106,6 +106,24 @@ func TestListResultCacheKeyIncludesLocalFilters(t *testing.T) {
 	require.Nil(t, got)
 }
 
+func TestListResultCacheSeparatesTUIAndWatch(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv(envKeyGitHubToken, "cache-test-token")
+	cli := testCacheCLI()
+	cli.Interactive = true
+	params := testCacheParams()
+	require.NoError(t, saveListResultCache(cli, params, []PullRequest{{NodeID: "one"}}))
+	watch := *cli
+	watch.Interactive = false
+	watch.Watch = true
+
+	got, ok, err := loadListResultCache(&watch, params, 0)
+
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Nil(t, got)
+}
+
 func TestListResultCacheIgnoresStaleResult(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv(envKeyGitHubToken, "cache-test-token")

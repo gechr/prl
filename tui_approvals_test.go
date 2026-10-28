@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"charm.land/bubbles/v2/textinput"
@@ -304,6 +306,51 @@ func TestListApproveConfirmBeginsOnAccept(t *testing.T) {
 	require.True(t, m.filterHidden[key])
 }
 
+func TestBackgroundApprovalCompletionPreservesNewDiffQueue(t *testing.T) {
+	for _, view := range []tuiView{tuiViewList, tuiViewDetail} {
+		t.Run(fmt.Sprint(view), func(t *testing.T) {
+			var posts atomic.Int32
+			m := approvalTestModel("", approvalTestPR(42), approvalTestPR(2), approvalTestPR(3))
+			m.actions = approveTestRunner(t, false, &posts)
+			k1, k2, k3 := m.rowKeyAt(0), m.rowKeyAt(1), m.rowKeyAt(2)
+			m.view, m.detailKey = view, k1
+			m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModAlt})
+			require.NotNil(t, cmd)
+			completion := cmd()
+			result, ok := completion.(actionMsg)
+			require.True(t, ok)
+			require.NoError(t, result.err)
+			require.EqualValues(t, 1, posts.Load())
+			m.view, m.diffKey = tuiViewDiff, k2
+			m.diffQueue = []prKey{k3}
+
+			m, _ = updateModel(t, m, completion)
+
+			require.Equal(t, k2, m.diffKey)
+			require.Equal(t, []prKey{k3}, m.diffQueue)
+			require.False(t, m.diffLoading)
+			require.Equal(t, tuiViewDiff, m.view)
+		})
+	}
+}
+
+func TestAlreadyApprovedResultSwapsStaleCache(t *testing.T) {
+	m := approvalTestModel(valueReviewFilterSelfRequired, approvalTestPR(1))
+	key := m.rowKeyAt(0)
+	oldCache := m.metadataCache
+	m.refreshing, m.queryGen = true, 5
+	m.beginApproval([]prKey{key})
+	msg := approvedMsg(key, nil)
+	msg.outcome = approveAlreadyViewer
+
+	m, cmd := updateModel(t, m, msg)
+
+	require.NotNil(t, cmd)
+	require.NotSame(t, oldCache, m.metadataCache)
+	require.Equal(t, 6, m.queryGen)
+	require.True(t, isViewerApproved(m.rows[0].Item.PR))
+}
+
 func TestApproveMergeKeepsApprovedButSkipsPending(t *testing.T) {
 	pr := approvalTestPR(1)
 	pr.viewerApproved = true
@@ -317,6 +364,77 @@ func TestApproveMergeKeepsApprovedButSkipsPending(t *testing.T) {
 	got, _ = pressKey(t, m, tuiKeybindApproveMerge)
 	require.Empty(t, got.confirmAction)
 	require.Equal(t, "Approval pending owner/repo#1", ansi.Strip(got.flash.Msg))
+}
+
+func TestApproveMergeBlocksAnotherApprovalUntilCompletion(t *testing.T) {
+	for _, view := range []tuiView{tuiViewList, tuiViewDiff} {
+		t.Run(fmt.Sprint(view), func(t *testing.T) {
+			m := diffTestModel(approvalTestPR(1))
+			m.view = view
+			key := m.rowKeyAt(0)
+			m, _ = pressKey(t, m, tuiKeybindApproveMerge)
+			if view == tuiViewList {
+				model, _ := m.confirmAccept()
+				var ok bool
+				m, ok = model.(tuiModel)
+				require.True(t, ok)
+			}
+
+			require.Equal(t, resultApprovalPending, m.approvalBlockReason(key, m.rows[0].Item.PR))
+			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModAlt})
+			require.Equal(t, 1, m.approvalGen[key])
+			require.False(t, m.pendingApprovals[key].prev.viewerApproved)
+		})
+	}
+}
+
+func TestApproveMergeFailureKeepsSuccessfulApproval(t *testing.T) {
+	var posts atomic.Int32
+	actions := approveTestRunner(t, false, &posts)
+	actions.gql = nil
+	// The runner accepts approval, but has no merge endpoint.
+	m := approvalTestModel(valueReviewFilterSelfRequired, approvalTestPR(42))
+	m.actions = actions
+	key := m.rowKeyAt(0)
+	m, _ = pressKey(t, m, tuiKeybindApproveMerge)
+	model, cmd := m.confirmAccept()
+	var ok bool
+	m, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.NotNil(t, cmd)
+
+	m, _ = updateModel(t, m, cmd())
+
+	require.EqualValues(t, 1, posts.Load())
+	require.Empty(t, m.pendingApprovals)
+	require.True(t, isViewerApproved(m.rows[0].Item.PR))
+	require.False(t, isShown(m, key))
+	require.True(t, m.flash.Err)
+}
+
+func TestApproveMergeBatchSettlesApprovalAndMergeFailures(t *testing.T) {
+	var posts atomic.Int32
+	m := approvalTestModel(valueReviewFilterSelfRequired, approvalTestPR(42), approvalTestPR(43))
+	m.actions = approveTestRunner(t, false, &posts)
+	m.actions.gql = nil
+	k1, k2 := m.rowKeyAt(0), m.rowKeyAt(1)
+	m.selected[k1], m.selected[k2] = true, true
+	m, _ = pressKey(t, m, tuiKeybindApproveMerge)
+	model, cmd := m.confirmAccept()
+	var ok bool
+	m, ok = model.(tuiModel)
+	require.True(t, ok)
+	require.Len(t, m.pendingApprovals, 2)
+
+	m, _ = updateModel(t, m, cmd())
+
+	require.EqualValues(t, 1, posts.Load())
+	require.Empty(t, m.pendingApprovals)
+	require.True(t, isViewerApproved(m.rows[0].Item.PR))
+	require.False(t, isViewerApproved(m.rows[1].Item.PR))
+	require.False(t, isShown(m, k1))
+	require.True(t, isShown(m, k2))
+	require.True(t, m.flash.Err)
 }
 
 // diffTestModel shows the first PR's diff with the rest queued.
@@ -434,6 +552,49 @@ func TestDiffPrefetchWithStaleHeadRefetches(t *testing.T) {
 	require.True(t, m.diffLoading)
 	require.Equal(t, k2, m.diffAwaitKey)
 	require.True(t, m.diffInFlight[k2])
+}
+
+func TestDiffAwaitedPrefetchWithChangedHeadRefetches(t *testing.T) {
+	pr2 := approvalTestPR(2)
+	pr2.HeadSHA = "old"
+	m := diffTestModel(approvalTestPR(1), pr2)
+	k1, k2 := m.diffKey, makePRKey(pr2)
+	_ = m.prefetchNext()
+	m.updatePR(k2, func(item *PRRowModel) { item.PR.HeadSHA = "new" })
+	m, _ = pressKey(t, m, tuiKeybindNext)
+
+	m, cmd := updateModel(t, m, diffFetchedMsg{
+		gen:              m.diffGen,
+		index:            -1,
+		key:              k2,
+		headSHA:          "old",
+		requestedHeadSHA: "old",
+		diff:             "stale diff",
+	})
+
+	require.NotNil(t, cmd)
+	require.True(t, m.diffLoading)
+	require.Equal(t, k2, m.diffAwaitKey)
+	require.Equal(t, k1, m.diffKey)
+	require.True(t, m.diffInFlight[k2])
+	require.Empty(t, m.diff)
+}
+
+func TestDiffFetchAcceptsHeadAheadOfUnchangedRow(t *testing.T) {
+	pr := approvalTestPR(1)
+	pr.HeadSHA = "old"
+	m := diffTestModel(pr)
+	key := m.diffKey
+	_ = m.openDiff(key)
+
+	m, _ = updateModel(t, m, diffFetchedMsg{
+		gen: m.diffGen, index: -1, key: key, headSHA: "new", requestedHeadSHA: "old",
+	})
+
+	require.False(t, m.diffLoading)
+	require.Empty(t, m.diffAwaitKey)
+	require.Equal(t, key, m.diffKey)
+	require.Empty(t, m.diffInFlight)
 }
 
 func TestDiffFetchFromDismissedSessionIsDropped(t *testing.T) {

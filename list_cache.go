@@ -77,6 +77,7 @@ type listResultCacheLocalIdentity struct {
 	ClosedBy    []string `json:"closedBy"`
 	Drift       string   `json:"drift"`
 	Draft       string   `json:"draft"`
+	Interactive bool     `json:"interactive"`
 	MergedBy    []string `json:"mergedBy"`
 	NoBot       bool     `json:"noBot"`
 	Output      string   `json:"output"`
@@ -244,6 +245,7 @@ func listResultCacheKey(cli *CLI, params *SearchParams) (string, error) {
 			ClosedBy:    append([]string(nil), cli.ClosedBy.Values...),
 			Drift:       cli.Drift,
 			Draft:       draft,
+			Interactive: cli.Interactive,
 			MergedBy:    append([]string(nil), cli.MergedBy.Values...),
 			NoBot:       cli.NoBot,
 			Output:      output,
