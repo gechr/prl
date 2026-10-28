@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/gechr/clog"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/x/ansi"
@@ -179,13 +178,7 @@ func (p *prl) allColumnDefs(layout tableLayout) map[string]Column {
 				if !ctx.Ansi.Terminal() {
 					return table.TextCell(am.Display)
 				}
-				color := p.AssignEntityColor(am.Login)
-				style := lipgloss.NewStyle().Foreground(color)
-				if am.IsBot {
-					style = style.Faint(true)
-				} else if am.IsDeparted {
-					style = style.Strikethrough(true)
-				}
+				style := p.authorStyle(am)
 				display := ctx.Ansi.Hyperlink(am.URL, style.Render(am.Display))
 				return table.StyledCell(display, am.Display)
 			},

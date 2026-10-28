@@ -294,6 +294,18 @@ func (p *prl) AssignEntityColor(key string) color.Color {
 	return p.entityAssigner.Assign(strings.ToLower(key))
 }
 
+// authorStyle keeps author styling consistent between list and diff views.
+func (p *prl) authorStyle(am AuthorModel) lg.Style {
+	style := lg.NewStyle().Foreground(p.AssignEntityColor(am.Login))
+	if am.IsBot {
+		return style.Faint(true)
+	}
+	if am.IsDeparted {
+		return style.Strikethrough(true)
+	}
+	return style
+}
+
 // prMergeStyle returns the lipgloss style for an open PR based on its merge readiness.
 func (p *prl) prMergeStyle(pr PullRequest) lg.Style {
 	switch resolvePRStatus(pr) {

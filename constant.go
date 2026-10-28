@@ -8,6 +8,9 @@ import (
 
 const nl = "\n"
 
+// dotSeparator separates inline display values.
+const dotSeparator = " · "
+
 // helpGap is the two-space separator between help key pairs in TUI footer bars.
 const helpGap = "  "
 

@@ -1930,6 +1930,11 @@ func (m tuiModel) viewDiff() tea.View {
 		headerLine += xansi.Force().Hyperlink(pr.URL,
 			headerStyle.Render(ref)+styleText.Render(" » ")+
 				styleTitle.Render(m.p.displayText(pr.Title)))
+		author := m.rows[idx].Item.Author
+		if author.Display != "" {
+			headerLine += styleDim.Render(dotSeparator) + xansi.Force().Hyperlink(author.URL,
+				m.p.authorStyle(author).Render(author.Display))
+		}
 		header = m.alignHeader(headerLine, m.renderPRStatusLine(pr))
 	}
 	return m.renderFullScreenView(
@@ -2001,7 +2006,7 @@ func (m tuiModel) renderPRStatusLine(pr PullRequest) string {
 	// Pills are self-delimiting; plain-text badges need a separator.
 	sep := " "
 	if activeIcons.PillLeft == "" {
-		sep = styleDim.Render(" · ")
+		sep = styleDim.Render(dotSeparator)
 	}
 	return strings.Join(parts, sep)
 }
@@ -2101,7 +2106,7 @@ func (m tuiModel) joinPresetTag(options, presetTag string, width int) string {
 	if presetTag == "" {
 		return options
 	}
-	gap := m.styles.separator.Render(" · ")
+	gap := m.styles.separator.Render(dotSeparator)
 	room := width - lg.Width(gap) - lg.Width(presetTag)
 	if options == "" || room <= 0 {
 		return presetTag
@@ -2272,7 +2277,7 @@ func (m tuiModel) renderDetailContent() []string {
 			parts = append(parts, renderReviewIcon(r)+" "+styled)
 		}
 		lines = append(lines, detailIndent+labelStyle.Render("Reviews: ")+
-			strings.Join(parts, " · "))
+			strings.Join(parts, dotSeparator))
 	}
 	lines = append(lines, detailIndent+labelStyle.Render(" Status: ")+m.renderDetailStatus(pr))
 	// The Outdated badge already says so.

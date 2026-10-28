@@ -84,7 +84,7 @@ func groupStackRows(rows []TableRow, columns []Column, sortColumn string, asc bo
 			if stack := group[0].Item.PR.Stack; stack != nil {
 				base = stack.BaseRefName
 			}
-			header := fmt.Sprintf("%s · %s · %d PRs onto %s",
+			header := fmt.Sprintf("%s"+dotSeparator+"%s"+dotSeparator+"%d PRs onto %s",
 				group[0].Item.Repo, stackLabel(group), len(group), base)
 			for i := range group {
 				group[i].Item.StackKey = key
