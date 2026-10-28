@@ -554,7 +554,7 @@ func shouldDeferInitialWatchEnrichment(cli *CLI, tty bool) bool {
 	if cli.Quick || cli.OutputFormat() != OutputTable {
 		return false
 	}
-	if cli.PRState() == StateReady || cli.CIStatus() != CINone {
+	if cli.PRState() == StateReady || cli.CIFilter().Active() {
 		return false
 	}
 	if len(cli.ClosedBy.Values) > 0 || len(cli.MergedBy.Values) > 0 {
@@ -647,8 +647,8 @@ func buildOutput(
 	}
 
 	ready := cli.PRState() == StateReady
-	ciFilter := cli.CIStatus()
-	needsEnrich := ready || ciFilter != CINone
+	ciFilter := cli.CIFilter()
+	needsEnrich := ready || ciFilter.Active()
 	// A --group breakdown only needs fields already present in search
 	// results, so skip merge-status enrichment unless a filter (--ci,
 	// --state=ready) genuinely requires it.
@@ -714,7 +714,7 @@ func buildOutput(
 	}
 
 	// Post-filter: --ci keeps only PRs matching the requested CI status.
-	if ciFilter != CINone {
+	if ciFilter.Active() {
 		prs = filterByCI(prs, ciFilter)
 		if len(prs) == 0 {
 			return "", nil, nil
@@ -805,8 +805,8 @@ func runOnce(
 	}
 
 	ready := cli.PRState() == StateReady
-	ciFilter := cli.CIStatus()
-	needsEnrich := ready || ciFilter != CINone
+	ciFilter := cli.CIFilter()
+	needsEnrich := ready || ciFilter.Active()
 	// A --group breakdown only needs fields already present in search
 	// results, so skip merge-status enrichment unless a filter (--ci,
 	// --state=ready) genuinely requires it.
@@ -877,7 +877,7 @@ func runOnce(
 	}
 
 	// Post-filter: --ci keeps only PRs matching the requested CI status.
-	if ciFilter != CINone {
+	if ciFilter.Active() {
 		prs = filterByCI(prs, ciFilter)
 		if len(prs) == 0 {
 			return "", nil

@@ -191,6 +191,8 @@ const (
 
 // Action result strings.
 const (
+	resultAlreadyApproved = "Already approved"
+	resultApprovalPending = "Approval pending"
 	resultApproved        = "Approved"
 	resultAutomerged      = "Automerge enabled"
 	resultBranchUpdated   = "Branch updated"
@@ -211,7 +213,6 @@ const (
 
 // Flash status strings shown while an action is in progress.
 const (
-	statusApproving      = "Approving"
 	statusApproveMerging = "Approving/merging"
 	statusAutomerging    = "Automerging"
 	statusCopilotReview  = "Requesting Copilot review"
@@ -314,6 +315,8 @@ const (
 	tuiKeybindUnassign          = "u"
 	tuiKeybindUnassignNoConfirm = "alt+u"
 	tuiKeybindHelp              = "?"
+	tuiKeybindCycleCI           = "f"
+	tuiKeybindCycleCIBack       = "F"
 	tuiKeybindToggleRefresh     = "R"
 	tuiKeybindNext              = "n"
 	tuiKeybindPrev              = "p"
@@ -373,6 +376,7 @@ const (
 	tuiDescFilter           = "Filter"
 	tuiDescForceMerge       = "Force-merge PRs"
 	tuiDescHelp             = "Toggle this help"
+	tuiDescCycleCI          = "Cycle CI filter"
 	tuiDescInvertSelection  = "Invert selection"
 	tuiDescJumpFirstLast    = "Jump to first/last"
 	tuiDescMerge            = "Merge/Automerge PRs"

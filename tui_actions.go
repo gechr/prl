@@ -136,12 +136,36 @@ func (m tuiModel) targetMergeablePRs() []targetPR {
 	})
 }
 
-func (m tuiModel) targetApprovablePRs() []targetPR {
-	return filterTargetPRs(m.targetPRs(), func(t targetPR) bool {
-		state := strings.ToLower(t.pr.State)
-		return m.isCurrentUserPR(t.pr) || t.pr.IsDraft || state == valueMerged ||
-			state == valueClosed
-	})
+// approvableTargets splits the targets the viewer may approve into those to
+// send and those skipped because they are already approved or pending.
+func (m tuiModel) approvableTargets() ([]targetPR, []targetPR) {
+	var send, skipped []targetPR
+	for _, t := range m.targetPRs() {
+		switch {
+		case !m.isApprovable(t.pr):
+		case m.approvalBlockReason(makePRKey(t.pr), t.pr) != "":
+			skipped = append(skipped, t)
+		default:
+			send = append(send, t)
+		}
+	}
+	return send, skipped
+}
+
+// approveMergeTargets is like approvableTargets, but keeps PRs the viewer has
+// already approved (they can still be merged) and only skips pending ones.
+func (m tuiModel) approveMergeTargets() ([]targetPR, []targetPR) {
+	var send, skipped []targetPR
+	for _, t := range m.targetPRs() {
+		switch {
+		case !m.isApprovable(t.pr):
+		case m.approvalBlockReason(makePRKey(t.pr), t.pr) == resultApprovalPending:
+			skipped = append(skipped, t)
+		default:
+			send = append(send, t)
+		}
+	}
+	return send, skipped
 }
 
 // batchCmd returns a tea.Cmd that runs fn for a single target or as a batch.
@@ -174,26 +198,21 @@ func setupConfirmBatch(
 	verb string,
 	fn func(*ActionRunner, PullRequest) error,
 ) {
-	actions := m.actions
+	setupConfirmPrompt(m, targets, action, verb)
+	m.confirmCmd = batchCmd(m.actions, targets, result, fn)
+}
+
+// setupConfirmPrompt fills in the confirm overlay's prompt and subject.
+func setupConfirmPrompt(m *tuiModel, targets []targetPR, action, verb string) {
 	m.confirmAction = action
 	if len(targets) == 1 {
 		m.confirmSubject = targets[0].pr.Ref()
 		m.confirmURL = targets[0].pr.URL
 		m.confirmPrompt = verb + " " + styledRef(&targets[0].pr) + "?"
-		t := targets[0]
-		m.confirmCmd = func() tea.Msg {
-			err := fn(actions, t.pr)
-			return actionMsg{index: t.index, key: makePRKey(t.pr), action: result, err: err}
-		}
-	} else {
-		batch := make([]targetPR, len(targets))
-		copy(batch, targets)
-		m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
-		m.confirmPrompt = fmt.Sprintf("%s %d PRs?", verb, len(targets))
-		m.confirmCmd = func() tea.Msg {
-			return runBatchAction(actions, batch, result, fn)
-		}
+		return
 	}
+	m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
+	m.confirmPrompt = fmt.Sprintf("%s %d PRs?", verb, len(targets))
 }
 
 func runBatchAction(
@@ -296,32 +315,32 @@ func renderBatchFailurePrompt(msg batchActionMsg) string {
 // Returns (model, cmd, true) if the key was handled, or (model, nil, false) otherwise.
 func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	switch msg.String() {
-	case tuiKeybindApprove:
-		targets := m.targetApprovablePRs()
+	case tuiKeybindApprove, tuiKeybindApproveNoConfirm:
+		targets, skipped := m.approvableTargets()
 		if len(targets) == 0 {
+			if len(skipped) > 0 {
+				return m, flashApprovalBlocked(&m, m.approvalSkipReason(skipped), skipped), true
+			}
 			return m, nil, true
 		}
-		setupConfirmBatch(&m, targets, tuiActionApprove, tuiActionApproved, "Approve",
-			func(a *ActionRunner, pr PullRequest) error {
-				return a.approvePR(pr)
-			})
+		// The command captures the PRs before the optimistic update.
+		cmd := approveTargetsCmd(m.actions, targets)
+		keys := targetKeys(targets)
+		if msg.String() == tuiKeybindApproveNoConfirm {
+			m.beginApproval(keys)
+			return m, cmd, true
+		}
+		setupConfirmPrompt(&m, targets, tuiActionApprove, "Approve")
+		m.confirmCmd = cmd
+		m.confirmOnAccept = func(m *tuiModel) { m.beginApproval(keys) }
 		return m, nil, true
-
-	case tuiKeybindApproveNoConfirm:
-		targets := m.targetApprovablePRs()
-		if len(targets) == 0 {
-			return m, nil, true
-		}
-		return m, batchCmd(m.actions, targets, tuiActionApproved,
-			func(a *ActionRunner, pr PullRequest) error {
-				return a.approvePR(pr)
-			}), true
 
 	case tuiKeybindDiff:
 		targets := m.targetPRs()
 		if len(targets) == 0 {
 			return m, nil, true
 		}
+		m.clearDiffState()
 		if len(targets) > 1 {
 			queue := make([]prKey, 0, len(targets)-1)
 			for _, t := range targets[1:] {
@@ -329,27 +348,9 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			}
 			m.diffQueue = queue
 			m.diffQueueTotal = len(targets)
-		} else {
-			m.diffQueue = nil
-			m.diffQueueTotal = 0
 		}
-		first := targets[0]
-		actions := m.actions
 		m.refreshTerminalSize()
-		m.diffLoading = true
-		flashPending(&m, statusDiffing, &first.pr)
-		fetchCmd := func() tea.Msg {
-			owner, repo := prOwnerRepo(first.pr)
-			diff, headSHA, err := actions.fetchDiff(owner, repo, first.pr.Number)
-			return diffFetchedMsg{
-				index:   first.index,
-				key:     makePRKey(first.pr),
-				diff:    diff,
-				headSHA: headSHA,
-				err:     err,
-			}
-		}
-		return m, tea.Batch(requestWindowSizeCmd(), fetchCmd), true
+		return m, tea.Batch(requestWindowSizeCmd(), m.openDiff(makePRKey(targets[0].pr))), true
 
 	case tuiKeybindMerge:
 		targets := m.targetMergeablePRs()
@@ -398,8 +399,11 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, nil, true
 
 	case tuiKeybindApproveMerge:
-		targets := m.targetApprovablePRs()
+		targets, skipped := m.approveMergeTargets()
 		if len(targets) == 0 {
+			if len(skipped) > 0 {
+				return m, flashApprovalBlocked(&m, resultApprovalPending, skipped), true
+			}
 			return m, nil, true
 		}
 		actions := m.actions
@@ -413,7 +417,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			t := targets[0]
 			m.confirmCmd = func() tea.Msg {
 				owner, repo := prOwnerRepo(t.pr)
-				if err := actions.approvePR(t.pr); err != nil {
+				if _, err := actions.approvePR(t.pr); err != nil {
 					return actionMsg{
 						index:  t.index,
 						key:    makePRKey(t.pr),
@@ -439,7 +443,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 					tuiActionMerged,
 					func(a *ActionRunner, pr PullRequest) error {
 						owner, repo := prOwnerRepo(pr)
-						if err := a.approvePR(pr); err != nil {
+						if _, err := a.approvePR(pr); err != nil {
 							return err
 						}
 						_, err := a.mergeOrAutomerge(owner, repo, pr)
@@ -1108,46 +1112,38 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirmAction != "" {
 		return m.updateConfirmDialog(msg)
 	}
+	// While the next diff loads, the view still shows the previous one: only
+	// allow leaving, so actions can't land on the wrong PR.
+	if m.diffLoading {
+		switch msg.String() {
+		case tuiKeybindQuit, key.Esc, tuiKeybindDiff:
+			return m, m.exitDiffView()
+		}
+		return m, nil
+	}
 	if result, cmd, handled := m.handleViewAction(msg); handled {
 		return result, cmd
 	}
 	switch msg.String() {
 	case tuiKeybindQuit, key.Esc, tuiKeybindDiff:
 		return m, m.exitDiffView()
-	case tuiKeybindNext:
+	case tuiKeybindNext, key.Right:
 		// Skip to next in queue without approving.
-		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-			m.diffHistory = append(m.diffHistory, m.diffKey)
-			return m, nextCmd
-		}
-		return m, nil
-	case tuiKeybindPrev:
+		_, cmd := m.advanceDiff()
+		return m, cmd
+	case tuiKeybindPrev, key.Left:
 		// Go back to previous diff in history.
 		if len(m.diffHistory) == 0 {
 			return m, nil
 		}
 		prev := m.diffHistory[len(m.diffHistory)-1]
+		if m.prForKey(prev) == nil {
+			return m, nil
+		}
 		m.diffHistory = m.diffHistory[:len(m.diffHistory)-1]
 		// Push current back onto front of queue.
 		m.diffQueue = append([]prKey{m.diffKey}, m.diffQueue...)
-		m.diffLoading = true
-		idx := m.resolveIndex(prev, -1)
-		if idx < 0 {
-			return m, nil
-		}
-		pr := m.rows[idx].Item.PR
-		actions := m.actions
-		return m, func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			diff, headSHA, err := actions.fetchDiff(owner, repo, pr.Number)
-			return diffFetchedMsg{
-				index:   idx,
-				key:     makePRKey(pr),
-				diff:    diff,
-				headSHA: headSHA,
-				err:     err,
-			}
-		}
+		return m, m.openDiff(prev)
 	case tuiKeybindVimDown, key.Down:
 		m.diffView.ScrollDown(1)
 		return m, nil
@@ -1167,29 +1163,24 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffView.GotoBottom()
 		return m, nil
 	case tuiKeybindApprove, tuiKeybindApproveNoConfirm:
-		idx := m.resolveIndex(m.diffKey, -1)
-		if idx < 0 {
+		ctx, ok := m.actionContextForKey(m.diffKey)
+		if !ok || !m.isApprovable(ctx.pr) {
 			return m, nil
 		}
-		pr := m.rows[idx].Item.PR
-		state := strings.ToLower(pr.State)
-		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
-			return m, nil
+		// Approve in the background and move on straight away; an already
+		// approved (or pending) PR just moves on.
+		var approve tea.Cmd
+		reason := m.approvalBlockReason(ctx.key, ctx.pr)
+		if reason == "" {
+			approve = approveCmd(m.actions, targetPR{ctx.idx, ctx.pr}, true)
+			m.beginApproval([]prKey{ctx.key})
 		}
-		flashPending(&m, statusApproving, &pr)
-		actions := m.actions
-		approveCmd := func() tea.Msg {
-			err := actions.approvePR(pr)
-			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
+		navCmd := m.advanceOrExitDiff()
+		var flashCmd tea.Cmd
+		if reason != "" {
+			flashCmd = flashResult(&m, reason, ctx.pr.Ref(), ctx.pr.URL, false)
 		}
-		// If there's a next item in queue, prefetch it in parallel with the approve.
-		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-			m.diffHistory = append(m.diffHistory, m.diffKey)
-			m.diffAdvanced = true
-			return m, tea.Batch(approveCmd, nextCmd)
-		}
-		// Last item - approve and let actionMsg handler return to list.
-		return m, approveCmd
+		return m, tea.Batch(approve, navCmd, flashCmd)
 	case tuiKeybindClose:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -1290,11 +1281,14 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
 			return m, nil
 		}
+		if m.approvalBlockReason(makePRKey(pr), pr) == resultApprovalPending {
+			return m, flashResult(&m, resultApprovalPending, pr.Ref(), pr.URL, false)
+		}
 		flashPending(&m, statusApproveMerging, &pr)
 		actions := m.actions
 		return m, func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
-			if err := actions.approvePR(pr); err != nil {
+			if _, err := actions.approvePR(pr); err != nil {
 				return actionMsg{
 					index:  idx,
 					key:    makePRKey(pr),
@@ -1344,65 +1338,32 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tuiKeybindDiff:
 		// Jump to diff from detail view.
-		idx := m.resolveIndex(m.detailKey, -1)
-		if idx < 0 {
+		if m.prForKey(m.detailKey) == nil {
 			return m, nil
 		}
-		pr := m.rows[idx].Item.PR
-		actions := m.actions
-		prCopy := pr
+		m.clearDiffState()
 		m.refreshTerminalSize()
-		m.diffLoading = true
-		fetchCmd := func() tea.Msg {
-			owner, repo := prOwnerRepo(prCopy)
-			diff, headSHA, err := actions.fetchDiff(owner, repo, prCopy.Number)
-			return diffFetchedMsg{
-				index:   idx,
-				key:     makePRKey(prCopy),
-				diff:    diff,
-				headSHA: headSHA,
-				err:     err,
-			}
-		}
-		return m, tea.Batch(requestWindowSizeCmd(), fetchCmd)
-	case tuiKeybindApprove:
-		idx := m.resolveIndex(m.detailKey, -1)
-		if idx < 0 {
+		return m, tea.Batch(requestWindowSizeCmd(), m.openDiff(m.detailKey))
+	case tuiKeybindApprove, tuiKeybindApproveNoConfirm:
+		ctx, ok := m.actionContextForKey(m.detailKey)
+		if !ok || !m.isApprovable(ctx.pr) {
 			return m, nil
 		}
-		pr := m.rows[idx].Item.PR
-		state := strings.ToLower(pr.State)
-		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
-			return m, nil
+		if reason := m.approvalBlockReason(ctx.key, ctx.pr); reason != "" {
+			return m, flashResult(&m, reason, ctx.pr.Ref(), ctx.pr.URL, false)
 		}
-		actions := m.actions
+		target := targetPR{ctx.idx, ctx.pr}
+		cmd := approveCmd(m.actions, target, false)
+		keys := []prKey{ctx.key}
 		refreshCmd := m.exitDetailView()
-		m.confirmAction = tuiActionApprove
-		m.confirmSubject = pr.Ref()
-		m.confirmURL = pr.URL
-		m.confirmPrompt = "Approve " + styledRef(&pr) + "?"
-		m.confirmCmd = func() tea.Msg {
-			err := actions.approvePR(pr)
-			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
+		if msg.String() == tuiKeybindApproveNoConfirm {
+			m.beginApproval(keys)
+			return m, tea.Batch(refreshCmd, cmd)
 		}
+		setupConfirmPrompt(&m, []targetPR{target}, tuiActionApprove, "Approve")
+		m.confirmCmd = cmd
+		m.confirmOnAccept = func(m *tuiModel) { m.beginApproval(keys) }
 		return m, refreshCmd
-	case tuiKeybindApproveNoConfirm:
-		idx := m.resolveIndex(m.detailKey, -1)
-		if idx < 0 {
-			return m, nil
-		}
-		pr := m.rows[idx].Item.PR
-		state := strings.ToLower(pr.State)
-		if m.isCurrentUserPR(pr) || pr.IsDraft || state == valueMerged || state == valueClosed {
-			return m, nil
-		}
-		flashPending(&m, statusApproving, &pr)
-		actions := m.actions
-		refreshCmd := m.exitDetailView()
-		return m, tea.Batch(refreshCmd, func() tea.Msg {
-			err := actions.approvePR(pr)
-			return actionMsg{index: idx, key: makePRKey(pr), action: tuiActionApproved, err: err}
-		})
 	case tuiKeybindMerge:
 		idx := m.resolveIndex(m.detailKey, -1)
 		if idx < 0 {

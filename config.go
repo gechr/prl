@@ -356,7 +356,7 @@ func loadConfig() (*Config, error) {
 		}
 	}
 	if cfg.TUI.Filters.CI != "" {
-		if _, ok := parseCIStatus(cfg.TUI.Filters.CI); !ok {
+		if _, ok := parseCIFilter(cfg.TUI.Filters.CI); !ok {
 			return nil, fmt.Errorf("invalid tui.filters.ci %q", cfg.TUI.Filters.CI)
 		}
 	}

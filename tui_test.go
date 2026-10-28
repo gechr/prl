@@ -175,13 +175,13 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	if xos.IsDarwin() {
 		require.Equal(
 			t,
-			"│      alt+a  Approve PRs (no confirm)          r  Launch AI review                 │",
-			lines[13],
+			"│          d  View diff                         r  Launch AI review                 │",
+			lines[14],
 		)
 		require.Equal(
 			t,
-			"│          d  View diff                     alt+r  Launch AI review (no confirm)    │",
-			lines[14],
+			"│          D  Toggle draft                  alt+r  Launch AI review (no confirm)    │",
+			lines[15],
 		)
 		require.Equal(
 			t,
@@ -940,7 +940,7 @@ func TestDetailFetchReplacesUnknownListStatus(t *testing.T) {
 		width:     80,
 	}
 
-	m.applyDetailMergeStatus(makePRKey(pr), 0, &status)
+	m.applyDetailMergeStatus(makePRKey(pr), &status)
 
 	require.Equal(t, MergeStatusReady, m.rows[0].Item.PR.MergeStatus)
 	require.Equal(t, MergeStatusReady, m.items[0].PR.MergeStatus)
@@ -1275,7 +1275,7 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	}
 	require.Equal(
 		t,
-		"owner/repo#42 »\n"+
+		"owner/repo#42 »                                                          Unknown\n"+
 			"────────────────────────────────────────────────────────────────────────────────\n"+
 			"+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"+
 			"aaaaaaa\n\n"+
@@ -1893,7 +1893,7 @@ func TestCurrentFilterValuesDefaultCLI(t *testing.T) {
 	// testCLI() Normalize sets NoBot=true (from Default.Bots=false),
 	// so Bots is "hide" (index 1). Draft defaults to "show" (index 0), CI/Review default to "all",
 	// and Archived defaults to "hide" (index 1).
-	require.Equal(t, []int{0, 1, 0, 1, 1, 3, 5}, vals)
+	require.Equal(t, []int{0, 1, 0, 1, 1, 4, 5}, vals)
 }
 
 func TestCurrentFilterValuesMapsStateCorrectly(t *testing.T) {
@@ -2736,4 +2736,53 @@ func testReviewPullRequest() PullRequest {
 		},
 		URL: "https://github.com/owner/repo/pull/42",
 	}
+}
+
+func TestActiveFilterTagsRendersCIExpression(t *testing.T) {
+	cli := testCLI()
+	cli.CI = "pending,-failure"
+	m := tuiModel{cli: cli}
+
+	require.Contains(t, m.activeFilterTags(), "ci:pending,!fail")
+}
+
+func TestCurrentFilterValuesMapsCINotFailing(t *testing.T) {
+	cli := testCLI()
+	cli.CI = "-f"
+	m := tuiModel{cli: cli}
+
+	vals := m.currentFilterValues()
+
+	require.Equal(t, ciFilterNotFailing, m.filterChoices(filterRowCI)[vals[filterRowCI]].value)
+}
+
+func TestApplyFilterOptionsKeepsUnrepresentedCIExpression(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+
+	cfg := &Config{Default: Defaults{
+		Limit:  defaultLimit,
+		State:  valueOpen,
+		Output: valueTable,
+		Sort:   valueName,
+		Match:  "title",
+	}}
+	cli := &CLI{}
+	cli.Normalize(cfg)
+	cli.CI = "pending,!success"
+	m := tuiModel{showOptions: true, cli: cli, cfg: cfg, styles: newTuiStyles()}
+	m.optionsPicker = m.newFilterPicker()
+
+	choices := m.filterChoices(filterRowCI)
+	require.Equal(t, "pending,!success", choices[m.optionsPicker.Values[filterRowCI]].label)
+	require.Len(t, choices, len(filterOptionDefs[filterRowCI].choices)+1)
+
+	// Change an unrelated row, then apply: the CI expression must survive.
+	m.optionsPicker.Values[filterRowArchived] = 0
+	model, _ := m.applyFilterOptions()
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, "pending,!success", bm.cli.CIFilter().String())
+	require.True(t, bm.cli.Archived)
+	require.Equal(t, "pending,!success", bm.cfg.TUI.Filters.CI)
 }

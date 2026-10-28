@@ -132,6 +132,8 @@ prl -o json
 | `--archived`             |       | Include archived repos                                      |
 | `--draft` / `--no-draft` |       | Filter by draft state                                       |
 
+`--ci` takes a comma-separated list, and a leading `!` or `-` excludes a status: `--ci='!failure'` hides PRs with failing CI. Quote `!` in bash and zsh.
+
 For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-request-reviewer[bot]`.
 
 ### Interactive Actions
@@ -197,6 +199,8 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 `--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`. AI reviews open in a new tab of the host terminal: inside a Herdr session (`HERDR_ENV=1`) a Herdr tab, otherwise Ghostty, iTerm2, or Kitty on macOS, or Windows Terminal when running in WSL.
 
 Stacked PRs are grouped by default, with IDs such as `1a`, `1b`, and `1c` from top to bottom; the next standalone PR is `2`. Sorting uses only the top PR in each stack. Open **Shift+O** and set **Stacks** to **show** or **hide** to switch views. Click the stack header or any tree connector to collapse or expand a stack, or use Left/Right on a stack. The display preference and folded stacks are saved between sessions.
+
+Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle the CI filter through not failing, passing, failing and all; `F` steps back.
 
 Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --mode plan` for Gemini through `agy`, `--permission-mode plan` for Claude. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude and Gemini (and no sandbox). The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
 

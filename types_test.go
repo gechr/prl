@@ -130,3 +130,92 @@ func TestParseCIStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCIFilter(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+		ok    bool
+	}{
+		{"", "", true},
+		{"success", "success", true},
+		{"s", "success", true},
+		{"!failure", "!failure", true},
+		{"-fail", "!failure", true},
+		{"!!f", "!failure", true},
+		{"pending,success", "success,pending", true},
+		{" success , !pending ", "success,!pending", true},
+		{"!pending,!success", "!success,!pending", true},
+		{"pass,!success", "", true},
+		{"success,!success,!failure", "!failure", true},
+		{"bogus", "", false},
+		{"bogus,!bogus", "", false},
+		{"success,", "", false},
+		{",", "", false},
+		{"!", "", false},
+		{"success,-", "", false},
+	}
+	for _, tt := range tests {
+		got, ok := parseCIFilter(tt.input)
+		require.Equal(t, tt.ok, ok, "parseCIFilter(%q) ok", tt.input)
+		if ok {
+			require.Equal(t, tt.want, got.String(), "parseCIFilter(%q)", tt.input)
+			require.Equal(t, tt.want != "", got.Active(), "parseCIFilter(%q) active", tt.input)
+		}
+	}
+}
+
+func TestCIFilterMatches(t *testing.T) {
+	statuses := []MergeStatus{
+		MergeStatusUnknown,
+		MergeStatusReady,
+		MergeStatusBlocked,
+		MergeStatusCIPending,
+		MergeStatusCIFailed,
+		MergeStatusConflict,
+		MergeStatusCIError,
+	}
+	tests := []struct {
+		filter string
+		want   []MergeStatus
+	}{
+		{"success", []MergeStatus{MergeStatusReady, MergeStatusBlocked}},
+		{"failure", []MergeStatus{MergeStatusCIFailed, MergeStatusCIError}},
+		{"pending", []MergeStatus{MergeStatusCIPending}},
+		{
+			"!failure",
+			[]MergeStatus{
+				MergeStatusUnknown,
+				MergeStatusReady,
+				MergeStatusBlocked,
+				MergeStatusCIPending,
+				MergeStatusConflict,
+			},
+		},
+		{
+			"!pending,!success",
+			[]MergeStatus{
+				MergeStatusUnknown,
+				MergeStatusCIFailed,
+				MergeStatusConflict,
+				MergeStatusCIError,
+			},
+		},
+		{
+			"success,pending",
+			[]MergeStatus{MergeStatusReady, MergeStatusBlocked, MergeStatusCIPending},
+		},
+		{"success,!success", statuses},
+	}
+	for _, tt := range tests {
+		f, ok := parseCIFilter(tt.filter)
+		require.True(t, ok, tt.filter)
+		var got []MergeStatus
+		for _, status := range statuses {
+			if f.Matches(PullRequest{MergeStatus: status}) {
+				got = append(got, status)
+			}
+		}
+		require.Equal(t, tt.want, got, tt.filter)
+	}
+}

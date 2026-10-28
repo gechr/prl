@@ -365,6 +365,9 @@ func (m tuiModel) confirmAcceptWithSubmission(submission confirmSubmission) (tea
 	} else {
 		cmd = m.confirmCmd
 	}
+	if m.confirmOnAccept != nil {
+		m.confirmOnAccept(&m)
+	}
 	verb := confirmActionVerb[m.confirmAction]
 	subject := m.confirmSubject
 	url := m.confirmURL

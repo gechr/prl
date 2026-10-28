@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -307,6 +308,7 @@ const (
 	ciStatusFailure            = "failure"
 	ciStatusPending            = "pending"
 	ciStatusSuccess            = "success"
+	ciFilterNotFailing         = "!" + ciStatusFailure
 )
 
 func parseCIStatus(s string) (CIStatus, bool) {
@@ -334,4 +336,90 @@ func (c CIStatus) String() string {
 		return ""
 	}
 	return ""
+}
+
+// ciStatuses lists the filterable CI statuses in canonical order.
+var ciStatuses = [...]CIStatus{CISuccess, CIFailure, CIPending}
+
+// CIFilter selects PRs by CI status. A PR must match one of the included
+// statuses (when any are set) and none of the excluded ones.
+type CIFilter struct {
+	include []CIStatus
+	exclude []CIStatus
+}
+
+// parseCIFilter parses a comma-separated list of CI statuses, each optionally
+// negated with a leading "!" or "-" (e.g. "!failure" or "success,pending").
+// Every token is canonicalised before a status that is both included and
+// excluded cancels out. Empty tokens, bare negators and unknown statuses are
+// rejected.
+func parseCIFilter(s string) (CIFilter, bool) {
+	if strings.TrimSpace(s) == "" {
+		return CIFilter{}, true
+	}
+	var include, exclude [len(ciStatuses) + 1]bool
+	for token := range strings.SplitSeq(s, ",") {
+		token = strings.TrimSpace(token)
+		value := strings.TrimLeft(token, "-!")
+		if value == "" {
+			return CIFilter{}, false
+		}
+		status, ok := parseCIStatus(value)
+		if !ok {
+			return CIFilter{}, false
+		}
+		if value != token {
+			exclude[status] = true
+		} else {
+			include[status] = true
+		}
+	}
+	var f CIFilter
+	for _, status := range ciStatuses {
+		if include[status] && exclude[status] {
+			continue
+		}
+		if include[status] {
+			f.include = append(f.include, status)
+		}
+		if exclude[status] {
+			f.exclude = append(f.exclude, status)
+		}
+	}
+	return f, true
+}
+
+// Active reports whether the filter constrains anything.
+func (f CIFilter) Active() bool {
+	return len(f.include) > 0 || len(f.exclude) > 0
+}
+
+// Matches reports whether a PR's enriched MergeStatus satisfies the filter.
+// PRs without a CI status (unknown, conflict) only pass exclusion-only filters.
+func (f CIFilter) Matches(pr PullRequest) bool {
+	if len(f.include) > 0 && !slices.ContainsFunc(f.include, func(ci CIStatus) bool {
+		return matchesCI(pr, ci)
+	}) {
+		return false
+	}
+	return !slices.ContainsFunc(f.exclude, func(ci CIStatus) bool {
+		return matchesCI(pr, ci)
+	})
+}
+
+// String returns the canonical form: included statuses, then negated ones.
+func (f CIFilter) String() string {
+	return f.join(func(ci CIStatus) string { return ci.String() })
+}
+
+// join renders each status with name and negates excluded ones with "!".
+func (f CIFilter) join(name func(CIStatus) string) string {
+	parts := make([]string, 0, len(f.include)+len(f.exclude))
+	for _, ci := range f.include {
+		parts = append(parts, name(ci))
+	}
+	for _, ci := range f.exclude {
+		parts = append(parts, "!"+name(ci))
+	}
+	return strings.Join(parts, ",")
 }

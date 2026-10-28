@@ -335,8 +335,15 @@ func batchMergeVerb(targets []targetPR) string {
 type actionMsg struct {
 	index  int
 	key    prKey // stable lookup after refresh
+	ref    string
+	url    string
 	action tuiAction
-	err    error
+	// outcome is set for approvals.
+	outcome approveOutcome
+	// navigated is true when the view already moved on when the action was
+	// sent, so the completion must not navigate again.
+	navigated bool
+	err       error
 }
 
 // detailFetchedMsg is sent when PR detail has been fetched.
@@ -349,6 +356,7 @@ type detailFetchedMsg struct {
 
 // diffFetchedMsg is sent when a diff has been fetched.
 type diffFetchedMsg struct {
+	gen     int // diff session generation; stale replies are dropped
 	index   int
 	key     prKey // stable lookup after refresh
 	diff    string
@@ -363,6 +371,7 @@ type batchActionMsg struct {
 	failed   int
 	keys     []prKey
 	failures []batchResult
+	outcomes map[prKey]approveOutcome // set for approvals
 }
 
 type batchResult struct {
@@ -462,16 +471,25 @@ type tuiModel struct {
 	optionsPicker   picker.Model
 	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
-	// the filters just applied via the overlay. It keeps the list responsive
-	// while the authoritative refresh runs, and is dropped once it lands.
+	// the filters just applied via the overlay, or because an approval took
+	// them out of the filter. It keeps the list responsive while the
+	// authoritative refresh runs, and is rebuilt once it lands.
 	filterHidden prKeys
+
+	// Optimistic approvals: sent but not yet confirmed. approvalGen bumps on
+	// every begin and settlement so stale status responses are ignored.
+	pendingApprovals map[prKey]pendingApproval
+	approvalGen      map[prKey]int
 
 	// Diff queue for sequential multi-PR review.
 	diffQueue      []prKey // remaining PR keys to diff through
 	diffHistory    []prKey // previously viewed PR keys (for going back)
 	diffQueueTotal int     // total PRs in the queue (for counter display)
-	diffAdvanced   bool    // true when queue was advanced from diff view (skip actionMsg view switch)
 	diffLoading    bool
+	diffAwaitKey   prKey                    // diff the view is waiting to show
+	diffGen        int                      // bumps per diff session; drops stale fetches
+	diffPrefetch   map[prKey]diffFetchedMsg // fetched diffs for upcoming queue entries
+	diffInFlight   prKeys                   // diff fetches not yet returned
 
 	// Empty overlay dismissed (esc to dismiss, then esc again to quit).
 	dismissedEmpty bool
@@ -490,6 +508,7 @@ type tuiModel struct {
 	confirmURL              string  // optional URL for hyperlinking the subject in progress
 	confirmCmd              tea.Cmd // command to run on confirmation
 	confirmCmdFn            func(confirmSubmission) tea.Cmd
+	confirmOnAccept         func(*tuiModel)   // runs when the dialog is accepted
 	confirmOptionValues     []int             // initially selected value for each option row
 	confirmHasInput         bool              // true when the dialog includes a text input
 	confirmInputLabel       string            // label above the textarea (default: "Comment")
@@ -670,7 +689,10 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 		}
 	}
 	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
-	needViewerApproval := r.cli.ReviewSelfRequired()
+	// The TUI always loads the viewer's approval: it drives the approved marker,
+	// the diff status line and the double-approval guard, not just the
+	// self-required filter.
+	needViewerApproval := true
 	needMetadata := needMergeStatus || needTimeline || needViewerApproval
 
 	if needMetadata && r.gql != nil {
@@ -686,7 +708,7 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 		if hydrateErr == nil && needTimeline {
 			prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
 		}
-		if hydrateErr == nil && needViewerApproval {
+		if hydrateErr == nil && r.cli.ReviewSelfRequired() {
 			prs = filterByViewerApproval(prs)
 		}
 	}
@@ -695,7 +717,7 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	if r.cli.PRState() == StateReady {
 		prs = filterReady(prs)
 	}
-	if ci := r.cli.CIStatus(); ci != CINone {
+	if ci := r.cli.CIFilter(); ci.Active() {
 		prs = filterByCI(prs, ci)
 	}
 
@@ -703,13 +725,13 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	return buildPRRowModels(prs, ownerFilter, r.resolver), nil
 }
 
+// run fetches and renders fresh results. The list-result disk cache is saved
+// by the Update handler once the result is accepted as current, so a stale
+// refresh can never overwrite a newer snapshot.
 func (r refreshSnapshot) run() refreshResultMsg {
 	items, err := r.fetchAndBuild()
 	if err != nil {
 		return refreshResultMsg{err: err}
-	}
-	if err := saveListResultCache(r.cli, r.params, prItems(items)); err != nil {
-		clog.Debug().Err(err).Msg("list cache save failed")
 	}
 	termWidth := max(0, r.width-tuiListPrefixWidth(len(items)))
 	renderer := r.p.newTableRenderer(r.cli, r.tty, termWidth, table.WithShowIndex(false))
@@ -887,13 +909,18 @@ func (m *tuiModel) stopDetailRefresh(clearKey bool) {
 	}
 }
 
+// clearDiffState resets the diff queue and starts a new diff session, so
+// fetches still in flight from the old one are dropped.
 func (m *tuiModel) clearDiffState() {
 	m.diffQueue = nil
 	m.diffHistory = nil
 	m.diffQueueTotal = 0
-	m.diffAdvanced = false
 	m.diffLoading = false
 	m.diffKey = ""
+	m.diffAwaitKey = ""
+	m.diffGen++
+	m.diffPrefetch = nil
+	m.diffInFlight = nil
 }
 
 func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
@@ -1068,68 +1095,31 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case actionMsg:
-		idx := m.resolveIndex(msg.key, msg.index)
-		if idx < 0 {
-			return m, nil // PR no longer in list (removed by refresh)
-		}
-		pr := m.rows[idx].Item.PR
-		// HintError: action succeeded but has a follow-up hint for the user.
-		hint, isHint := errors.AsType[*HintError](msg.err)
-		if isHint {
-			msg.err = nil // treat as success
-		}
-		if msg.err != nil {
-			flashCmd := flashResult(
-				&m,
-				msg.action.String()+" failed:",
-				fmt.Sprintf("%v", withGitHubErrorDetail(msg.err)),
-				"",
-				true,
-			)
-			// Queue already advanced from diff view - just flash, stay in diff.
-			if m.diffAdvanced {
-				m.diffAdvanced = false
-				return m, flashCmd
+		if msg.action == tuiActionApproved {
+			// Settle first: the row may already have left the list.
+			settleCmd := m.settleApprovals([]approvalResult{
+				{key: msg.key, outcome: msg.outcome, err: msg.err},
+			})
+			if msg.navigated || m.resolveIndex(msg.key, msg.index) < 0 {
+				return m, tea.Batch(m.approvalFlash(msg), settleCmd)
 			}
-			// Advance diff queue even on failure so user can continue reviewing.
-			if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-				m.diffHistory = append(m.diffHistory, msg.key)
-				return m, tea.Batch(flashCmd, nextCmd)
-			}
-			if m.view == tuiViewDiff {
-				return m, tea.Batch(flashCmd, m.exitDiffView())
-			}
-			return m, flashCmd
+			model, cmd := m.handleActionResult(msg)
+			return model, tea.Batch(cmd, settleCmd)
 		}
-		if msg.action.removes() {
-			m.removed[msg.key] = true
-			m.resyncCursorAndOffset()
-		}
-		flashCmd := flashResult(&m, msg.action.String(), pr.Ref(), pr.URL, false)
-		if hint != nil {
-			cmd := styleAccent.Bold(true).Render(hint.Hint)
-			m.confirmAction = tuiActionInfo
-			m.confirmPrompt = "To also mute notifications, run:\n\n" + cmd
-			m.confirmCmd = nil
-		}
-		// Queue already advanced from diff view - just flash, stay in diff.
-		if m.diffAdvanced {
-			m.diffAdvanced = false
-			return m, flashCmd
-		}
-		if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-			m.diffHistory = append(m.diffHistory, msg.key)
-			return m, tea.Batch(flashCmd, nextCmd)
-		}
-		if m.view == tuiViewDiff {
-			return m, tea.Batch(flashCmd, m.exitDiffView())
-		}
-		if m.view == tuiViewDetail && m.detailKey != "" {
-			return m, tea.Batch(flashCmd, m.refetchDetail())
-		}
-		return m, flashCmd
+		return m.handleActionResult(msg)
 
 	case batchActionMsg:
+		var settleCmd tea.Cmd
+		if msg.action == tuiActionApproved {
+			results := make([]approvalResult, 0, msg.count)
+			for _, key := range msg.keys {
+				results = append(results, approvalResult{key: key, outcome: msg.outcomes[key]})
+			}
+			for _, f := range msg.failures {
+				results = append(results, approvalResult{key: f.key, err: f.err})
+			}
+			settleCmd = m.settleApprovals(results)
+		}
 		if msg.action.removes() {
 			for _, key := range msg.keys {
 				m.removed[key] = true
@@ -1143,52 +1133,28 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmAction = tuiActionInfo
 			m.confirmPrompt = renderBatchFailurePrompt(msg)
 			m.confirmCmd = nil
-			return m, flashResult(
+			return m, tea.Batch(settleCmd, flashResult(
 				&m,
 				msg.action.String(),
 				status+" ("+fmt.Sprintf("%d failed", msg.failed)+")",
 				"",
 				true,
-			)
+			))
 		}
-		return m, flashResult(&m, msg.action.String(), status+" PRs", "", false)
+		return m, tea.Batch(
+			settleCmd,
+			flashResult(&m, msg.action.String(), status+" PRs", "", false),
+		)
 
 	case flash.ClearMsg:
 		m.flash.Clear(msg)
 		return m, nil
 
 	case diffFetchedMsg:
-		if !m.diffLoading {
-			return m, nil // stale fetch from a dismissed diff view
-		}
-		m.diffLoading = false
-		if msg.err != nil {
-			flashCmd := flashResult(&m, "Diff failed:", fmt.Sprintf("%v", msg.err), "", true)
-			// Skip to next in queue if available.
-			if nextCmd := advanceDiffQueue(&m); nextCmd != nil {
-				return m, tea.Batch(flashCmd, nextCmd)
-			}
-			if m.view == tuiViewDetail {
-				return m, tea.Batch(flashCmd, m.scheduleDetailRefresh())
-			}
-			return m, flashCmd
-		}
-		idx := m.resolveIndex(msg.key, msg.index)
-		if idx < 0 {
-			return m, nil // PR no longer in list
-		}
-		if m.view == tuiViewDetail {
-			m.stopDetailRefresh(true)
-		}
-		m.refreshTerminalSize()
-		m.diffKey = msg.key
-		pr := m.rows[idx].Item.PR
-		m.diff = highlightDiff(msg.diff, pr.URL, msg.headSHA)
-		m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
-		m.syncDiffView()
-		m.diffView.GotoTop()
-		m.view = tuiViewDiff
-		m.flash.Msg = ""
+		return m.handleDiffFetched(msg)
+
+	case prStatusMsg:
+		m.applyPRStatus(msg)
 		return m, nil
 
 	case detailFetchedMsg:
@@ -1200,7 +1166,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if idx < 0 {
 			return m, nil // PR no longer in list
 		}
-		m.applyDetailMergeStatus(msg.key, idx, msg.detail.MergeStatus)
+		m.applyDetailMergeStatus(msg.key, msg.detail.MergeStatus)
 		m.refreshTerminalSize()
 		m.detailKey = msg.key
 		m.detail = msg.detail
@@ -1334,14 +1300,20 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastRefreshAt = time.Now()
 		m.dismissedEmpty = false
+		// Saved here, once the result is accepted as current, so writes stay
+		// in order and a superseded refresh never overwrites a newer one.
+		if err := saveListResultCache(m.cli, m.params, prItems(msg.items)); err != nil {
+			clog.Debug().Err(err).Msg("list cache save failed")
+		}
 		// Fresh results are authoritative; drop the optimistic client-side
-		// filtering before recomputing cursor/offset against the new rows.
-		m.filterHidden = nil
+		// filtering, except for approvals still in flight, before recomputing
+		// cursor/offset against the new rows.
 		// Render with the current stack/sort settings; a refresh may have
 		// captured settings from before the options menu was applied.
 		m.items = msg.items
+		m.applyPendingApprovals()
 		header, rows, widths := m.rerender()
-		m = m.mergeRefresh(rows, msg.items)
+		m = m.mergeRefresh(rows, m.items)
 		m.header, m.colWidths = header, widths
 		return m, tea.Batch(m.rescheduleRefresh(), m.startHeadValidation(msg.items))
 
@@ -1378,25 +1350,85 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleActionResult reports a finished single-PR action and moves the view
+// on: to the next queued diff, back to the list, or by refreshing the detail.
+func (m tuiModel) handleActionResult(msg actionMsg) (tea.Model, tea.Cmd) {
+	idx := m.resolveIndex(msg.key, msg.index)
+	if idx < 0 {
+		return m, nil // PR no longer in list (removed by refresh)
+	}
+	pr := m.rows[idx].Item.PR
+	if msg.ref == "" {
+		msg.ref, msg.url = pr.Ref(), pr.URL
+	}
+	// HintError: action succeeded but has a follow-up hint for the user.
+	hint, isHint := errors.AsType[*HintError](msg.err)
+	if isHint {
+		msg.err = nil // treat as success
+	}
+	if msg.err != nil {
+		flashCmd := m.actionFlash(msg)
+		// Advance diff queue even on failure so user can continue reviewing.
+		if advanced, nextCmd := m.advanceDiff(); advanced {
+			return m, tea.Batch(flashCmd, nextCmd)
+		}
+		if m.view == tuiViewDiff {
+			return m, tea.Batch(flashCmd, m.exitDiffView())
+		}
+		return m, flashCmd
+	}
+	if msg.action.removes() {
+		m.removed[msg.key] = true
+		m.resyncCursorAndOffset()
+	}
+	flashCmd := m.actionFlash(msg)
+	if hint != nil {
+		cmd := styleAccent.Bold(true).Render(hint.Hint)
+		m.confirmAction = tuiActionInfo
+		m.confirmPrompt = "To also mute notifications, run:\n\n" + cmd
+		m.confirmCmd = nil
+	}
+	if advanced, nextCmd := m.advanceDiff(); advanced {
+		return m, tea.Batch(flashCmd, nextCmd)
+	}
+	if m.view == tuiViewDiff {
+		return m, tea.Batch(flashCmd, m.exitDiffView())
+	}
+	if m.view == tuiViewDetail && m.detailKey != "" {
+		return m, tea.Batch(flashCmd, m.refetchDetail())
+	}
+	return m, flashCmd
+}
+
+// actionFlash renders an action's result for the status line.
+func (m *tuiModel) actionFlash(msg actionMsg) tea.Cmd {
+	if msg.action == tuiActionApproved {
+		return m.approvalFlash(msg)
+	}
+	if msg.err != nil {
+		return flashResult(
+			m,
+			msg.action.String()+" failed:",
+			fmt.Sprintf("%v", withGitHubErrorDetail(msg.err)),
+			"",
+			true,
+		)
+	}
+	return flashResult(m, msg.action.String(), msg.ref, msg.url, false)
+}
+
 // applyDetailMergeStatus replaces list enrichment for a single PR with the
 // uncapped status fetched specifically for its detail view.
-func (m *tuiModel) applyDetailMergeStatus(key prKey, idx int, status *MergeStatus) {
+func (m *tuiModel) applyDetailMergeStatus(key prKey, status *MergeStatus) {
 	if status == nil {
 		return
 	}
 
-	update := func(item *PRRowModel) {
+	m.updatePR(key, func(item *PRRowModel) {
 		item.PR.MergeStatus = *status
 		item.MergeStatus = *status
 		item.MergeReason = deriveMergeReason(item.PR)
-	}
-	update(&m.rows[idx].Item)
-	for i := range m.items {
-		if makePRKey(m.items[i].PR) == key {
-			update(&m.items[i])
-			break
-		}
-	}
+	})
 }
 
 func (m tuiModel) doPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
@@ -1645,6 +1677,12 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 		return m, nil
 
+	case tuiKeybindCycleCI:
+		return m.cycleCIFilter(1)
+
+	case tuiKeybindCycleCIBack:
+		return m.cycleCIFilter(-1)
+
 	case tuiKeybindToggleRefresh:
 		m.autoRefresh = !m.autoRefresh
 		// Mirror into config and persist the snapshot to the state file.
@@ -1796,7 +1834,7 @@ func (m tuiModel) viewList() tea.View {
 		}
 		display := index + indexGap + tree + m.rows[idx].Display
 		if idx != m.cursor {
-			b.WriteString(tuiNonCursorPrefix + display + nl)
+			b.WriteString(m.rowGutter(idx) + display + nl)
 			continue
 		}
 		line := m.styles.cursor.Render(tuiCursorPrefix) + display
@@ -1856,6 +1894,17 @@ func (m tuiModel) viewList() tea.View {
 	return v
 }
 
+// rowGutter returns the prefix for a non-cursor row: a check mark when the
+// viewer has approved the PR, otherwise blank.
+func (m tuiModel) rowGutter(idx int) string {
+	if !isViewerApproved(m.rows[idx].Item.PR) {
+		return tuiNonCursorPrefix
+	}
+	mark := activeIcons.Check
+	pad := max(0, lg.Width(tuiNonCursorPrefix)-lg.Width(mark))
+	return m.styles.statusOK.Render(mark) + strings.Repeat(" ", pad)
+}
+
 func (m tuiModel) viewDiff() tea.View {
 	var header string
 	headerStyle := styleLabel.Bold(true)
@@ -1871,10 +1920,7 @@ func (m tuiModel) viewDiff() tea.View {
 		headerLine += xansi.Force().Hyperlink(pr.URL,
 			headerStyle.Render(ref)+styleText.Render(" » ")+
 				styleTitle.Render(m.p.displayText(pr.Title)))
-		if m.width > 0 && lg.Width(headerLine) > m.width {
-			headerLine = xansi.Truncate(headerLine, m.width-1, valueEllipsis)
-		}
-		header = headerLine
+		header = m.alignHeader(headerLine, m.renderPRStatusLine(pr))
 	}
 	return m.renderFullScreenView(
 		header,
@@ -1882,6 +1928,96 @@ func (m tuiModel) viewDiff() tea.View {
 		m.diffRenderLines,
 		m.renderHelp(m.diffHelpPairs()),
 	)
+}
+
+// diffHeaderMinTitle is the narrowest the title may be truncated to before the
+// right-aligned status is dropped.
+const diffHeaderMinTitle = 20
+
+// alignHeader puts title on the left and status on the right of one line,
+// truncating the title first when space is short.
+func (m tuiModel) alignHeader(title, status string) string {
+	if m.width <= 0 {
+		return title + "  " + status
+	}
+	const gap = 2
+	statusWidth := lg.Width(status)
+	room := m.width - statusWidth - gap
+	if status == "" || room < diffHeaderMinTitle {
+		if lg.Width(title) > m.width {
+			return xansi.Truncate(title, m.width-1, valueEllipsis)
+		}
+		return title
+	}
+	if lg.Width(title) > room {
+		title = xansi.Truncate(title, room, valueEllipsis)
+	}
+	return title + strings.Repeat(" ", m.width-lg.Width(title)-statusWidth) + status
+}
+
+// renderPRStatusLine summarises a PR's CI, review and viewer-approval state
+// as pills for the diff header.
+func (m tuiModel) renderPRStatusLine(pr PullRequest) string {
+	open := strings.EqualFold(pr.State, valueOpen)
+	// "Needs your review" already implies both "Needs review" and a required
+	// review, so those pills are dropped alongside it.
+	needsViewer := open && !m.isCurrentUserPR(pr) &&
+		pr.viewerApprovalLoaded && !pr.viewerApproved
+	var parts []string
+	if !needsViewer || resolvePRStatus(pr) != resolvedBlocked {
+		if badge := m.renderDetailStatus(pr); badge != "" {
+			parts = append(parts, badge)
+		}
+	}
+	if open {
+		if badge := renderReviewBadge(pr, needsViewer); badge != "" {
+			parts = append(parts, badge)
+		}
+		switch {
+		case m.isCurrentUserPR(pr):
+			parts = append(parts, statusBadge("Your PR", "", colorGitHubDraft, styleDim))
+		case isViewerApproved(pr):
+			parts = append(parts, statusBadge(
+				"Approved by you", activeIcons.Check, colorGitHubOpen, styleGreen,
+			))
+		case needsViewer:
+			// Blue rather than amber, so it stands apart from the status pills.
+			parts = append(parts, statusBadge(
+				"Needs your review", "", colorGitHubAccent,
+				lg.NewStyle().Foreground(colorGitHubAccent),
+			))
+		}
+	}
+	// Pills are self-delimiting; plain-text badges need a separator.
+	sep := " "
+	if activeIcons.PillLeft == "" {
+		sep = styleDim.Render(" · ")
+	}
+	return strings.Join(parts, sep)
+}
+
+// renderReviewBadge renders the PR's review decision, unless another pill
+// already says the same thing.
+func renderReviewBadge(pr PullRequest, needsViewer bool) string {
+	if !pr.reviewDecisionLoaded {
+		return ""
+	}
+	status := resolvePRStatus(pr)
+	switch pr.ReviewDecision {
+	case valueReviewRequired:
+		if needsViewer || status == resolvedBlocked {
+			return ""
+		}
+		return statusBadge("Review required", "", colorGitHubAttention, styleWarning)
+	case valueReviewApproved:
+		if status == resolvedReady {
+			return ""
+		}
+		return statusBadge("Approved", "", colorGitHubOpen, styleGreen)
+	case valueReviewChanges:
+		return statusBadge("Changes requested", "", colorGitHubClosed, styleClosed)
+	}
+	return ""
 }
 
 // renderListSeparator renders the separator line. If junctionCol >= 0, a ┬ is
@@ -2298,36 +2434,6 @@ func (m tuiModel) plainBodyLines(body string) []string {
 		lines = append(lines, detailIndent+line)
 	}
 	return lines
-}
-
-// advanceDiffQueue pops the next PR from the diff queue and returns a command
-// to fetch its diff. Returns nil if the queue is empty.
-func advanceDiffQueue(m *tuiModel) tea.Cmd {
-	for len(m.diffQueue) > 0 {
-		key := m.diffQueue[0]
-		m.diffQueue = m.diffQueue[1:]
-		idx := m.resolveIndex(key, -1)
-		if idx < 0 {
-			continue
-		}
-		m.diffLoading = true
-		pr := m.rows[idx].Item.PR
-		actions := m.actions
-		return func() tea.Msg {
-			owner, repo := prOwnerRepo(pr)
-			diff, headSHA, err := actions.fetchDiff(owner, repo, pr.Number)
-			return diffFetchedMsg{
-				index:   idx,
-				key:     makePRKey(pr),
-				diff:    diff,
-				headSHA: headSHA,
-				err:     err,
-			}
-		}
-	}
-	m.diffQueueTotal = 0
-	m.diffKey = ""
-	return nil
 }
 
 // isRowHidden reports whether a row is excluded from the list, either because
@@ -2762,6 +2868,7 @@ func (m tuiModel) renderHelpOverlay() string {
 		{Key: tuiKeybindSlackNoConfirm, Desc: tuiDescSendSlackNoConf},
 		{Key: key.Tab, Desc: tuiDescCycleSortOrder},
 		{Key: tuiKeybindOptions, Desc: tuiDescOptions},
+		{Key: tuiKeybindCycleCI + "/" + tuiKeybindCycleCIBack, Desc: tuiDescCycleCI},
 		{Key: tuiKeybindToggleRefresh, Desc: tuiDescRefresh},
 		{Key: tuiKeybindHelp, Desc: tuiDescHelp},
 		{Key: tuiKeybindQuit, Desc: tuiDescQuit},
@@ -2938,6 +3045,7 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmURL = ""
 	m.confirmCmd = nil
 	m.confirmCmdFn = nil
+	m.confirmOnAccept = nil
 	m.confirmHasInput = false
 	m.confirmInputLabel = ""
 	m.confirmOptions = nil

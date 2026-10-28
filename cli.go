@@ -68,7 +68,7 @@ type CLI struct {
 	ClosedBy        CSVFlag  `help:"Filter by who closed the PR (post-fetch)"                               clib:"terse='Closed by',complete='predictor=author',group='Filters/3'"                                                                                                                                                                         placeholder:"<user>"`
 	MergedBy        CSVFlag  `help:"Filter by who merged the PR (post-fetch)"                               clib:"terse='Merged by',complete='predictor=author',group='Filters/3'"                                                                                                                                                                         placeholder:"<user>"`
 	ReviewedBy      CSVFlag  `help:"Filter by reviewer"                                                     clib:"terse='Reviewed by',complete='predictor=author',group='Filters/3'"                                                                                                                                                                       placeholder:"<user>"`
-	CI              string   `help:"Filter by CI status"                                                    clib:"terse='CI status',complete='values=success failure pending',group='Filters/4',enum='success,failure,pending',highlight='s,f,p'"                                                                                                          placeholder:"<status>"`
+	CI              string   `help:"Filter by CI status (comma-separated, ! or - to exclude)"               clib:"terse='CI status',complete='values=success failure pending,comma',group='Filters/4',enum='success,failure,pending',highlight='s,f,p'"                                                                                                    placeholder:"<status>"`
 	Comments        string   `help:"Filter by comment count (>5, 10..20)"                                   clib:"terse='Comment count',group='Filters/4'"                                                                                                                                                                                                 placeholder:"<range>"`
 	Language        string   `help:"Filter by language"                                           short:"l" clib:"terse='Language',group='Filters/4'"                                                                                                                                                                                                      placeholder:"<lang>"`
 	Review          string   `help:"Filter by review status"                                      short:"r" clib:"terse='Review status',complete='values=none required self-required approved changes-requested',group='Filters/4',enum='none,required,self-required,approved,changes-requested',highlight='n,r,s,a,c'"                                    placeholder:"<status>"`
@@ -372,9 +372,9 @@ func (c *CLI) Validate() error {
 		}
 	}
 	if c.CI != "" {
-		if _, ok := parseCIStatus(c.CI); !ok {
+		if _, ok := parseCIFilter(c.CI); !ok {
 			return fmt.Errorf(
-				"invalid --ci value %q (valid: success/pass/passed/s, failure/fail/failed/f, pending/p)",
+				"invalid --ci value %q (valid: success/pass/passed/s, failure/fail/failed/f, pending/p, comma-separated, prefix with ! or - to exclude)",
 				c.CI,
 			)
 		}
@@ -648,16 +648,10 @@ func (c *CLI) PRState() PRState {
 	return s
 }
 
-// CIStatus returns the parsed CI status.
-func (c *CLI) CIStatus() CIStatus {
-	if c.CI == "" {
-		return CINone
-	}
-	s, ok := parseCIStatus(c.CI)
-	if !ok {
-		return CINone
-	}
-	return s
+// CIFilter returns the parsed CI filter.
+func (c *CLI) CIFilter() CIFilter {
+	f, _ := parseCIFilter(c.CI)
+	return f
 }
 
 func (c *CLI) ReviewSelfRequired() bool {

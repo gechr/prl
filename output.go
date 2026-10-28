@@ -1378,21 +1378,21 @@ func filterByViewerApproval(prs []PullRequest) []PullRequest {
 // what hydrateListMetadataChunk's halving retry is for.
 const hydrateChunkSize = 15
 
-// filterByCI keeps only PRs whose enriched MergeStatus matches the given CI status.
-// CISuccess matches PRs where CI passed (MergeStatusReady or MergeStatusBlocked).
-// CIFailure matches MergeStatusCIFailed and MergeStatusCIError. CIPending matches
-// MergeStatusCIPending.
-func filterByCI(prs []PullRequest, ci CIStatus) []PullRequest {
+// filterByCI keeps only PRs whose enriched MergeStatus satisfies the CI filter.
+func filterByCI(prs []PullRequest, ci CIFilter) []PullRequest {
 	result := make([]PullRequest, 0, len(prs))
 	for _, pr := range prs {
-		if matchesCI(pr, ci) {
+		if ci.Matches(pr) {
 			result = append(result, pr)
 		}
 	}
 	return result
 }
 
-// matchesCI reports whether a PR's enriched MergeStatus satisfies the CI filter.
+// matchesCI reports whether a PR's enriched MergeStatus has the given CI status.
+// CISuccess matches PRs where CI passed (MergeStatusReady or MergeStatusBlocked).
+// CIFailure matches MergeStatusCIFailed and MergeStatusCIError. CIPending matches
+// MergeStatusCIPending.
 func matchesCI(pr PullRequest, ci CIStatus) bool {
 	switch ci {
 	case CISuccess:

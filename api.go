@@ -228,13 +228,17 @@ func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
 	}
 
 	if cli.Approve {
-		if err := a.approvePR(pr); err != nil {
+		if outcome, err := a.approvePR(pr); err != nil {
 			errs = append(errs, fmt.Sprintf("approve %s: %v", pr.URL, err))
 		} else {
+			msg := "Approved"
+			if outcome == approveAlreadyViewer {
+				msg = "Already approved"
+			}
 			clog.Success().
 				Link("pr", pr.URL, pr.Ref()).
 				Str("title", truncateTitle(pr.Title)).
-				Msg("Approved")
+				Msg(msg)
 		}
 	}
 
@@ -380,26 +384,66 @@ func (a *ActionRunner) comment(owner, repo string, number int, body string) erro
 	return a.rest.Post(path, jsonBody(map[string]string{keyBody: body}), nil)
 }
 
-func (a *ActionRunner) approvePR(pr PullRequest) error {
+// approveOutcome reports what approvePR did.
+type approveOutcome int
+
+const (
+	approvePosted           approveOutcome = iota // submitted an approving review
+	approveAlreadyViewer                          // the viewer had already approved
+	approveSkippedAggregate                       // viewer state unknown; others' approvals suffice
+)
+
+// approvePR submits an approving review unless the viewer already approved.
+// When the viewer's own state can't be established, it falls back to skipping
+// PRs whose overall review decision is already APPROVED.
+func (a *ActionRunner) approvePR(pr PullRequest) (approveOutcome, error) {
 	owner, repo := prOwnerRepo(pr)
 
-	// Skip if the PR's overall review decision is already APPROVED.
-	if pr.reviewDecisionLoaded && pr.ReviewDecision == valueReviewApproved {
-		return nil
+	// Re-check unless already known approved: list data can be stale (another
+	// client, or an approve-and-merge whose merge leg failed).
+	if !pr.viewerApproved && a.gql != nil && pr.NodeID != "" {
+		snapshot := []PullRequest{pr}
+		_, err := hydrateListMetadata(a.gql, snapshot, listMetadataRequest{viewerApproval: true})
+		if err == nil {
+			pr = snapshot[0]
+		}
 	}
 
+	if isViewerApproved(pr) {
+		return approveAlreadyViewer, nil
+	}
+	if !pr.viewerApprovalLoaded && a.aggregateApproved(pr) {
+		return approveSkippedAggregate, nil
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, pr.Number)
+	return approvePosted, a.rest.Post(path, jsonBody(map[string]string{"event": "APPROVE"}), nil)
+}
+
+// aggregateApproved reports whether the PR's overall review decision is
+// already APPROVED, loading the decision if needed.
+func (a *ActionRunner) aggregateApproved(pr PullRequest) bool {
 	if !pr.reviewDecisionLoaded && a.gql != nil && pr.NodeID != "" {
 		snapshot := []PullRequest{pr}
 		if err := ensureReviewDecisions(a.gql, snapshot); err == nil {
 			pr = snapshot[0]
-			if pr.reviewDecisionLoaded && pr.ReviewDecision == valueReviewApproved {
-				return nil
-			}
 		}
 	}
+	return pr.reviewDecisionLoaded && pr.ReviewDecision == valueReviewApproved
+}
 
-	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews", owner, repo, pr.Number)
-	return a.rest.Post(path, jsonBody(map[string]string{"event": "APPROVE"}), nil)
+// fetchPRStatus re-reads a single PR's merge status, review decision and
+// viewer approval.
+func (a *ActionRunner) fetchPRStatus(pr PullRequest) (PullRequest, error) {
+	if a.gql == nil || pr.NodeID == "" {
+		return pr, fmt.Errorf("GraphQL client unavailable")
+	}
+	snapshot := []PullRequest{pr}
+	_, err := hydrateListMetadata(a.gql, snapshot, listMetadataRequest{
+		mergeStatus:    true,
+		viewerApproval: true,
+	})
+	return snapshot[0], err
 }
 
 func (a *ActionRunner) reopenPR(owner, repo string, number int) error {

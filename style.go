@@ -35,6 +35,7 @@ var (
 	colorGitHubOnEmphasis color.Color // text on GitHub state-label backgrounds
 
 	// GitHub Primer state-label backgrounds.
+	colorGitHubAccent    color.Color
 	colorGitHubAttention color.Color
 	colorGitHubClosed    color.Color
 	colorGitHubDone      color.Color
@@ -154,6 +155,7 @@ func initPalette(isLight bool) {
 	colorText = ld(lg.Color("235"), lg.Color("255"))     // normal text
 	colorBlack = lg.Color("#000000")                     // button text on colored bg
 	colorGitHubOnEmphasis = lg.Color("#ffffff")
+	colorGitHubAccent = ld(lg.Color("#0969da"), lg.Color("#1f6feb"))
 	colorGitHubAttention = ld(lg.Color("#9a6700"), lg.Color("#9e6a03"))
 	colorGitHubClosed = ld(lg.Color("#cf222e"), lg.Color("#da3633"))
 	colorGitHubDone = ld(lg.Color("#8250df"), lg.Color("#8957e5"))

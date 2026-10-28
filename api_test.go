@@ -827,3 +827,114 @@ func decodeGraphQLBody(t *testing.T, body string) graphQLRequest {
 	require.NoError(t, json.Unmarshal([]byte(body), &req))
 	return req
 }
+
+// approveTestRunner returns an ActionRunner whose GraphQL viewer-review query
+// reports viewerApproved, and counts approval POSTs.
+func approveTestRunner(t *testing.T, viewerApproved bool, posts *atomic.Int32) *ActionRunner {
+	t.Helper()
+	state := "COMMENTED"
+	if viewerApproved {
+		state = valueReviewApproved
+	}
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/graphql":
+			body := readBody(t, req.Body)
+			if !strings.Contains(body, "viewerReviewNodes") {
+				t.Fatalf("unexpected GraphQL call: %s", body)
+				return nil, errUnexpectedGraphQLCall
+			}
+			return jsonResponse(req, http.StatusOK, `{"data":{"viewer":{"login":"reviewer"},`+
+				`"viewerReviewNodes":[{"id":"PR_node","latestOpinionatedReviews":{"nodes":[`+
+				`{"author":{"login":"reviewer"},"state":"`+state+`"}]}}]}}`), nil
+		case "/repos/owner/repo/pulls/42/reviews":
+			posts.Add(1)
+			return jsonResponse(req, http.StatusOK, `{}`), nil
+		default:
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		}
+	})
+	opts := api.ClientOptions{AuthToken: "test", Host: "github.com", Transport: transport}
+	rest, err := api.NewRESTClient(opts)
+	require.NoError(t, err)
+	gql, err := api.NewGraphQLClient(opts)
+	require.NoError(t, err)
+	return NewActionRunner(rest, gql)
+}
+
+func approveTestPR() PullRequest {
+	return PullRequest{
+		NodeID:     "PR_node",
+		Number:     42,
+		State:      valueOpen,
+		Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"},
+	}
+}
+
+func TestApprovePRSkipsWhenViewerKnownApproved(t *testing.T) {
+	var posts atomic.Int32
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request: %s", req.URL.Path)
+		return nil, errUnexpectedGraphQLCall
+	})
+	opts := api.ClientOptions{AuthToken: "test", Host: "github.com", Transport: transport}
+	rest, err := api.NewRESTClient(opts)
+	require.NoError(t, err)
+	gql, err := api.NewGraphQLClient(opts)
+	require.NoError(t, err)
+	pr := approveTestPR()
+	pr.viewerApproved = true
+	pr.viewerApprovalLoaded = true
+
+	outcome, err := NewActionRunner(rest, gql).approvePR(pr)
+
+	require.NoError(t, err)
+	require.Equal(t, approveAlreadyViewer, outcome)
+	require.Zero(t, posts.Load())
+}
+
+func TestApprovePRRechecksStaleViewerState(t *testing.T) {
+	var posts atomic.Int32
+	actions := approveTestRunner(t, true, &posts)
+	pr := approveTestPR()
+	pr.viewerApprovalLoaded = true // stale: list data says not approved
+
+	outcome, err := actions.approvePR(pr)
+
+	require.NoError(t, err)
+	require.Equal(t, approveAlreadyViewer, outcome)
+	require.Zero(t, posts.Load())
+}
+
+func TestApprovePRPostsWhenOnlyOthersApproved(t *testing.T) {
+	var posts atomic.Int32
+	actions := approveTestRunner(t, false, &posts)
+	pr := approveTestPR()
+	pr.ReviewDecision = valueReviewApproved
+	pr.reviewDecisionLoaded = true
+
+	outcome, err := actions.approvePR(pr)
+
+	require.NoError(t, err)
+	require.Equal(t, approvePosted, outcome)
+	require.EqualValues(t, 1, posts.Load())
+}
+
+func TestApprovePRFallsBackToAggregateWhenViewerUnknown(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request: %s", req.URL.Path)
+		return nil, errUnexpectedGraphQLCall
+	})
+	rest, err := api.NewRESTClient(
+		api.ClientOptions{AuthToken: "test", Host: "github.com", Transport: transport},
+	)
+	require.NoError(t, err)
+	pr := approveTestPR()
+	pr.ReviewDecision = valueReviewApproved
+	pr.reviewDecisionLoaded = true
+
+	outcome, err := NewActionRunner(rest, nil).approvePR(pr)
+
+	require.NoError(t, err)
+	require.Equal(t, approveSkippedAggregate, outcome)
+}

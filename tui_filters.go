@@ -14,11 +14,7 @@ import (
 func (m tuiModel) newFilterPicker() picker.Model {
 	rows := make([]picker.Row, len(filterOptionDefs))
 	for i, def := range filterOptionDefs {
-		choices := make([]string, len(def.choices))
-		for j, c := range def.choices {
-			choices[j] = c.label
-		}
-		rows[i] = picker.Row{Label: def.label, Choices: choices}
+		rows[i] = picker.Row{Label: def.label, Choices: choiceLabels(m.filterChoices(filterRow(i)))}
 	}
 
 	locked := make([]bool, len(filterOptionDefs))
@@ -121,6 +117,7 @@ var filterOptionDefs = [...]filterOptionDef{
 			},
 			{ciStatusFailure, ciStatusFailure},
 			{ciStatusPending, ciStatusPending},
+			{ciFilterNotFailing, ciFilterNotFailing},
 			{valueAll, ""},
 		},
 	},
@@ -166,13 +163,8 @@ func (m tuiModel) currentFilterValues() []int {
 		vals[filterRowArchived] = filterChoiceIndex(filterRowArchived, filterChoiceFalse)
 	}
 
-	// CI - normalize from canonical CIStatus
-	vals[filterRowCI] = filterChoiceIndex(filterRowCI, "")
-	if ci := m.cli.CI; ci != "" {
-		if parsed, ok := parseCIStatus(ci); ok {
-			vals[filterRowCI] = filterChoiceIndex(filterRowCI, parsed.String())
-		}
-	}
+	// CI - normalize to the canonical filter expression
+	vals[filterRowCI] = choiceIndex(m.filterChoices(filterRowCI), m.cli.CIFilter().String())
 
 	// Review
 	vals[filterRowReview] = filterChoiceIndex(filterRowReview, m.cli.Review)
@@ -187,7 +179,32 @@ func (m tuiModel) currentFilterValues() []int {
 
 // selectedFilterValue returns the canonical value string for the given filter row.
 func (m tuiModel) selectedFilterValue(row filterRow) string {
-	return filterOptionDefs[row].choices[m.optionsPicker.Values[row]].value
+	return m.filterChoices(row)[m.optionsPicker.Values[row]].value
+}
+
+// filterChoices returns the overlay choices for a row. The CI row gains an
+// extra choice for a current expression the fixed choices can't represent
+// (e.g. "success,!pending"), so opening and applying the overlay keeps it.
+func (m tuiModel) filterChoices(row filterRow) []filterChoice {
+	choices := filterOptionDefs[row].choices
+	if row != filterRowCI || m.cli == nil {
+		return choices
+	}
+	current := m.cli.CIFilter().String()
+	if current == "" || slices.ContainsFunc(choices, func(c filterChoice) bool {
+		return c.value == current
+	}) {
+		return choices
+	}
+	return append(slices.Clone(choices), filterChoice{current, current})
+}
+
+func choiceLabels(choices []filterChoice) []string {
+	labels := make([]string, len(choices))
+	for i, c := range choices {
+		labels[i] = c.label
+	}
+	return labels
 }
 
 func filterChoiceIndex(row filterRow, value string) int {
@@ -396,14 +413,18 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Rebuild search params.
+	m.persistFilterState()
+	return m.applyFilterChange()
+}
+
+// applyFilterChange rebuilds the search for the current filters, hides rows
+// that clearly no longer match, and starts an authoritative refresh.
+func (m tuiModel) applyFilterChange() (tea.Model, tea.Cmd) {
 	params, err := buildSearchQuery(m.cli, m.cfg)
 	if err != nil {
 		return m, flashResult(&m, err.Error(), "", "", true)
 	}
 	m.params = params
-
-	m.persistFilterState()
 
 	// Hide rows that clearly no longer match so the list updates immediately;
 	// the background refresh replaces this with authoritative results.
@@ -414,6 +435,26 @@ func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 
 	m.invalidateRefresh()
 	return m, m.startRefresh(true)
+}
+
+// ciFilterCycle is the order f steps through CI filters: all, not failing,
+// passing, failing.
+var ciFilterCycle = [...]string{"", ciFilterNotFailing, ciStatusSuccess, ciStatusFailure}
+
+// cycleCIFilter steps the CI filter forwards (dir 1) or backwards (dir -1)
+// through ciFilterCycle. An expression outside the cycle counts as "all".
+func (m tuiModel) cycleCIFilter(dir int) (tea.Model, tea.Cmd) {
+	if m.cli.ciExplicit {
+		return m, tuiFlashMessage(&m, "CI filter is set by --ci", true)
+	}
+	idx := max(0, slices.Index(ciFilterCycle[:], m.cli.CIFilter().String()))
+	n := len(ciFilterCycle)
+	m.cli.CI = ciFilterCycle[(idx+dir+n)%n]
+	m.cfg.TUI.Filters.CI = m.cli.CI
+	if err := saveTUIState(m.cfg); err != nil {
+		warnStateSaveErr(err, "filter settings")
+	}
+	return m.applyFilterChange()
 }
 
 // persistFilterState mirrors the current non-explicit filter values into config
@@ -495,7 +536,7 @@ func (m tuiModel) matchesLocalFilters(item PRRowModel) bool {
 	if m.cli.NoBot && item.Author.IsBot {
 		return false
 	}
-	if ci := m.cli.CIStatus(); ci != CINone && !matchesCI(pr, ci) {
+	if ci := m.cli.CIFilter(); ci.Active() && !ci.Matches(pr) {
 		return false
 	}
 	return m.matchesLocalReviewFilter(pr)
@@ -504,6 +545,12 @@ func (m tuiModel) matchesLocalFilters(item PRRowModel) bool {
 // matchesLocalReviewFilter maps the review filter onto the PR's cached review
 // decision. PRs without a hydrated decision are kept, since we can't tell.
 func (m tuiModel) matchesLocalReviewFilter(pr PullRequest) bool {
+	// Self-required drops PRs the viewer authored or has already approved,
+	// which is known even without a hydrated review decision.
+	if m.cli.Review == valueReviewFilterSelfRequired &&
+		(m.isCurrentUserPR(pr) || pr.viewerIsAuthor || isViewerApproved(pr)) {
+		return false
+	}
 	if m.cli.Review == "" || !pr.reviewDecisionLoaded {
 		return true
 	}
@@ -515,18 +562,7 @@ func (m tuiModel) matchesLocalReviewFilter(pr PullRequest) bool {
 	case valueReviewFilterNone:
 		return pr.ReviewDecision != valueReviewApproved && pr.ReviewDecision != valueReviewChanges
 	case valueReviewFilterRequired, valueReviewFilterSelfRequired:
-		if pr.ReviewDecision != valueReviewRequired {
-			return false
-		}
-		if m.cli.Review != valueReviewFilterSelfRequired {
-			return true
-		}
-		// Self-required additionally drops PRs the viewer authored or has
-		// already approved.
-		if m.isCurrentUserPR(pr) {
-			return false
-		}
-		return !pr.viewerApprovalLoaded || !pr.viewerApproved
+		return pr.ReviewDecision == valueReviewRequired
 	}
 	return true
 }
@@ -591,15 +627,19 @@ func (m tuiModel) activeFilterTags() []string {
 	if m.cli.Archived {
 		tags = append(tags, "archived")
 	}
-	if ci := m.cli.CIStatus(); ci != CINone {
-		if ci == CIFailure {
-			tags = append(tags, "ci:fail")
-		} else {
-			tags = append(tags, "ci:"+ci.String())
-		}
+	if ci := m.cli.CIFilter(); ci.Active() {
+		tags = append(tags, "ci:"+ci.join(ciTagName))
 	}
 	if m.cli.Review != "" {
 		tags = append(tags, "review:"+strings.ReplaceAll(m.cli.Review, "_", "-"))
 	}
 	return tags
+}
+
+// ciTagName abbreviates "failure" to "fail" in the filter tag.
+func ciTagName(ci CIStatus) string {
+	if ci == CIFailure {
+		return "fail"
+	}
+	return ci.String()
 }
