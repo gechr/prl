@@ -1847,7 +1847,7 @@ func (m tuiModel) viewList() tea.View {
 			b.WriteString(m.rowGutter(idx) + display + nl)
 			continue
 		}
-		line := m.styles.cursor.Render(tuiCursorPrefix) + display
+		line := m.rowCursor(idx) + display
 		// Inject background color throughout the line so it persists
 		// through existing ANSI codes in the display string.
 		// Skip highlight when there's only one visible result.
@@ -1902,6 +1902,15 @@ func (m tuiModel) viewList() tea.View {
 	v.MouseMode = tea.MouseModeCellMotion
 	m.applyRepaintMarker(&v)
 	return v
+}
+
+// rowCursor renders the cursor prefix for row idx, in the approval check's
+// green when the viewer has approved it.
+func (m tuiModel) rowCursor(idx int) string {
+	if isViewerApproved(m.rows[idx].Item.PR) {
+		return m.styles.statusOK.Bold(true).Render(tuiCursorPrefix)
+	}
+	return m.styles.cursor.Render(tuiCursorPrefix)
 }
 
 // rowGutter returns the prefix for a non-cursor row: a check mark when the

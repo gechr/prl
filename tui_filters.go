@@ -124,7 +124,7 @@ var filterOptionDefs = [...]filterOptionDef{
 	},
 	{"Review", []filterChoice{
 		{valueReviewFilterRequired, valueReviewFilterRequired},
-		{"self", valueReviewFilterSelfRequired},
+		{"self-required", valueReviewFilterSelfRequired},
 		{valueReviewFilterApproved, valueReviewFilterApproved},
 		{"changes", valueReviewFilterChanges},
 		{valueReviewFilterNone, valueReviewFilterNone},

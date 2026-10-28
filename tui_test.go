@@ -2138,7 +2138,7 @@ func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
 
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m    \x1b[2m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2;38;5;240mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2;38;5;240mready\x1b[m  \x1b[2;38;5;240mall\x1b[m\x1b[2m  (CLI)\x1b[m       \x1b[38;5;198m│\x1b[m",
+		"\x1b[38;5;198m│\x1b[m    \x1b[2m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2;38;5;240mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2;38;5;240mready\x1b[m  \x1b[2;38;5;240mall\x1b[m\x1b[2m  (CLI)\x1b[m                \x1b[38;5;198m│\x1b[m",
 		strings.Split(overlay, nl)[2],
 	)
 }
@@ -2156,7 +2156,7 @@ func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
 
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m  \x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m❯ \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m  Drafts  \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;218m\x1b[48;2;40;10;30mshow\x1b[m\x1b[48;2;40;10;30m  \x1b[2m\x1b[48;2;40;10;30mhide\x1b[m\x1b[48;2;40;10;30m                                  \x1b[0m  \x1b[38;5;198m│\x1b[m",
+		"\x1b[38;5;198m│\x1b[m  \x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m❯ \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m  Drafts  \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;218m\x1b[48;2;40;10;30mshow\x1b[m\x1b[48;2;40;10;30m  \x1b[2m\x1b[48;2;40;10;30mhide\x1b[m\x1b[48;2;40;10;30m                                           \x1b[0m  \x1b[38;5;198m│\x1b[m",
 		strings.Split(overlay, nl)[4],
 	)
 }
@@ -2180,7 +2180,7 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 	m.optionsPicker.Cursor = int(filterRowDraft)
 
 	// Default state (open) renders bold as the selected choice.
-	boldStateRow := "\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[1;38;5;218mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m              \x1b[38;5;198m│\x1b[m"
+	boldStateRow := "\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[1;38;5;218mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                       \x1b[38;5;198m│\x1b[m"
 
 	overlay := m.renderOptionsOverlay()
 	require.Equal(t, boldStateRow, strings.Split(overlay, nl)[2])
@@ -2196,7 +2196,7 @@ func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
 	// With closed selected, the default (open) uses the muted default-choice style.
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[1;38;5;218mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m              \x1b[38;5;198m│\x1b[m",
+		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[1;38;5;218mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                       \x1b[38;5;198m│\x1b[m",
 		strings.Split(overlay, nl)[2],
 	)
 }

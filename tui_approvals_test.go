@@ -97,11 +97,13 @@ func TestBeginApprovalWithoutFilterKeepsRowAndMarksIt(t *testing.T) {
 	m := approvalTestModel("", approvalTestPR(1))
 	key := makePRKey(m.rows[0].Item.PR)
 	require.Equal(t, tuiNonCursorPrefix, m.rowGutter(0))
+	require.Equal(t, m.styles.cursor.Render(tuiCursorPrefix), m.rowCursor(0))
 
 	m.beginApproval([]prKey{key})
 
 	require.False(t, m.filterHidden[key])
 	require.Equal(t, activeIcons.Check+" ", ansi.Strip(m.rowGutter(0)))
+	require.Equal(t, m.styles.statusOK.Bold(true).Render(tuiCursorPrefix), m.rowCursor(0))
 }
 
 func TestApprovalFailureRestoresRow(t *testing.T) {
