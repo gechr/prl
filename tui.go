@@ -2737,7 +2737,7 @@ func (m tuiModel) listHelpPairs() []key.Hint {
 	}
 	ctx, ok := m.actionContextForCursor()
 	actionable := ok && ctx.actionable
-	if actionable && !ctx.ownPR && !ctx.draft {
+	if targets, _ := m.approvableTargets(); len(targets) > 0 {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove})
 	}
 	pairs = append(pairs, key.Hint{Key: tuiKeybindDiff, Desc: tuiHelpDiff})
@@ -2831,11 +2831,13 @@ func (m tuiModel) diffHelpPairs() []key.Hint {
 		)
 	}
 	if actionable && !ctx.ownPR && !ctx.draft {
-		pairs = append(
-			pairs,
-			key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove},
-		)
-		pairs = append(pairs, key.Hint{Key: tuiKeybindApproveMerge, Desc: tuiHelpApproveMerge})
+		reason := m.approvalBlockReason(ctx.key, ctx.pr)
+		if reason == "" {
+			pairs = append(pairs, key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove})
+		}
+		if reason != resultApprovalPending {
+			pairs = append(pairs, key.Hint{Key: tuiKeybindApproveMerge, Desc: tuiHelpApproveMerge})
+		}
 	}
 	if actionable && !ctx.ownPR {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindUnassign, Desc: tuiHelpUnsubscribe})
@@ -2884,7 +2886,7 @@ func (m tuiModel) detailHelpPairs() []key.Hint {
 			key.Hint{Key: tuiKeybindDraftToggle, Desc: draftToggleHelp(&ctx.pr)},
 		)
 	}
-	if actionable && !ctx.draft && !ctx.ownPR {
+	if actionable && !ctx.draft && !ctx.ownPR && m.approvalBlockReason(ctx.key, ctx.pr) == "" {
 		pairs = append(
 			pairs,
 			key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove},

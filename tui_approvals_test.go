@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/gechr/primer/key"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,6 +77,74 @@ func isShown(m tuiModel, key prKey) bool {
 
 func approvedMsg(key prKey, err error) actionMsg {
 	return actionMsg{key: key, index: -1, ref: string(key), action: tuiActionApproved, err: err}
+}
+
+func TestApprovalHelpMatchesViewerState(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		prepare func(*PullRequest)
+		pending bool
+		want    bool
+	}{
+		{name: "unapproved", want: true},
+		{name: "approved by viewer", prepare: func(pr *PullRequest) { pr.viewerApproved = true }},
+		{name: "pending", pending: true},
+		{name: "approved by others", prepare: func(pr *PullRequest) { pr.ReviewDecision = valueReviewApproved }, want: true},
+		{name: "unknown viewer approval", prepare: func(pr *PullRequest) { pr.viewerApprovalLoaded = false }, want: true},
+		{name: "own PR", prepare: func(pr *PullRequest) { pr.Author.Login = "viewer" }},
+		{name: "draft", prepare: func(pr *PullRequest) { pr.IsDraft = true }},
+		{name: "closed", prepare: func(pr *PullRequest) { pr.State = valueClosed }},
+		{name: "merged", prepare: func(pr *PullRequest) { pr.State = valueMerged }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pr := approvalTestPR(1)
+			if tt.prepare != nil {
+				tt.prepare(&pr)
+			}
+			m := approvalTestModel("", pr)
+			m.diffKey, m.detailKey = makePRKey(pr), makePRKey(pr)
+			if tt.pending {
+				m.beginApproval([]prKey{makePRKey(pr)})
+			}
+			for view, hints := range map[string][]key.Hint{
+				"list":   m.listHelpPairs(),
+				"diff":   m.diffHelpPairs(),
+				"detail": m.detailHelpPairs(),
+			} {
+				require.Equal(t, tt.want, slices.ContainsFunc(hints, func(h key.Hint) bool {
+					return h.Key == tuiKeybindApprove
+				}), view)
+				if view == "diff" && (tt.pending || isViewerApproved(pr)) {
+					require.Equal(t, !tt.pending, slices.ContainsFunc(hints, func(h key.Hint) bool {
+						return h.Key == tuiKeybindApproveMerge
+					}))
+				}
+			}
+		})
+	}
+}
+
+func TestListApprovalHelpUsesSelectedTargets(t *testing.T) {
+	hasApprove := func(m tuiModel) bool {
+		return slices.ContainsFunc(m.listHelpPairs(), func(h key.Hint) bool {
+			return h.Key == tuiKeybindApprove
+		})
+	}
+	approved := approvalTestPR(1)
+	approved.viewerApproved = true
+	unapproved := approvalTestPR(2)
+	m := approvalTestModel("", approved, unapproved)
+	m.selected[makePRKey(approved)] = true
+	m.selected[makePRKey(unapproved)] = true
+
+	require.True(t, hasApprove(m))
+
+	delete(m.selected, makePRKey(unapproved))
+	m.cursor = 1 // The cursor does not override the selection.
+	require.False(t, hasApprove(m))
+
+	clear(m.selected)
+	require.True(t, hasApprove(m))
 }
 
 func TestBeginApprovalHidesSelfRequiredRowImmediately(t *testing.T) {
