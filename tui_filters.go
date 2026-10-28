@@ -8,6 +8,7 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/picker"
+	xslices "github.com/gechr/x/slices"
 )
 
 // newFilterPicker builds a picker.Model from the current filter state.
@@ -469,8 +470,9 @@ func (m tuiModel) cyclePreset(dir int) (tea.Model, tea.Cmd) {
 // displayFilter holds the filters applied whenever rows are shown - the CI
 // filter and the active preset - parsed once per pass over the rows.
 type displayFilter struct {
-	ci     CIFilter
-	preset presetFilter
+	ci        CIFilter
+	preset    presetFilter
+	selfScope bool
 }
 
 func (m tuiModel) displayFilter() displayFilter {
@@ -478,7 +480,32 @@ func (m tuiModel) displayFilter() displayFilter {
 		return displayFilter{}
 	}
 	preset, _ := presetFilterByName(m.cfg, m.cli.preset)
-	return displayFilter{ci: m.cli.CIFilter(), preset: preset}
+	return displayFilter{ci: m.cli.CIFilter(), preset: preset, selfScope: m.searchesSelf()}
+}
+
+// searchesSelf reports whether the search lists only the viewer's PRs. It
+// resolves authors as buildSearchQuery does: negated values only narrow the
+// search, "all" adds nothing, and opposing values cancel. Any team rules it
+// out: team members join the author lists, where a negated team can cancel
+// the viewer's own author restriction.
+func (m tuiModel) searchesSelf() bool {
+	if positive, negative := splitNegated(m.cli.Team.Values); len(positive)+len(negative) > 0 {
+		return false
+	}
+	if m.cli.Author == nil {
+		return false
+	}
+	authors, _ := splitNegated(xslices.UniqueFold(filterAllValue(m.cli.Author.Values)))
+	if len(authors) == 0 {
+		return false
+	}
+	for _, author := range authors {
+		if !strings.EqualFold(author, valueAtMe) &&
+			(m.login == "" || !strings.EqualFold(author, m.login)) {
+			return false
+		}
+	}
+	return true
 }
 
 // shows reports whether a row passes the display filters.
@@ -487,7 +514,10 @@ func (m tuiModel) shows(df displayFilter, item PRRowModel) bool {
 	if df.ci.Active() && !df.ci.Matches(pr) {
 		return false
 	}
-	return df.preset == nil || df.preset.Matches(pr, m.isCurrentUserPR(pr) || pr.viewerIsAuthor)
+	return df.preset == nil || df.preset.Matches(pr, presetContext{
+		own:       m.isCurrentUserPR(pr) || pr.viewerIsAuthor,
+		selfScope: df.selfScope,
+	})
 }
 
 // persistFilterState mirrors the current non-explicit filter values into config

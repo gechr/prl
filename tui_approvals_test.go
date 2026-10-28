@@ -870,3 +870,93 @@ func emptyOverlayHeadline(m tuiModel) string {
 	}
 	return ""
 }
+
+// TestWaitingForCIFollowsSearchedAuthors ties the authors the search query
+// restricts to with the scope:self term in the default Waiting for CI preset.
+func TestWaitingForCIFollowsSearchedAuthors(t *testing.T) {
+	tests := []struct {
+		name      string
+		authors   []string
+		teams     []string
+		wantQuery string // author qualifiers in the query; empty skips the check
+		wantSelf  bool
+	}{
+		{name: "self", authors: []string{"@me"}, wantQuery: "author:@me", wantSelf: true},
+		{name: "self alias", authors: []string{"me"}, wantQuery: "author:@me", wantSelf: true},
+		{name: "login", authors: []string{"ALICE"}, wantQuery: "author:ALICE", wantSelf: true},
+		{
+			name:      "self minus someone",
+			authors:   []string{"@me", "!bob"},
+			wantQuery: "author:@me -author:bob",
+			wantSelf:  true,
+		},
+		{
+			name:      "self and all",
+			authors:   []string{"@me", "all"},
+			wantQuery: "author:@me",
+			wantSelf:  true,
+		},
+		{
+			name:      "cancelled other author",
+			authors:   []string{"@me", "bob", "!bob"},
+			wantQuery: "author:@me",
+			wantSelf:  true,
+		},
+		{name: "cancelled self", authors: []string{"@me", "!@me"}, wantSelf: false},
+		{
+			name:      "negated only",
+			authors:   []string{"!bob"},
+			wantQuery: "-author:bob",
+			wantSelf:  false,
+		},
+		{name: "self and other", authors: []string{"@me", "bob"}, wantSelf: false},
+		{name: "everyone", authors: []string{"all"}, wantSelf: false},
+		{name: "team", authors: []string{"@me"}, teams: []string{"ops"}, wantSelf: false},
+		{name: "negated team", authors: []string{"@me"}, teams: []string{"!ops"}, wantSelf: false},
+		{
+			name:      "negated team containing the viewer",
+			authors:   []string{"alice"},
+			teams:     []string{"!ops"},
+			wantQuery: "-author:bob",
+			wantSelf:  false,
+		},
+		{
+			name:     "cancelled team",
+			authors:  []string{"@me"},
+			teams:    []string{"ops", "!ops"},
+			wantSelf: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cli := &CLI{Author: &CSVFlag{Values: tt.authors}, Team: CSVFlag{Values: tt.teams}}
+			cli.Normalize(&Config{Default: Defaults{
+				Limit:  defaultLimit,
+				State:  valueOpen,
+				Output: valueTable,
+				Sort:   valueName,
+				Match:  "title",
+			}})
+			if tt.wantQuery != "" {
+				// Without a plugin on PATH, teams resolve from config.
+				t.Setenv("PATH", "")
+				params, err := buildSearchQuery(cli, &Config{
+					Teams: map[string][]string{"ops": {"alice", "bob"}},
+				})
+				require.NoError(t, err)
+				require.True(t, strings.HasSuffix(params.Query, " "+tt.wantQuery), params.Query)
+			}
+
+			pr := approvalTestPR(1)
+			pr.Author.Login = "alice"
+			pr.MergeStatus = MergeStatusCIPending
+			m := approvalTestModel("", pr)
+			m.login = "alice"
+			m.cli = cli
+			m.cli.preset = "Waiting for CI"
+
+			require.Equal(t, tt.wantSelf, m.searchesSelf())
+			require.Equal(t, tt.wantSelf, isShown(m, makePRKey(pr)))
+		})
+	}
+}

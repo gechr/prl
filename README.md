@@ -332,7 +332,9 @@ tui:
         filter: approvable
         color: blue
       - name: Waiting for CI
-        filter: "!mine !draft !approved !review:approved ci:pending"
+        filter: >-
+          scope:self !draft ci:pending OR
+          !mine !draft !approved !review:approved ci:pending
         color: "208"
   stacks:
     enabled: true
@@ -359,7 +361,27 @@ authors:
 - `icons`: `auto` selects Nerd Font icons when `NERD_FONTS` is non-empty and Unicode icons otherwise; use `nerd` or `unicode` to choose explicitly
 - `vcs`: controls whether `--clone` uses `git` or `jj`
 - `tui.refresh`, `tui.sort`, `tui.filters`, `tui.stacks.enabled`: starting defaults you manage. Interactive changes in the TUI (toggling auto-refresh, sorting columns, applying filters) are **not** written back to `config.yaml`. They're saved to a separate state file at `$XDG_STATE_HOME/prl/state.yaml` (default `~/.local/state/prl/state.yaml`), which mirrors the `tui:` subtree and takes precedence over config. This keeps your version-controlled config stable while remembering your last session.
-- `tui.presets.filters`: the named filters `f` cycles through in the TUI, shown by name. A filter is a space- or comma-separated list of terms that must all match: `mine`, `draft`, `approved` (approved by you), `approvable` (not yours, not a draft, not yet approved, CI passing), `mergeable` (not a draft, approved, CI passing, no conflicts), `ready`, `conflict`, `broken` (failing CI or merge conflicts), `blocked` (open, not a draft, and `broken` or changes requested), `outdated` (open, not a draft, and behind a base branch that requires it to be up to date), `ci:<status>` and `review:<decision>`. Prefix a term with `!` or `-` to negate it, and quote a filter that starts with `!`. `color` sets the name's colour: a name such as `blue`, a hex value or an ANSI number. Without this key, prl uses Approvable, Waiting for CI, Approved by you, Mergeable, Outdated and Blocked.
+- `tui.presets.filters`: named filters that `f` cycles through in the TUI
+  - `name`: shown in the TUI
+  - `color`: a colour name such as `blue`, a hex value or an ANSI number
+  - `filter`: terms combined as in GitHub search
+    - Space, comma or `AND`: all must match
+    - `OR`: either side matches; binds more loosely than `AND`
+    - `(` `)`: group terms
+    - `!` or `-`: negate a term or group; quote a filter that starts with `!`
+    - Example: `(mine AND draft) OR approved`
+  - Terms:
+    - `mine`, `draft`, `ready`, `conflict`
+    - `approved`: approved by you
+    - `approvable`: not yours, not a draft, not yet approved, CI passing
+    - `mergeable`: not a draft, approved, CI passing, no conflicts
+    - `broken`: failing CI or merge conflicts
+    - `blocked`: open, not a draft, and `broken` or changes requested
+    - `outdated`: open, not a draft, and behind a base branch that requires it to be up to date
+    - `scope:self`: the search lists only your PRs, as with the default `authors: ["@me"]`; never with `--team`
+    - `ci:<status>`, `review:<decision>`
+  - Defaults: Approvable, Waiting for CI, Approved by you, Mergeable, Outdated and Blocked
+    - Waiting for CI shows your PRs when you list only yours, and PRs you can approve once CI passes otherwise
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
 - Gemini reviews require the Antigravity CLI (`agy`). Model and effort selections map to its model slugs (for example, `gemini-3.8-flash` with `high` selects `gemini-3.8-flash-high`) and `--effort` flag.
 

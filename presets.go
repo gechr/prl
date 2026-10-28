@@ -30,7 +30,7 @@ var defaultPresets = []TUIPresetConfig{
 	{Name: "Approvable", Filter: presetTermApprovable, Color: "blue"},
 	{
 		Name:   "Waiting for CI",
-		Filter: "!mine !draft !approved !review:approved ci:pending",
+		Filter: "scope:self !draft ci:pending OR !mine !draft !approved !review:approved ci:pending",
 		Color:  "208",
 	},
 	{Name: "Approved by you", Filter: "approved !mine", Color: "green"},
@@ -53,92 +53,224 @@ const (
 	presetTermReady      = "ready"
 	presetPrefixCI       = "ci:"
 	presetPrefixReview   = "review:"
+	presetPrefixScope    = "scope:"
+	presetScopeSelf      = "self"
+	presetAnd            = "AND"
+	presetOr             = "OR"
 )
 
-// presetFilter is a parsed preset filter: every term must match.
-type presetFilter []presetTerm
+// presetFilter is a parsed preset filter.
+type presetFilter func(pr PullRequest, c presetContext) bool
 
-type presetTerm struct {
-	negate bool
-	match  func(pr PullRequest, own bool) bool
-}
-
-// parsePresetFilter parses space- or comma-separated terms, each optionally
-// negated with a leading "!" or "-":
+// parsePresetFilter parses a boolean expression of terms, as in GitHub search.
+// Terms separated by spaces, commas or AND must all match; OR binds more
+// loosely than AND; parentheses group; a leading "!" or "-" negates a term or
+// group. Terms:
 //
 //	mine, draft, approved (by you), approvable, mergeable, ready, conflict,
 //	broken (failing CI or merge conflicts), blocked (not a draft, and broken
 //	or changes requested), outdated (not a draft, and behind a base branch
-//	that requires it to be up to date),
-//	ci:<success|failure|pending>, review:<required|approved|changes_requested|none>
+//	that requires it to be up to date), scope:self (the search lists only
+//	your PRs), ci:<success|failure|pending>,
+//	review:<required|approved|changes_requested|none>
 func parsePresetFilter(s string) (presetFilter, error) {
-	fields := strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == ',' })
-	if len(fields) == 0 {
+	p := presetParser{tokens: tokenizePresetFilter(s)}
+	if len(p.tokens) == 0 {
 		return nil, fmt.Errorf("empty filter")
 	}
-	filter := make(presetFilter, 0, len(fields))
-	for _, field := range fields {
-		name := strings.TrimLeft(field, "!-")
-		match, err := presetTermMatcher(strings.ToLower(name))
-		if err != nil {
-			return nil, err
-		}
-		filter = append(filter, presetTerm{negate: name != field, match: match})
+	filter, err := p.or()
+	if err != nil {
+		return nil, err
+	}
+	if p.pos < len(p.tokens) {
+		return nil, fmt.Errorf("unexpected %q", p.tokens[p.pos])
 	}
 	return filter, nil
 }
 
-func presetTermMatcher(name string) (func(PullRequest, bool) bool, error) {
+// tokenizePresetFilter splits on spaces and commas, and makes each parenthesis
+// its own token.
+func tokenizePresetFilter(s string) []string {
+	var tokens []string
+	var token strings.Builder
+	flush := func() {
+		if token.Len() > 0 {
+			tokens = append(tokens, token.String())
+			token.Reset()
+		}
+	}
+	for _, r := range s {
+		switch r {
+		case ' ', ',', '\t', '\n':
+			flush()
+		case '(', ')':
+			flush()
+			tokens = append(tokens, string(r))
+		default:
+			token.WriteRune(r)
+		}
+	}
+	flush()
+	return tokens
+}
+
+type presetParser struct {
+	tokens []string
+	pos    int
+}
+
+func (p *presetParser) peek() string {
+	if p.pos < len(p.tokens) {
+		return p.tokens[p.pos]
+	}
+	return ""
+}
+
+// or parses AND expressions separated by OR.
+func (p *presetParser) or() (presetFilter, error) {
+	left, err := p.and()
+	if err != nil {
+		return nil, err
+	}
+	for p.peek() == presetOr {
+		p.pos++
+		right, err := p.and()
+		if err != nil {
+			return nil, err
+		}
+		l := left
+		left = func(pr PullRequest, c presetContext) bool { return l(pr, c) || right(pr, c) }
+	}
+	return left, nil
+}
+
+// and parses operands joined by AND or by juxtaposition.
+func (p *presetParser) and() (presetFilter, error) {
+	left, err := p.operand()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		switch p.peek() {
+		case "", presetOr, ")":
+			return left, nil
+		case presetAnd:
+			p.pos++
+		}
+		right, err := p.operand()
+		if err != nil {
+			return nil, err
+		}
+		l := left
+		left = func(pr PullRequest, c presetContext) bool { return l(pr, c) && right(pr, c) }
+	}
+}
+
+// group parses the rest of a parenthesised expression, after its "(".
+func (p *presetParser) group() (presetFilter, error) {
+	filter, err := p.or()
+	if err != nil {
+		return nil, err
+	}
+	if p.peek() != ")" {
+		return nil, fmt.Errorf("unclosed %q", "(")
+	}
+	p.pos++
+	return filter, nil
+}
+
+// operand parses a term or a parenthesised expression, either one optionally
+// negated.
+func (p *presetParser) operand() (presetFilter, error) {
+	token := p.peek()
+	switch token {
+	case "":
+		return nil, fmt.Errorf("missing term after %q", p.tokens[p.pos-1])
+	case presetAnd, presetOr:
+		return nil, fmt.Errorf("missing term before %q", token)
+	case ")":
+		return nil, fmt.Errorf("unexpected %q", token)
+	}
+	p.pos++
+	name := strings.TrimLeft(token, "!-")
+	negate := name != token
+	var filter presetFilter
+	var err error
+	if token == "(" || name == "" && negate && p.peek() == "(" {
+		if token != "(" {
+			p.pos++
+		}
+		filter, err = p.group()
+	} else {
+		filter, err = presetTermMatcher(strings.ToLower(name))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if negate {
+		inner := filter
+		filter = func(pr PullRequest, c presetContext) bool { return !inner(pr, c) }
+	}
+	return filter, nil
+}
+
+func presetTermMatcher(name string) (func(PullRequest, presetContext) bool, error) {
 	switch name {
 	case presetTermMine:
-		return func(_ PullRequest, own bool) bool { return own }, nil
+		return func(_ PullRequest, c presetContext) bool { return c.own }, nil
 	case presetTermDraft:
-		return func(pr PullRequest, _ bool) bool { return pr.IsDraft }, nil
+		return func(pr PullRequest, _ presetContext) bool { return pr.IsDraft }, nil
 	case presetTermApproved:
-		return func(pr PullRequest, _ bool) bool { return isViewerApproved(pr) }, nil
+		return func(pr PullRequest, _ presetContext) bool { return isViewerApproved(pr) }, nil
 	case presetTermApprovable:
 		// Open, not yours, not a draft, CI passing, and still awaiting
 		// approval: neither you nor the PR as a whole has approved it.
-		return func(pr PullRequest, own bool) bool {
-			return !own && !pr.IsDraft && !isViewerApproved(pr) &&
+		return func(pr PullRequest, c presetContext) bool {
+			return !c.own && !pr.IsDraft && !isViewerApproved(pr) &&
 				(!pr.reviewDecisionLoaded || pr.ReviewDecision != valueReviewApproved) &&
 				strings.EqualFold(pr.State, valueOpen) && matchesCI(pr, CISuccess)
 		}, nil
 	case presetTermMergeable:
 		// Open, not a draft, approved, CI passing and no conflicts.
-		return func(pr PullRequest, _ bool) bool {
+		return func(pr PullRequest, _ presetContext) bool {
 			return !pr.IsDraft && strings.EqualFold(pr.State, valueOpen) &&
 				pr.MergeStatus == MergeStatusReady
 		}, nil
 	case presetTermConflict:
-		return func(pr PullRequest, _ bool) bool { return pr.MergeStatus == MergeStatusConflict }, nil
+		return func(pr PullRequest, _ presetContext) bool { return pr.MergeStatus == MergeStatusConflict }, nil
 	case presetTermBroken:
 		// Something the author must fix: failing CI or merge conflicts.
-		return func(pr PullRequest, _ bool) bool {
+		return func(pr PullRequest, _ presetContext) bool {
 			return matchesCI(pr, CIFailure) || pr.MergeStatus == MergeStatusConflict
 		}, nil
 	case presetTermBlocked:
 		// Open, not a draft, and unmergeable until someone acts, as opposed to
 		// waiting on review or running CI.
-		return func(pr PullRequest, _ bool) bool {
+		return func(pr PullRequest, _ presetContext) bool {
 			return !pr.IsDraft && strings.EqualFold(pr.State, valueOpen) &&
 				(matchesCI(pr, CIFailure) ||
 					pr.MergeStatus == MergeStatusConflict ||
 					deriveReviewStatus(pr) == valueReviewFilterChanges)
 		}, nil
 	case presetTermOutdated:
-		return func(pr PullRequest, _ bool) bool {
+		return func(pr PullRequest, _ presetContext) bool {
 			return !pr.IsDraft && strings.EqualFold(pr.State, valueOpen) && pr.behind
 		}, nil
 	case presetTermReady:
-		return func(pr PullRequest, _ bool) bool { return pr.MergeStatus == MergeStatusReady }, nil
+		return func(pr PullRequest, _ presetContext) bool { return pr.MergeStatus == MergeStatusReady }, nil
+	}
+	if value, ok := strings.CutPrefix(name, presetPrefixScope); ok {
+		if value != presetScopeSelf {
+			return nil, fmt.Errorf("unknown scope %q", value)
+		}
+		return func(_ PullRequest, c presetContext) bool { return c.selfScope }, nil
 	}
 	if value, ok := strings.CutPrefix(name, presetPrefixCI); ok {
 		ci, valid := parseCIStatus(value)
 		if !valid {
 			return nil, fmt.Errorf("unknown CI status %q", value)
 		}
-		return func(pr PullRequest, _ bool) bool { return matchesCI(pr, ci) }, nil
+		return func(pr PullRequest, _ presetContext) bool { return matchesCI(pr, ci) }, nil
 	}
 	if value, ok := strings.CutPrefix(name, presetPrefixReview); ok {
 		review := normalizeReviewFilterValue(value)
@@ -148,20 +280,20 @@ func presetTermMatcher(name string) (func(PullRequest, bool) bool, error) {
 		default:
 			return nil, fmt.Errorf("unknown review decision %q", value)
 		}
-		return func(pr PullRequest, _ bool) bool { return deriveReviewStatus(pr) == review }, nil
+		return func(pr PullRequest, _ presetContext) bool { return deriveReviewStatus(pr) == review }, nil
 	}
 	return nil, fmt.Errorf("unknown term %q", name)
 }
 
-// Matches reports whether pr satisfies every term. own is whether the viewer
-// authored pr.
-func (f presetFilter) Matches(pr PullRequest, own bool) bool {
-	for _, term := range f {
-		if term.match(pr, own) == term.negate {
-			return false
-		}
-	}
-	return true
+// presetContext describes a PR's relationship to the viewer and the search.
+type presetContext struct {
+	own       bool // the viewer authored the PR
+	selfScope bool // the search lists only the viewer's PRs
+}
+
+// Matches reports whether pr satisfies the filter.
+func (f presetFilter) Matches(pr PullRequest, c presetContext) bool {
+	return f(pr, c)
 }
 
 // configuredPresets returns the presets in cycle order.

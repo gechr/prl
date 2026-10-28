@@ -796,13 +796,17 @@ tui:
 
   # Named filters that f cycles through in the TUI (F steps back). The name is
   # what the TUI shows, in the optional color (a name such as blue, a hex
-  # value or an ANSI number). Terms are space- or comma-separated and must all
-  # match; prefix a term with ! or - to negate it (quote a filter that starts
-  # with !).
+  # value or an ANSI number). Filters combine terms as in GitHub search: terms
+  # separated by spaces, commas or AND must all match, OR matches either side
+  # and binds more loosely than AND, and parentheses group, as in
+  # (mine AND draft) OR approved. Prefix a term or group with ! or - to negate
+  # it (quote a filter that starts with !).
   # Terms: mine, draft, approved (by you), approvable, mergeable, ready,
   #        conflict, broken (failing CI or merge conflicts),
   #        blocked (not a draft, and broken or changes requested),
   #        outdated (not a draft, and behind the base),
+  #        scope:self (the search lists only your PRs, as with the default
+  #        authors: ["@me"]; never with other authors or any --team),
   #        ci:<success|failure|pending>,
   #        review:<required|approved|changes_requested|none>
   # If omitted, prl uses these presets:
@@ -812,7 +816,9 @@ tui:
   #       filter: approvable
   #       color: blue
   #     - name: Waiting for CI
-  #       filter: "!mine !draft !approved !review:approved ci:pending"
+  #       filter: >-
+  #         scope:self !draft ci:pending OR
+  #         !mine !draft !approved !review:approved ci:pending
   #       color: "208"
   #     - name: Approved by you
   #       filter: approved !mine

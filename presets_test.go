@@ -89,6 +89,19 @@ func TestPresetFilterMatches(t *testing.T) {
 		{"approvable", conflicted, false, false},
 		{"!mine !draft !approved !review:approved ci:pending", pending, false, true},
 		{"!mine !draft !approved !review:approved ci:pending", open, false, false},
+		{"draft OR conflict", draft, false, true},
+		{"draft OR conflict", conflicted, false, true},
+		{"draft OR conflict", open, false, false},
+		{"mine draft OR ready", draft, false, false},
+		{"mine draft OR ready", ready, false, true},
+		{"(mine AND draft) OR approved", draft, true, true},
+		{"(mine AND draft) OR approved", draft, false, false},
+		{"(mine AND draft) OR approved", approved, false, true},
+		{"mine AND (draft OR ready)", ready, true, true},
+		{"mine AND (draft OR ready)", ready, false, false},
+		{"!(draft OR conflict)", open, false, true},
+		{"-(draft OR conflict)", draft, false, false},
+		{"((draft))", draft, false, true},
 		{"!mine !draft !approved", failing, false, true},
 		{"-mine,-draft,-approved", approved, false, false},
 		{"approved !mine", approved, false, true},
@@ -106,19 +119,29 @@ func TestPresetFilterMatches(t *testing.T) {
 	for _, tt := range tests {
 		filter, err := parsePresetFilter(tt.filter)
 		require.NoError(t, err, tt.filter)
-		require.Equal(t, tt.want, filter.Matches(tt.pr, tt.own), tt.filter)
+		require.Equal(t, tt.want, filter.Matches(tt.pr, presetContext{own: tt.own}), tt.filter)
 	}
 }
 
 func TestParsePresetFilterRejectsInvalid(t *testing.T) {
 	for input, want := range map[string]string{
-		"":              "empty filter",
-		" , ":           "empty filter",
-		"bogus":         `unknown term "bogus"`,
-		"!":             `unknown term ""`,
-		"ci:sometimes":  `unknown CI status "sometimes"`,
-		"review:maybe":  `unknown review decision "maybe"`,
-		"approvable no": `unknown term "no"`,
+		"":                  "empty filter",
+		" , ":               "empty filter",
+		"bogus":             `unknown term "bogus"`,
+		"!":                 `unknown term ""`,
+		"ci:sometimes":      `unknown CI status "sometimes"`,
+		"review:maybe":      `unknown review decision "maybe"`,
+		"approvable no":     `unknown term "no"`,
+		"scope:team":        `unknown scope "team"`,
+		"OR mine":           `missing term before "OR"`,
+		"mine OR":           `missing term after "OR"`,
+		"mine AND OR draft": `missing term before "OR"`,
+		"mine AND":          `missing term after "AND"`,
+		"(mine":             `unclosed "("`,
+		"mine)":             `unexpected ")"`,
+		"()":                `unexpected ")"`,
+		"!(":                `missing term after "("`,
+		"mine or draft":     `unknown term "or"`,
 	} {
 		_, err := parsePresetFilter(input)
 		require.EqualError(t, err, want, input)
@@ -161,5 +184,44 @@ func TestParsePresetColor(t *testing.T) {
 	for _, invalid := range []string{"chartreuse", "#12", "256", "-1", "#zzzzzz"} {
 		_, err := parsePresetColor(invalid)
 		require.Error(t, err, invalid)
+	}
+}
+
+func TestWaitingForCIPresetFollowsSearchScope(t *testing.T) {
+	filter, ok := presetFilterByName(nil, "Waiting for CI")
+	require.True(t, ok)
+
+	pending := approvalTestPR(1)
+	pending.MergeStatus = MergeStatusCIPending
+
+	approved := pending
+	approved.viewerApproved = true
+
+	reviewed := pending
+	reviewed.ReviewDecision = valueReviewApproved
+
+	draft := pending
+	draft.IsDraft = true
+
+	passing := approvalTestPR(1)
+
+	tests := []struct {
+		name string
+		pr   PullRequest
+		ctx  presetContext
+		want bool
+	}{
+		{"own PR, own search", pending, presetContext{own: true, selfScope: true}, true},
+		{"own approved PR, own search", approved, presetContext{own: true, selfScope: true}, true},
+		{"own draft, own search", draft, presetContext{own: true, selfScope: true}, false},
+		{"own PR with CI passing", passing, presetContext{own: true, selfScope: true}, false},
+		{"own PR, wider search", pending, presetContext{own: true}, false},
+		{"other PR, wider search", pending, presetContext{}, true},
+		{"other PR you approved", approved, presetContext{}, false},
+		{"other PR already approved", reviewed, presetContext{}, false},
+		{"other draft", draft, presetContext{}, false},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, filter.Matches(tt.pr, tt.ctx), tt.name)
 	}
 }
