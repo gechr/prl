@@ -319,3 +319,21 @@ func TestLoadConfigAcceptsNumericPresetColor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "208", configuredPresets(cfg)[0].Color)
 }
+
+func TestLoadConfigReadsPresetWhen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cp, err := configPath()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+	require.NoError(t, os.WriteFile(cp, []byte(`tui:
+  presets:
+    filters:
+      - name: Others
+        filter: "!mine"
+        when: "!scope:self"
+`), 0o600))
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	require.Equal(t, "!scope:self", configuredPresets(cfg)[0].When)
+}

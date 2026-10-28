@@ -330,6 +330,7 @@ tui:
     filters:
       - name: Approvable
         filter: approvable
+        when: "!scope:self"
         color: blue
       - name: Waiting for CI
         filter: >-
@@ -364,6 +365,8 @@ authors:
 - `tui.presets.filters`: named filters that `f` cycles through in the TUI
   - `name`: shown in the TUI
   - `color`: a colour name such as `blue`, a hex value or an ANSI number
+  - `when`: show the preset only when the search matches, e.g. `"!scope:self"`
+    - Same syntax as `filter`, with search terms only (`scope:self`)
   - `filter`: terms combined as in GitHub search
     - Space, comma or `AND`: all must match
     - `OR`: either side matches; binds more loosely than `AND`
@@ -382,6 +385,7 @@ authors:
     - `ci:<status>`, `review:<decision>`
   - Defaults: Approvable, Waiting for CI, Approved by you, Mergeable, Outdated and Blocked
     - Waiting for CI shows your PRs when you list only yours, and PRs you can approve once CI passes otherwise
+    - Approvable and Approved by you are hidden when you list only your PRs
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
 - Gemini reviews require the Antigravity CLI (`agy`). Model and effort selections map to its model slugs (for example, `gemini-3.8-flash` with `high` selects `gemini-3.8-flash-high`) and `--effort` flag.
 

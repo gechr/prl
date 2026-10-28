@@ -960,3 +960,96 @@ func TestWaitingForCIFollowsSearchedAuthors(t *testing.T) {
 		})
 	}
 }
+
+func TestCyclePresetSkipsUnavailablePresets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+	pr := approvalTestPR(1)
+	pr.Author.Login = "viewer"
+	m := approvalTestModel("", pr)
+	m.cfg = &Config{}
+	m.cli.Author = &CSVFlag{Values: []string{valueAtMe}}
+	require.True(t, m.searchesSelf())
+
+	var seen []string
+	for range defaultPresets {
+		m, _ = pressKey(t, m, tuiKeybindCyclePreset)
+		seen = append(seen, m.cli.preset)
+	}
+	require.Equal(
+		t,
+		[]string{"Waiting for CI", "Mergeable", "Outdated", "Blocked", "", "Waiting for CI"},
+		seen,
+	)
+
+	// A saved preset the search rules out applies no filter and shows no tag,
+	// but stays saved for searches it suits.
+	m.cli.preset = "Approvable"
+	require.True(t, isShown(m, makePRKey(pr)))
+	require.NotContains(t, m.activeFilterTags(), "Approvable")
+	m.cli.Author = &CSVFlag{Values: []string{valueAll}}
+	require.Equal(t, "Approvable", m.activeFilterTags()[0])
+}
+
+func TestUnavailablePresetSurvivesStateSaveAndReturns(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+	saved := &Config{}
+	saved.TUI.Filters.Preset = "Approvable"
+	require.NoError(t, saveTUIState(saved))
+
+	st, err := loadTUIState()
+	require.NoError(t, err)
+	cfg := &Config{}
+	applyTUIState(cfg, st)
+	cli := testCLI()
+	cli.Author = &CSVFlag{Values: []string{valueAtMe}}
+	applyTUIFilterDefaults(cli, cfg)
+	require.Equal(t, "Approvable", cli.preset)
+
+	failing := approvalTestPR(1)
+	failing.MergeStatus = MergeStatusCIFailed
+	m := approvalTestModel("", failing)
+	m.cfg = cfg
+	m.cli = cli
+	key := makePRKey(failing)
+	require.True(t, m.searchesSelf())
+	require.True(t, isShown(m, key), "an unavailable preset filters nothing")
+
+	m.optionsPicker = m.newFilterPicker()
+	m.persistFilterState()
+	st, err = loadTUIState()
+	require.NoError(t, err)
+	require.Equal(t, "Approvable", st.Filters.Preset, "unrelated saves keep the preset")
+
+	m.cli.Author = &CSVFlag{Values: []string{valueAll}}
+	require.False(t, isShown(m, key), "the preset filters again once available")
+}
+
+func TestCyclePresetBackFromUnavailablePreset(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	m.cli.Author = &CSVFlag{Values: []string{valueAtMe}}
+	m.cli.preset = "Approvable"
+
+	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
+	require.Equal(t, "Blocked", m.cli.preset)
+}
+
+func TestCyclePresetWithNoAvailablePresets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	m.cfg.TUI.Presets.Filters = []TUIPresetConfig{
+		{Name: "Mine", Filter: "mine", When: "scope:self"},
+	}
+	require.False(t, m.searchesSelf())
+
+	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
+	require.Empty(t, m.cli.preset)
+	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
+	require.Empty(t, m.cli.preset)
+}

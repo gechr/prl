@@ -442,10 +442,10 @@ func (m tuiModel) applyFilterChange() (tea.Model, tea.Cmd) {
 }
 
 // cyclePreset steps forwards (dir 1) or backwards (dir -1) through the
-// configured presets, with "no preset" after the last one. An unknown active
-// preset counts as "no preset".
+// presets available to the search, with "no preset" after the last one. An
+// unknown or unavailable active preset counts as "no preset".
 func (m tuiModel) cyclePreset(dir int) (tea.Model, tea.Cmd) {
-	presets := configuredPresets(m.cfg)
+	presets := availablePresets(m.cfg, m.searchesSelf())
 	n := len(presets) + 1 // the extra slot is "no preset"
 	idx := slices.IndexFunc(presets, func(p TUIPresetConfig) bool {
 		return p.Name == m.cli.preset
@@ -479,8 +479,24 @@ func (m tuiModel) displayFilter() displayFilter {
 	if m.cli == nil {
 		return displayFilter{}
 	}
-	preset, _ := presetFilterByName(m.cfg, m.cli.preset)
-	return displayFilter{ci: m.cli.CIFilter(), preset: preset, selfScope: m.searchesSelf()}
+	selfScope := m.searchesSelf()
+	_, filter, _ := m.activePreset(selfScope)
+	return displayFilter{ci: m.cli.CIFilter(), preset: filter, selfScope: selfScope}
+}
+
+// activePreset returns the active preset and its parsed filter when the search
+// makes it available. An unavailable one stays saved, and applies again in a
+// search that suits it.
+func (m tuiModel) activePreset(selfScope bool) (TUIPresetConfig, presetFilter, bool) {
+	preset, ok := presetByName(m.cfg, m.cli.preset)
+	if !ok || !presetAvailable(preset, selfScope) {
+		return TUIPresetConfig{}, nil, false
+	}
+	filter, err := parsePresetFilter(preset.Filter)
+	if err != nil {
+		return TUIPresetConfig{}, nil, false
+	}
+	return preset, filter, true
 }
 
 // searchesSelf reports whether the search lists only the viewer's PRs. It
@@ -676,7 +692,7 @@ func (m tuiModel) activeFilterTags() []string {
 		return nil
 	}
 	var tags []string
-	if _, ok := presetFilterByName(m.cfg, m.cli.preset); ok {
+	if _, _, ok := m.activePreset(m.searchesSelf()); ok {
 		tags = append(tags, m.cli.preset)
 	}
 	if s := m.cli.PRState(); s != StateOpen {

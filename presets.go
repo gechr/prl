@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	lg "charm.land/lipgloss/v2"
+	xslices "github.com/gechr/x/slices"
 )
 
 // TUIPresetsConfig holds the TUI's presets.
@@ -23,17 +24,22 @@ type TUIPresetConfig struct {
 	// Color tints the name in the TUI: a name (green, blue, ...), a hex
 	// value (#1f6feb) or an ANSI number (0-255).
 	Color string `koanf:"color" yaml:"color,omitempty"`
+	// When limits the preset to searches matching a condition built from
+	// search terms such as scope:self; the f key skips it otherwise.
+	When string `koanf:"when" yaml:"when,omitempty"`
 }
 
 // defaultPresets apply when the config sets no tui.presets.filters.
 var defaultPresets = []TUIPresetConfig{
-	{Name: "Approvable", Filter: presetTermApprovable, Color: "blue"},
+	// Nobody can approve their own PRs, so these two can never match when the
+	// search lists only yours.
+	{Name: "Approvable", Filter: presetTermApprovable, Color: "blue", When: presetNotSelf},
 	{
 		Name:   "Waiting for CI",
 		Filter: "scope:self !draft ci:pending OR !mine !draft !approved !review:approved ci:pending",
 		Color:  "208",
 	},
-	{Name: "Approved by you", Filter: "approved !mine", Color: "green"},
+	{Name: "Approved by you", Filter: "approved !mine", Color: "green", When: presetNotSelf},
 	{Name: "Mergeable", Filter: presetTermMergeable, Color: "magenta"},
 	{Name: "Outdated", Filter: presetTermOutdated, Color: "yellow"},
 	{Name: "Blocked", Filter: presetTermBlocked, Color: "red"},
@@ -55,6 +61,7 @@ const (
 	presetPrefixReview   = "review:"
 	presetPrefixScope    = "scope:"
 	presetScopeSelf      = "self"
+	presetNotSelf        = "!" + presetPrefixScope + presetScopeSelf
 	presetAnd            = "AND"
 	presetOr             = "OR"
 )
@@ -74,7 +81,27 @@ type presetFilter func(pr PullRequest, c presetContext) bool
 //	your PRs), ci:<success|failure|pending>,
 //	review:<required|approved|changes_requested|none>
 func parsePresetFilter(s string) (presetFilter, error) {
-	p := presetParser{tokens: tokenizePresetFilter(s)}
+	return parsePresetExpr(s, presetTermMatcher)
+}
+
+// parsePresetCondition parses a preset's when condition: the same syntax as a
+// filter, limited to terms about the search rather than a PR (scope:self).
+func parsePresetCondition(s string) (presetFilter, error) {
+	return parsePresetExpr(s, func(name string) (presetFilter, error) {
+		value, ok := strings.CutPrefix(name, presetPrefixScope)
+		if !ok {
+			return nil, fmt.Errorf(
+				"%q is not a search term; use %s",
+				name,
+				presetPrefixScope+presetScopeSelf,
+			)
+		}
+		return presetScopeMatcher(value)
+	})
+}
+
+func parsePresetExpr(s string, term func(name string) (presetFilter, error)) (presetFilter, error) {
+	p := presetParser{tokens: tokenizePresetFilter(s), term: term}
 	if len(p.tokens) == 0 {
 		return nil, fmt.Errorf("empty filter")
 	}
@@ -117,6 +144,7 @@ func tokenizePresetFilter(s string) []string {
 type presetParser struct {
 	tokens []string
 	pos    int
+	term   func(name string) (presetFilter, error)
 }
 
 func (p *presetParser) peek() string {
@@ -202,7 +230,7 @@ func (p *presetParser) operand() (presetFilter, error) {
 		}
 		filter, err = p.group()
 	} else {
-		filter, err = presetTermMatcher(strings.ToLower(name))
+		filter, err = p.term(strings.ToLower(name))
 	}
 	if err != nil {
 		return nil, err
@@ -214,7 +242,7 @@ func (p *presetParser) operand() (presetFilter, error) {
 	return filter, nil
 }
 
-func presetTermMatcher(name string) (func(PullRequest, presetContext) bool, error) {
+func presetTermMatcher(name string) (presetFilter, error) {
 	switch name {
 	case presetTermMine:
 		return func(_ PullRequest, c presetContext) bool { return c.own }, nil
@@ -260,10 +288,7 @@ func presetTermMatcher(name string) (func(PullRequest, presetContext) bool, erro
 		return func(pr PullRequest, _ presetContext) bool { return pr.MergeStatus == MergeStatusReady }, nil
 	}
 	if value, ok := strings.CutPrefix(name, presetPrefixScope); ok {
-		if value != presetScopeSelf {
-			return nil, fmt.Errorf("unknown scope %q", value)
-		}
-		return func(_ PullRequest, c presetContext) bool { return c.selfScope }, nil
+		return presetScopeMatcher(value)
 	}
 	if value, ok := strings.CutPrefix(name, presetPrefixCI); ok {
 		ci, valid := parseCIStatus(value)
@@ -375,9 +400,37 @@ func validatePresets(presets []TUIPresetConfig) error {
 		if _, err := parsePresetFilter(preset.Filter); err != nil {
 			return fmt.Errorf("tui.presets.filters %q: %w", preset.Name, err)
 		}
+		if preset.When != "" {
+			if _, err := parsePresetCondition(preset.When); err != nil {
+				return fmt.Errorf("tui.presets.filters %q: when: %w", preset.Name, err)
+			}
+		}
 		if _, err := parsePresetColor(preset.Color); err != nil {
 			return fmt.Errorf("tui.presets.filters %q: %w", preset.Name, err)
 		}
 	}
 	return nil
+}
+
+func presetScopeMatcher(value string) (presetFilter, error) {
+	if value != presetScopeSelf {
+		return nil, fmt.Errorf("unknown scope %q", value)
+	}
+	return func(_ PullRequest, c presetContext) bool { return c.selfScope }, nil
+}
+
+// availablePresets returns the presets whose when condition holds for the
+// search, in cycle order.
+func availablePresets(cfg *Config, selfScope bool) []TUIPresetConfig {
+	return xslices.Filter(configuredPresets(cfg), func(p TUIPresetConfig) bool {
+		return presetAvailable(p, selfScope)
+	})
+}
+
+func presetAvailable(preset TUIPresetConfig, selfScope bool) bool {
+	if preset.When == "" {
+		return true
+	}
+	when, err := parsePresetCondition(preset.When)
+	return err == nil && when(PullRequest{}, presetContext{selfScope: selfScope})
 }

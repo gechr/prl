@@ -800,7 +800,9 @@ tui:
   # separated by spaces, commas or AND must all match, OR matches either side
   # and binds more loosely than AND, and parentheses group, as in
   # (mine AND draft) OR approved. Prefix a term or group with ! or - to negate
-  # it (quote a filter that starts with !).
+  # it (quote a filter that starts with !). The optional when condition uses
+  # the same syntax with search terms only (scope:self); f skips the preset
+  # while it is false.
   # Terms: mine, draft, approved (by you), approvable, mergeable, ready,
   #        conflict, broken (failing CI or merge conflicts),
   #        blocked (not a draft, and broken or changes requested),
@@ -814,6 +816,7 @@ tui:
   #   filters:
   #     - name: Approvable
   #       filter: approvable
+  #       when: "!scope:self"
   #       color: blue
   #     - name: Waiting for CI
   #       filter: >-
@@ -822,6 +825,7 @@ tui:
   #       color: "208"
   #     - name: Approved by you
   #       filter: approved !mine
+  #       when: "!scope:self"
   #       color: green
   #     - name: Mergeable
   #       filter: mergeable

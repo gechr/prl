@@ -174,6 +174,15 @@ func TestValidatePresets(t *testing.T) {
 		validatePresets([]TUIPresetConfig{{Name: "Odd", Filter: "ready", Color: "chartreuse"}}),
 		`tui.presets.filters "Odd": unknown colour "chartreuse"`,
 	)
+	require.EqualError(
+		t,
+		validatePresets([]TUIPresetConfig{{Name: "Odd", Filter: "ready", When: "draft"}}),
+		`tui.presets.filters "Odd": when: "draft" is not a search term; use scope:self`,
+	)
+	require.NoError(
+		t,
+		validatePresets([]TUIPresetConfig{{Name: "Ok", Filter: "ready", When: "!scope:self"}}),
+	)
 }
 
 func TestParsePresetColor(t *testing.T) {
@@ -224,4 +233,60 @@ func TestWaitingForCIPresetFollowsSearchScope(t *testing.T) {
 	for _, tt := range tests {
 		require.Equal(t, tt.want, filter.Matches(tt.pr, tt.ctx), tt.name)
 	}
+}
+
+func TestParsePresetCondition(t *testing.T) {
+	when, err := parsePresetCondition("!scope:self")
+	require.NoError(t, err)
+	require.True(t, when(PullRequest{}, presetContext{}))
+	require.False(t, when(PullRequest{}, presetContext{selfScope: true}))
+
+	for input, want := range map[string][2]bool{ // [other search, self search]
+		"SCOPE:SELF":                    {false, true},
+		"!(scope:self)":                 {true, false},
+		"-(SCOPE:SELF)":                 {true, false},
+		"(scope:self) OR scope:self":    {false, true},
+		"scope:self, !scope:self":       {false, false},
+		"!(scope:self AND !scope:self)": {true, true},
+	} {
+		when, err := parsePresetCondition(input)
+		require.NoError(t, err, input)
+		require.Equal(t, want[0], when(PullRequest{}, presetContext{}), input)
+		require.Equal(t, want[1], when(PullRequest{}, presetContext{selfScope: true}), input)
+	}
+
+	for input, want := range map[string]string{
+		"draft":              `"draft" is not a search term; use scope:self`,
+		"scope:self OR mine": `"mine" is not a search term; use scope:self`,
+		"scope:team":         `unknown scope "team"`,
+		"(scope:self":        `unclosed "("`,
+		"":                   "empty filter",
+	} {
+		_, err := parsePresetCondition(input)
+		require.EqualError(t, err, want, input)
+	}
+}
+
+func TestAvailablePresets(t *testing.T) {
+	names := func(presets []TUIPresetConfig) []string {
+		result := make([]string, len(presets))
+		for i, preset := range presets {
+			result[i] = preset.Name
+		}
+		return result
+	}
+	require.Equal(t, names(defaultPresets), names(availablePresets(nil, false)))
+	require.Equal(
+		t,
+		[]string{"Waiting for CI", "Mergeable", "Outdated", "Blocked"},
+		names(availablePresets(nil, true)),
+	)
+
+	cfg := &Config{}
+	cfg.TUI.Presets.Filters = []TUIPresetConfig{
+		{Name: "Always", Filter: "mine"},
+		{Name: "Self", Filter: "mine", When: "scope:self"},
+	}
+	require.Equal(t, []string{"Always"}, names(availablePresets(cfg, false)))
+	require.Equal(t, []string{"Always", "Self"}, names(availablePresets(cfg, true)))
 }

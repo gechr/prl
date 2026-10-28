@@ -2058,10 +2058,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	// The active preset follows the option filters, in its own colour, set
 	// apart from them by a dot.
 	var presetTag string
-	if preset, ok := presetByName(
-		m.cfg,
-		m.cli.preset,
-	); ok && len(tags) > 0 &&
+	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
 		tags[0] == preset.Name {
 		style := filterTagKeyStyle
 		if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
