@@ -472,6 +472,7 @@ type tuiModel struct {
 	// Filter options overlay.
 	showOptions     bool
 	optionsPicker   picker.Model
+	presetMenu      presetMenuState
 	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
 	// the search filters just applied via the overlay, or because an approval
@@ -1016,6 +1017,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	if tm, ok := model.(tuiModel); ok {
 		tm.syncConfirmDialog()
+		if tm.presetMenu.open {
+			if tm.canOpenPresetMenu() {
+				tm.movePresetMenu(0)
+			} else {
+				tm.presetMenu.open = false
+			}
+		}
 		return tm, cmd
 	}
 	return model, cmd
@@ -1038,6 +1046,10 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok && m.showOptions {
 		return m.updateOptionsOverlay(key)
 	}
+	if key, ok := msg.(tea.KeyMsg); ok && m.presetMenu.open {
+		m.touchInteraction()
+		return m.updatePresetMenuKey(key)
+	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -1049,6 +1061,13 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.touchInteraction()
+		if m.presetMenu.open {
+			return m.updatePresetMenuClick(msg)
+		}
+		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.presetTagAt(msg.X, msg.Y) {
+			m.openPresetMenu()
+			return m, nil
+		}
 		// A dialog-stack confirm is modal: left clicks go to its scrollbar or
 		// content (translated into ClickMsg); other buttons are swallowed.
 		if m.confirmUsesDialog() && m.dialogs != nil {
@@ -1082,6 +1101,12 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMotionMsg:
 		m.touchInteraction()
+		if m.presetMenu.open {
+			if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
+				m.presetMenu.cursor = idx
+			}
+			return m, nil
+		}
 		if m.handleScrollbarMotion(msg.Mouse()) {
 			return m, nil
 		}
@@ -1343,6 +1368,9 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		m.touchInteraction()
+		if m.presetMenu.open {
+			return m, nil
+		}
 		return m.doPaste(msg)
 
 	case tea.KeyMsg:
@@ -1775,13 +1803,16 @@ func (m tuiModel) View() tea.View {
 	case m.confirmUsesDialog():
 		v.Content = m.viewConfirmDialog(v.Content)
 	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.flash.Msg == "":
+		// Keep the filter control and help clickable below the empty-state box.
+		lines := strings.Split(v.Content, nl)
+		bodyHeight := min(m.listSeparatorY(), len(lines))
+		box := lg.NewStyle().MaxWidth(m.width).MaxHeight(bodyHeight).Render(m.renderEmptyOverlay())
 		v.Content = overlay.Place(
-			v.Content,
-			m.renderEmptyOverlay(),
-			m.width,
-			m.height,
-			overlay.Center,
-		)
+			strings.Join(lines[:bodyHeight], nl), box, m.width, bodyHeight, overlay.Center,
+		) + nl + strings.Join(lines[bodyHeight:], nl)
+	}
+	if m.presetMenu.open {
+		v.Content = m.viewPresetMenu(v.Content)
 	}
 	return v
 }
@@ -2055,7 +2086,7 @@ func (m tuiModel) renderListSeparator(junctionCol ...int) string {
 		col = junctionCol[0]
 	}
 	tags := m.activeFilterTags()
-	if len(tags) > 0 {
+	if len(tags) > 0 || m.cli != nil {
 		return m.renderTagSeparator(tags, col)
 	}
 	return m.styles.separator.Render(layout.Separator(m.width, col))
@@ -2066,7 +2097,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	filterTagKeyStyle := filterTagStyle.Bold(true)
 	// The active preset follows the option filters, in its own colour, set
 	// apart from them by a dot.
-	var presetTag string
+	presetTag := m.styles.separator.Faint(false).Bold(true).Render(noPresetLabel)
 	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
 		tags[0] == preset.Name {
 		style := filterTagKeyStyle

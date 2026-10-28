@@ -823,7 +823,7 @@ tui:
   #         scope:self !draft ci:pending OR
   #         !mine !draft !approved !review:approved ci:pending
   #       color: "208"
-  #     - name: Approved by you
+  #     - name: Approved by me
   #       filter: approved !mine
   #       when: "!scope:self"
   #       color: green

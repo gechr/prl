@@ -495,7 +495,7 @@ func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
 	require.Equal(
 		t,
 		"\n\n\n\n\n\n\n\n"+
-			"──────────────────────────────────────────────────────────────── state:closed ──\n"+
+			"────────────────────────────────────────────────────────── state:closed · All ──\n"+
 			" enter show  space select  / filter  diff  comment  Close  open  alt+copy\n"+
 			"Refresh off  Options  ? help  quit",
 		out,

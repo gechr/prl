@@ -29,6 +29,7 @@ const (
 	wheelTargetDiff
 	wheelTargetDetail
 	wheelTargetConfirm
+	wheelTargetPresetMenu
 )
 
 type scrollbarDragState struct {
@@ -40,6 +41,9 @@ type scrollbarDragState struct {
 // wheelScrollTarget returns the scroll target for the current view state.
 // Used as the resolver callback for [scrollwheel.Coalescer].
 func (m tuiModel) wheelScrollTarget() (wheelTarget, bool) {
+	if m.presetMenu.open {
+		return wheelTargetPresetMenu, true
+	}
 	if m.confirmAction != "" {
 		return wheelTargetConfirm, true
 	}
@@ -68,6 +72,8 @@ func (m *tuiModel) applyWheelScroll(target wheelTarget, delta int) {
 	switch target {
 	case wheelTargetNone:
 		return
+	case wheelTargetPresetMenu:
+		m.movePresetMenu(delta)
 	case wheelTargetList:
 		m.applyListWheelScroll(delta)
 	case wheelTargetDiff:

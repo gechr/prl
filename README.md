@@ -200,7 +200,7 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 
 Stacked PRs are grouped by default, with IDs such as `1a`, `1b`, and `1c` from top to bottom; the next standalone PR is `2`. Sorting uses only the top PR in each stack. Open **Shift+O** and set **Stacks** to **show** or **hide** to switch views. Click the stack header or any tree connector to collapse or expand a stack, or use Left/Right on a stack. The display preference and folded stacks are saved between sessions.
 
-Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle through filter presets such as Approvable and Mergeable, and `F` to step back. prl remembers the active preset, and `tui.presets.filters` sets your own.
+Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle through filter presets such as Approvable and Mergeable, and `F` to step back. Click the preset name on the separator to open a menu above it, then click a preset to select it or `All` to clear it. prl remembers the active preset, and `tui.presets.filters` sets your own.
 
 Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --mode plan` for Gemini through `agy`, `--permission-mode plan` for Claude. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude and Gemini (and no sandbox). The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
 
@@ -383,9 +383,9 @@ authors:
     - `outdated`: open, not a draft, and behind a base branch that requires it to be up to date
     - `scope:self`: the search lists only your PRs, as with the default `authors: ["@me"]`; never with `--team`
     - `ci:<status>`, `review:<decision>`
-  - Defaults: Approvable, Waiting for CI, Approved by you, Mergeable, Outdated and Blocked
+  - Defaults: Approvable, Waiting for CI, Approved by me, Mergeable, Outdated and Blocked
     - Waiting for CI shows your PRs when you list only yours, and PRs you can approve once CI passes otherwise
-    - Approvable and Approved by you are hidden when you list only your PRs
+    - Approvable and Approved by me are hidden when you list only your PRs
 - AI review placeholders: `{prNumber}`, `{repo}`, `{owner}`, `{ownerWithRepo}`, `{prURL}`, `{prRef}`, `{title}`
 - Gemini reviews require the Antigravity CLI (`agy`). Model and effort selections map to its model slugs (for example, `gemini-3.8-flash` with `high` selects `gemini-3.8-flash-high`) and `--effort` flag.
 

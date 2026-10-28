@@ -794,7 +794,7 @@ func TestCyclePreset(t *testing.T) {
 	}
 	require.Equal(
 		t,
-		[]string{"Waiting for CI", "Approved by you", "Mergeable", "Outdated", "Blocked", ""},
+		[]string{"Waiting for CI", "Approved by me", "Mergeable", "Outdated", "Blocked", ""},
 		seen,
 	)
 	require.Empty(t, m.cfg.TUI.Filters.Preset)

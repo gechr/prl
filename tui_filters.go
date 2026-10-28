@@ -454,10 +454,16 @@ func (m tuiModel) cyclePreset(dir int) (tea.Model, tea.Cmd) {
 		idx = len(presets)
 	}
 	idx = (idx + dir + n) % n
-	m.cli.preset = ""
+	name := ""
 	if idx < len(presets) {
-		m.cli.preset = presets[idx].Name
+		name = presets[idx].Name
 	}
+	return m.selectPreset(name)
+}
+
+func (m tuiModel) selectPreset(name string) (tea.Model, tea.Cmd) {
+	m.presetMenu.open = false
+	m.cli.preset = name
 	m.cfg.TUI.Filters.Preset = m.cli.preset
 	if err := saveTUIState(m.cfg); err != nil {
 		warnStateSaveErr(err, "filter settings")
