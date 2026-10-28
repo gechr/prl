@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,16 @@ var testPRL = New()
 
 func TestMain(m *testing.M) {
 	lipgloss.Writer.Profile = colorprofile.ANSI256
+	// Tests isolate their files under a temporary HOME, but XDG directories
+	// take precedence over it, and CI runners set them.
+	for _, name := range []string{
+		"XDG_CACHE_HOME",
+		"XDG_CONFIG_HOME",
+		"XDG_DATA_HOME",
+		"XDG_STATE_HOME",
+	} {
+		_ = os.Unsetenv(name)
+	}
 	m.Run()
 }
 
