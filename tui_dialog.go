@@ -94,7 +94,7 @@ func (m *tuiModel) newConfirmButtonsDialog() dialog.Dialog {
 			Focused: m.styles.confirmYes,
 			Blurred: m.styles.confirmYesDim,
 			Accept:  true,
-			Keys:    []string{"y", "Y"},
+			Keys:    []string{key.Y, "Y"},
 			Default: true,
 		},
 	)
@@ -359,9 +359,9 @@ func (m tuiModel) updateConfirmDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if _, ok := m.dialogs.Top().(*dialog.Info); ok {
-		if key, ok := msg.(tea.KeyPressMsg); ok {
-			switch key.String() {
-			case "q", "y", "Y", "n", "N":
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+			switch keyMsg.String() {
+			case key.Q, key.Y, "Y", key.N, "N":
 				return m.confirmDismiss()
 			}
 		}

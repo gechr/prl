@@ -1533,7 +1533,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Freeze interactions while a view is loading in the background.
 	if m.detailLoading || m.diffLoading {
 		switch msg.String() {
-		case key.Esc, "q":
+		case key.Esc, tuiKeybindQuit:
 			return m, tea.Quit
 		default:
 			return m, nil
@@ -1740,7 +1740,16 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+	case key.Zero,
+		key.One,
+		key.Two,
+		key.Three,
+		key.Four,
+		key.Five,
+		key.Six,
+		key.Seven,
+		key.Eight,
+		key.Nine:
 		digit := int(msg.String()[0] - '0')
 		if m.jumpDigit > 0 {
 			// Second digit: combine with first (e.g. 1,0 -> row 10).

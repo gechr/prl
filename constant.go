@@ -3,6 +3,7 @@ package main
 import (
 	"time"
 
+	"github.com/gechr/primer/key"
 	xansi "github.com/gechr/x/ansi"
 )
 
@@ -293,42 +294,42 @@ const (
 	tuiKeybindOptions = "O"
 
 	// Keybindings: actions.
-	tuiKeybindQuit              = "q"
+	tuiKeybindQuit              = key.Q
 	tuiKeybindFilter            = "/"
-	tuiKeybindTop               = "g"
+	tuiKeybindTop               = key.G
 	tuiKeybindBottom            = "G"
-	tuiKeybindSelectAll         = "ctrl+a"
-	tuiKeybindInvertSelection   = "i"
-	tuiKeybindApprove           = "a"
-	tuiKeybindApproveNoConfirm  = "alt+a"
-	tuiKeybindCopyURL           = "alt+c"
-	tuiKeybindDiff              = "d"
+	tuiKeybindSelectAll         = key.CtrlA
+	tuiKeybindInvertSelection   = key.I
+	tuiKeybindApprove           = key.A
+	tuiKeybindApproveNoConfirm  = key.AltA
+	tuiKeybindCopyURL           = key.AltC
+	tuiKeybindDiff              = key.D
 	tuiKeybindDraftToggle       = "D"
-	tuiKeybindMerge             = "m"
+	tuiKeybindMerge             = key.M
 	tuiKeybindApproveMerge      = "A"
 	tuiKeybindForceMerge        = "M"
 	tuiKeybindClose             = "C"
-	tuiKeybindComment           = "c"
-	tuiKeybindReview            = "r"
-	tuiKeybindReviewNoConfirm   = "alt+r"
-	tuiKeybindCopilotReview     = "ctrl+r"
-	tuiKeybindSlack             = "s"
-	tuiKeybindSlackNoConfirm    = "alt+s"
-	tuiKeybindOpen              = "o"
+	tuiKeybindComment           = key.C
+	tuiKeybindReview            = key.R
+	tuiKeybindReviewNoConfirm   = key.AltR
+	tuiKeybindCopilotReview     = key.CtrlR
+	tuiKeybindSlack             = key.S
+	tuiKeybindSlackNoConfirm    = key.AltS
+	tuiKeybindOpen              = key.O
 	tuiKeybindUpdateBranch      = "U"
-	tuiKeybindUnassign          = "u"
-	tuiKeybindUnassignNoConfirm = "alt+u"
+	tuiKeybindUnassign          = key.U
+	tuiKeybindUnassignNoConfirm = key.AltU
 	tuiKeybindHelp              = "?"
-	tuiKeybindCyclePreset       = "f"
+	tuiKeybindCyclePreset       = key.F
 	tuiKeybindCyclePresetBack   = "F"
 	tuiKeybindToggleRefresh     = "R"
-	tuiKeybindNext              = "n"
-	tuiKeybindPrev              = "p"
-	tuiKeybindVimDown           = "j"
-	tuiKeybindVimUp             = "k"
-	tuiKeybindVimLeft           = "h"
-	tuiKeybindVimRight          = "l"
-	tuiKeybindConfirmNo         = "n"
+	tuiKeybindNext              = key.N
+	tuiKeybindPrev              = key.P
+	tuiKeybindVimDown           = key.J
+	tuiKeybindVimUp             = key.K
+	tuiKeybindVimLeft           = key.H
+	tuiKeybindVimRight          = key.L
+	tuiKeybindConfirmNo         = key.N
 
 	tuiKeysJumpFirstLast = tuiKeybindTop + "/" + tuiKeybindBottom
 	tuiKeysVimUpDown     = tuiKeybindVimUp + "/" + tuiKeybindVimDown

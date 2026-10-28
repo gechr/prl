@@ -128,9 +128,9 @@ func (m tuiModel) updatePresetMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.movePresetMenu(1)
 	case key.Up, tuiKeybindVimUp:
 		m.movePresetMenu(-1)
-	case "home":
+	case key.Home:
 		m.movePresetMenu(-m.presetMenu.cursor)
-	case "end":
+	case key.End:
 		m.movePresetMenu(len(availablePresets(m.cfg, m.searchesSelf())))
 	case key.Enter, key.Space:
 		return m.choosePresetMenuItem(m.presetMenu.cursor)

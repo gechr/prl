@@ -369,7 +369,7 @@ func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.optionsPicker.Cycle()
 	case tuiKeybindVimLeft, key.Left:
 		m.optionsPicker.Left()
-	case "backspace", "delete":
+	case key.Backspace, key.Delete:
 		m.optionsPicker.Reset()
 	}
 	return m, nil
