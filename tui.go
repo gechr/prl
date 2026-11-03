@@ -1854,13 +1854,15 @@ func (m tuiModel) viewList() tea.View {
 		idx := entry.row
 		index := m.renderTuiIndexWidth(entry.label, m.selected[m.rowKeyAt(idx)], indexWidth)
 		if entry.header != "" {
+			folded := m.collapsedStacks[entry.stackKey]
 			arrowStyle := styleStackArrow
-			if m.collapsedStacks[entry.stackKey] {
+			if folded {
 				arrowStyle = styleHeading
 			}
+			headerStyle := styleStackHeader.Inherit(arrowStyle).Italic(folded)
 			line := tuiNonCursorPrefix + index + indexGap + arrowStyle.Render(
 				entry.tree,
-			) + styleStackHeader.Render(
+			) + headerStyle.Render(
 				entry.header,
 			)
 			if m.width > 0 {

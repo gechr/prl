@@ -389,7 +389,7 @@ func TestStackHeaderStyleUsesTerminalColours(t *testing.T) {
 	for _, light := range []bool{false, true} {
 		initPalette(light)
 		require.True(t, styleStackHeader.GetFaint())
-		require.True(t, styleStackHeader.GetItalic())
+		require.False(t, styleStackHeader.GetItalic())
 		require.False(t, styleStackHeader.GetBold())
 		require.Equal(t, lg.NoColor{}, styleStackHeader.GetForeground())
 	}
@@ -446,6 +446,11 @@ func TestStackGlyphsAdaptToThemeAndIconMode(t *testing.T) {
 			}
 			output := m.viewList().Content
 			require.Regexp(t, regexp.QuoteMeta(styleStackArrow.Render(tc.expanded)), output)
+			require.Regexp(
+				t,
+				regexp.QuoteMeta(styleStackArrow.Faint(true).Render(lines[0].header)),
+				output,
+			)
 			for _, glyph := range []string{"├─ ", "╰─ "} {
 				require.Regexp(t, regexp.QuoteMeta(m.p.theme.MarkdownText.Render(glyph)), output)
 			}
@@ -453,6 +458,11 @@ func TestStackGlyphsAdaptToThemeAndIconMode(t *testing.T) {
 			require.Regexp(
 				t,
 				regexp.QuoteMeta(styleHeading.Render(tc.collapsed)),
+				m.viewList().Content,
+			)
+			require.Regexp(
+				t,
+				regexp.QuoteMeta(styleHeading.Faint(true).Italic(true).Render(lines[0].header)),
 				m.viewList().Content,
 			)
 		}

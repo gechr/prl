@@ -204,7 +204,7 @@ func initPalette(isLight bool) {
 	styleDim = lg.NewStyle().Foreground(colorDim)
 	styleSubtle = lg.NewStyle().Foreground(colorSubtle)
 	styleText = lg.NewStyle().Foreground(colorText)
-	styleStackHeader = lg.NewStyle().Faint(true).Italic(true)
+	styleStackHeader = lg.NewStyle().Faint(true)
 	styleStackArrow = lg.NewStyle().Foreground(colorStackArrow)
 	styleGreen = lg.NewStyle().Foreground(colorGreen)
 	styleRed = lg.NewStyle().Foreground(colorRed)
