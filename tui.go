@@ -473,7 +473,7 @@ type tuiModel struct {
 	showOptions     bool
 	optionsPicker   picker.Model
 	presetMenu      presetMenuState
-	presetHover     presetHoverState
+	hover           hoverState
 	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
 	// the search filters just applied via the overlay, or because an approval
@@ -1029,7 +1029,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if !tm.canOpenPresetMenu() || tm.presetMenu.open {
-		tm.presetHover = presetHoverState{}
+		tm.hover = hoverState{}
 	}
 	return tm, cmd
 }
@@ -1037,7 +1037,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case tea.KeyMsg, tea.WindowSizeMsg:
-		m.presetHover = presetHoverState{}
+		m.hover = hoverState{}
 	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
 		(keyMsg.String() == key.CtrlC || keyMsg.String() == key.CtrlD) &&
@@ -1076,6 +1076,11 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.presetMenu.open {
 			return m.updatePresetMenuClick(msg)
 		}
+		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.filterTagsAt(msg.X, msg.Y) {
+			m.hover = hoverState{}
+			m.openOptions()
+			return m, nil
+		}
 		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.timeTagAt(msg.X, msg.Y) {
 			m.openFilterPresetMenu(true)
 			return m, nil
@@ -1105,6 +1110,9 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.view == tuiViewList && msg.Button == tea.MouseLeft {
+			if hint, ok := m.listHelpHintAt(msg.X, msg.Y); ok {
+				return m.update(key.Replay(hint.Key))
+			}
 			if stack := m.stackGlyphAt(msg.X, msg.Y); stack != "" {
 				m.toggleStack(stack)
 				return m, nil
@@ -1120,9 +1128,13 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.touchInteraction()
 		}
 		if m.canOpenPresetMenu() && !m.presetMenu.open {
-			m.presetHover = presetHoverState{
-				time: m.timeTagAt(msg.X, msg.Y),
-				pr:   m.presetTagAt(msg.X, msg.Y),
+			m.hover = hoverState{
+				filters: m.filterTagsAt(msg.X, msg.Y),
+				time:    m.timeTagAt(msg.X, msg.Y),
+				pr:      m.presetTagAt(msg.X, msg.Y),
+			}
+			if _, ok := m.rowIndexAt(msg.Y); ok {
+				m.hover.rowY, m.hover.rowOK = msg.Y, true
 			}
 		}
 		if m.presetMenu.open {
@@ -1731,8 +1743,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiKeybindOptions:
-		m.showOptions = true
-		m.optionsPicker = m.newFilterPicker()
+		m.openOptions()
 		return m, nil
 
 	case tuiKeybindHelp:
@@ -1882,6 +1893,7 @@ func (m tuiModel) viewList() tea.View {
 	start := min(m.offset, len(visible))
 
 	filterVal := m.filterInput.Value()
+	hoverIdx, hoverOK := m.hoveredRow()
 
 	for _, entry := range visible[start:end] {
 		idx := entry.row
@@ -1909,6 +1921,8 @@ func (m tuiModel) viewList() tea.View {
 					tuiNonCursorPrefix,
 				)
 				line = layout.PreserveBackgroundWidth(line, cursorLineBG, m.width)
+			} else if hoverOK && idx == hoverIdx {
+				line = layout.PreserveBackgroundWidth(line, rowHoverBG, m.width)
 			}
 			b.WriteString(line + nl)
 			continue
@@ -1919,7 +1933,11 @@ func (m tuiModel) viewList() tea.View {
 		}
 		display := index + indexGap + tree + m.rows[idx].Display
 		if idx != m.cursor {
-			b.WriteString(m.rowGutter(idx) + display + nl)
+			line := m.rowGutter(idx) + display
+			if hoverOK && idx == hoverIdx {
+				line = layout.PreserveBackgroundWidth(line, rowHoverBG, m.width)
+			}
+			b.WriteString(line + nl)
 			continue
 		}
 		line := m.rowCursor(idx) + display
@@ -1961,16 +1979,7 @@ func (m tuiModel) viewList() tea.View {
 		b.WriteString(nl)
 		help = m.renderHelp(m.listHelpPairs())
 	}
-	if m.flash.Msg != "" {
-		b.WriteString(m.appendStatus(help))
-	} else {
-		status := ""
-		total := len(visible)
-		if total > viewport {
-			status = m.styles.statusOK.Render(scrollbar.Position(start, end, total))
-		}
-		b.WriteString(m.appendRightStatus(help, status))
-	}
+	b.WriteString(m.appendRightStatus(help, m.listStatus()))
 
 	v := tea.NewView(layout.ExpandTabs(b.String()))
 	v.AltScreen = true
@@ -2145,7 +2154,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	presetTag := m.renderPresetControl(
 		noPresetLabel,
 		m.styles.separator.Faint(false),
-		m.presetHover.pr,
+		m.hover.pr,
 		prEnd-prStart,
 	)
 	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
@@ -2154,7 +2163,7 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 		if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
 			style = lg.NewStyle().Foreground(c).Bold(true)
 		}
-		presetTag = m.renderPresetControl(preset.Name, style, m.presetHover.pr, prEnd-prStart)
+		presetTag = m.renderPresetControl(preset.Name, style, m.hover.pr, prEnd-prStart)
 		tags = tags[1:]
 	}
 	if timeTag := m.renderTimeTag(); timeTag != "" {
@@ -2177,6 +2186,11 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	options := strings.Join(renderedTags, filterTagStyle.Faint(true).Render(dotSeparator))
 	if prStart == prEnd {
 		options = ""
+	}
+	if start, end := m.filterTagsBounds(); m.hover.filters && start < end {
+		options = layout.PreserveBackgroundWidth(
+			xansi.Truncate(options, end-start, valueEllipsis), cursorLineBG, end-start,
+		)
 	}
 	suffix := m.styles.separator.Render(presetIndicatorSuffix)
 	available := m.width - lg.Width(presetIndicatorPrefix) - lg.Width(suffix)
@@ -3064,16 +3078,7 @@ func (m tuiModel) renderHelpOverlay() string {
 	}.Render()
 }
 
-// appendStatus appends the status message to the right of the last line of help,
-// or returns help unchanged if there's no status or not enough room.
-func (m tuiModel) appendStatus(help string) string {
-	status := m.renderFlashStatus()
-	if status == "" {
-		return help
-	}
-	return m.appendRightStatus(help, status)
-}
-
+// renderFlashStatus styles the flash message, or returns "" when there is none.
 func (m tuiModel) renderFlashStatus() string {
 	if m.flash.Msg == "" {
 		return ""
@@ -3105,8 +3110,16 @@ func (m tuiModel) footerComponents(help, status string) []view.FooterComponent {
 }
 
 func (m tuiModel) appendRightStatus(help, status string) string {
+	footer, _ := m.fitRightStatus(help, status)
+	return footer
+}
+
+// fitRightStatus right-aligns status on help's last line, dropping trailing
+// hints until both fit. It also returns how many columns of the last help line
+// survive, so clicks past them never reach a dropped hint.
+func (m tuiModel) fitRightStatus(help, status string) (string, int) {
 	if status == "" || m.width <= 0 {
-		return help
+		return help, math.MaxInt
 	}
 	usableWidth := max(1, m.width-1)
 	lastNL := strings.LastIndex(help, "\n")
@@ -3121,7 +3134,7 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	for {
 		pad := usableWidth - lg.Width(lastLine) - statusWidth
 		if pad > 0 {
-			return prefix + lastLine + strings.Repeat(" ", pad) + status
+			return prefix + lastLine + strings.Repeat(" ", pad) + status, lg.Width(lastLine)
 		}
 		before, _, found := strings.CutLast(lastLine, helpGap)
 		if !found {
@@ -3131,12 +3144,28 @@ func (m tuiModel) appendRightStatus(help, status string) string {
 	}
 
 	if statusWidth < usableWidth {
-		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status
+		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status, 0
 	}
-	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
+	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis), 0
 }
 
-func (m tuiModel) renderHelp(pairs []key.Hint) string {
+// listStatus is the list footer's right-aligned status: a flash message, or
+// the scroll position when rows overflow the viewport.
+func (m tuiModel) listStatus() string {
+	if m.flash.Msg != "" {
+		return m.renderFlashStatus()
+	}
+	total := len(m.listLines())
+	viewport := m.listViewport()
+	if total <= viewport {
+		return ""
+	}
+	start := min(m.offset, total)
+	end := min(m.offset+viewport, total)
+	return m.styles.statusOK.Render(scrollbar.Position(start, end, total))
+}
+
+func (m tuiModel) helpBar(pairs []key.Hint) helpbar.Model {
 	return helpbar.Model{
 		Hints: pairs,
 		Renderer: key.Renderer{
@@ -3148,23 +3177,37 @@ func (m tuiModel) renderHelp(pairs []key.Hint) string {
 			Width:  m.width,
 			Inline: true,
 		},
-	}.Render()
+	}
+}
+
+func (m tuiModel) renderHelp(pairs []key.Hint) string {
+	return m.helpBar(pairs).Render()
 }
 
 // helpLines returns the number of lines the help bar occupies at the current width.
 func (m tuiModel) helpLines(pairs []key.Hint) int {
-	return helpbar.Model{
-		Hints: pairs,
-		Renderer: key.Renderer{
-			Styles: key.Styles{
-				Key:  m.styles.helpKey,
-				Text: m.styles.helpText,
-			},
-			Gap:    helpGap,
-			Width:  m.width,
-			Inline: true,
-		},
-	}.Lines()
+	return m.helpBar(pairs).Lines()
+}
+
+// listHelpHintAt returns the list help hint drawn at (x, y). The whole
+// "key desc" part is the button. The right-aligned status can drop trailing
+// hints from the last line, so only the columns fitRightStatus keeps count.
+func (m tuiModel) listHelpHintAt(x, y int) (key.Hint, bool) {
+	if !m.canOpenPresetMenu() || m.filterInput.Focused() {
+		return key.Hint{}, false
+	}
+	top := m.listSeparatorY() + 1
+	bar := m.helpBar(m.listHelpPairs())
+	hint, ok := bar.HintAt(x, y-top)
+	if !ok {
+		return key.Hint{}, false
+	}
+	if y-top == bar.Lines()-1 {
+		if _, kept := m.fitRightStatus(bar.Render(), m.listStatus()); x >= kept {
+			return key.Hint{}, false
+		}
+	}
+	return hint, true
 }
 
 // hasFilteredRows reports whether the query returned PRs that are still
@@ -3367,15 +3410,30 @@ func (m tuiModel) headerColumnAt(x int) string {
 }
 
 // rowIndexAt maps a screen Y coordinate to a row index.
-// Returns the index into m.rows and ok=true if the click landed on a visible row.
+// Returns the index into m.rows and ok=true if y is on a visible row. Lines
+// outside the viewport (header, filter bar, separator, help) map to no row,
+// even when rows are scrolled out of view above or below them.
 func (m tuiModel) rowIndexAt(y int) (int, bool) {
 	const headerLines = 1 // header is always rendered on Y=0
+	if y < headerLines || y >= headerLines+m.listViewport() {
+		return 0, false
+	}
 	row := y - headerLines + m.offset
 	visible := m.listLines()
 	if row < 0 || row >= len(visible) || visible[row].row < 0 {
 		return 0, false
 	}
 	return visible[row].row, true
+}
+
+// hoveredRow returns the row under the pointer. It resolves the stored
+// pointer line on each render, so scrolling, refreshes and stack folds move
+// the highlight to whatever row now sits under the pointer.
+func (m tuiModel) hoveredRow() (int, bool) {
+	if !m.hover.rowOK {
+		return 0, false
+	}
+	return m.rowIndexAt(m.hover.rowY)
 }
 
 // toggleSort cycles a column through: default direction -> reverse -> off.

@@ -154,7 +154,7 @@ func (m tuiModel) renderTimeTag() string {
 	if preset, ok := timePresetByName(m.cfg, m.cli.timePreset); ok {
 		style = m.timePresetStyle(preset)
 	}
-	return m.renderPresetControl(m.timeTagLabel(), style, m.presetHover.time, end-start)
+	return m.renderPresetControl(m.timeTagLabel(), style, m.hover.time, end-start)
 }
 
 func (m tuiModel) selectTimePreset(name string) (tea.Model, tea.Cmd) {

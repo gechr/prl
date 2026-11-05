@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,27 @@ func TestMain(m *testing.M) {
 	} {
 		_ = os.Unsetenv(name)
 	}
-	m.Run()
+	// A test that presses o or alt+c (or clicks their help hints) must never
+	// reach the real browser or clipboard, so shadow the launchers on PATH.
+	bin, err := os.MkdirTemp("", "prl-test-bin-")
+	if err != nil {
+		panic(err)
+	}
+	for _, name := range []string{
+		"open", "xdg-open", "powershell.exe", "pbcopy", "pbpaste", "xclip", "xsel", "wl-copy",
+	} {
+		if err := os.WriteFile(
+			filepath.Join(bin, name),
+			[]byte("#!/bin/sh\nexit 0\n"),
+			0o700,
+		); err != nil {
+			panic(err)
+		}
+	}
+	_ = os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	code := m.Run()
+	_ = os.RemoveAll(bin)
+	os.Exit(code)
 }
 
 // testPRs returns 3 PRs ordered oldest to newest by CreatedAt.

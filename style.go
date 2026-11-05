@@ -76,6 +76,7 @@ func markdownStyle() string {
 var (
 	cursorLineBG         string
 	cursorLineSelectedBG string
+	rowHoverBG           string // faint grey behind the row under the pointer
 )
 
 // Base styles - add .Bold(true), .Faint(true), etc. at call sites as needed.
@@ -183,9 +184,11 @@ func initPalette(isLight bool) {
 	if isLight {
 		cursorLineBG = "\x1b[48;2;255;225;238m"
 		cursorLineSelectedBG = "\x1b[48;2;225;245;230m"
+		rowHoverBG = "\x1b[48;2;248;248;248m"
 	} else {
 		cursorLineBG = "\x1b[48;2;40;10;30m"
 		cursorLineSelectedBG = "\x1b[48;2;10;30;15m"
+		rowHoverBG = "\x1b[48;2;22;22;22m"
 	}
 
 	// Derived styles.

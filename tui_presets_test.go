@@ -218,7 +218,7 @@ func TestPresetControlsHoverAndCaretClicks(t *testing.T) {
 		}
 		y := m.listSeparatorY()
 		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: end - 1, Y: y})
-		require.Equal(t, presetHoverState{time: timeFilter, pr: !timeFilter}, m.presetHover)
+		require.Equal(t, hoverState{time: timeFilter, pr: !timeFilter}, m.hover)
 		require.NotEqual(t, base, m.renderListSeparator())
 		require.Equal(t, ansi.Strip(base), ansi.Strip(m.renderListSeparator()))
 		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 0, Y: 0})
@@ -227,7 +227,7 @@ func TestPresetControlsHoverAndCaretClicks(t *testing.T) {
 		m, _ = updateModel(t, m, tea.MouseClickMsg{X: end - 1, Y: y, Button: tea.MouseLeft})
 		require.True(t, m.presetMenu.open, "the caret opens the dropdown")
 		require.Equal(t, timeFilter, m.presetMenu.timeFilter)
-		require.Equal(t, presetHoverState{}, m.presetHover)
+		require.Equal(t, hoverState{}, m.hover)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestPresetHoverPreservesIdleRefreshTimer(t *testing.T) {
 	m.lastInteraction = idleSince
 	start, _ := m.presetTagBounds()
 	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
-	require.True(t, m.presetHover.pr)
+	require.True(t, m.hover.pr)
 	require.Equal(t, idleSince, m.lastInteraction, "hover alone keeps the idle timer")
 	m, _ = updateModel(
 		t,
@@ -356,9 +356,9 @@ func TestPresetHoverClearsOnKeysAndResize(t *testing.T) {
 				start, _ = m.timeTagBounds()
 			}
 			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
-			require.NotEqual(t, presetHoverState{}, m.presetHover)
+			require.NotEqual(t, hoverState{}, m.hover)
 			m, _ = updateModel(t, m, msg)
-			require.Equal(t, presetHoverState{}, m.presetHover)
+			require.Equal(t, hoverState{}, m.hover)
 		}
 	}
 }
@@ -369,4 +369,94 @@ func TestTimeMenuClosesWhenItsControlDisappears(t *testing.T) {
 	m.openFilterPresetMenu(true)
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 21, Height: 20})
 	require.False(t, m.presetMenu.open)
+}
+
+func TestFilterTagsHoverAndClickOpenOptions(t *testing.T) {
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	m.cli.NoBot = false
+	start, end := m.filterTagsBounds()
+	require.Equal(t, start, end, "no option filters, no target")
+
+	m.cli.State, m.cli.stateExplicit = valueClosed, true
+	start, end = m.filterTagsBounds()
+	y := m.listSeparatorY()
+	base := m.renderListSeparator()
+	require.Equal(t, "state:closed", ansi.Cut(ansi.Strip(base), start, end))
+
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: y})
+	require.Equal(t, hoverState{filters: true}, m.hover)
+	hovered := m.renderListSeparator()
+	require.NotEqual(t, base, hovered, "hover highlights the tags")
+	require.Equal(t, ansi.Strip(base), ansi.Strip(hovered))
+
+	m, _ = updateModel(t, m, tea.MouseClickMsg{X: end - 1, Y: y, Button: tea.MouseLeft})
+	require.True(t, m.showOptions, "clicking the tags opens the filter dialog")
+	require.Equal(t, hoverState{}, m.hover)
+
+	m, _ = updateModel(t, m, tea.MouseClickMsg{X: start, Y: y, Button: tea.MouseLeft})
+	require.False(t, m.showOptions, "clicking the tags again closes it, like Shift+O")
+}
+
+func TestRowHoverHighlightsWithoutMovingCursor(t *testing.T) {
+	t.Cleanup(func() { initPalette(false) })
+	for _, light := range []bool{false, true} {
+		initPalette(light)
+		require.NotEqual(t, cursorLineBG, rowHoverBG, "hover differs from the cursor line")
+		m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2), approvalTestPR(3))
+		m.cfg = &Config{}
+		m.header = "PR"
+		base := m.View().Content
+		require.False(t, strings.HasPrefix(strings.Split(base, nl)[2], rowHoverBG))
+
+		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 5, Y: 2})
+		require.Equal(t, hoverState{rowY: 2, rowOK: true}, m.hover)
+		require.Equal(t, 0, m.cursor, "hover leaves the cursor alone")
+		line := strings.Split(m.View().Content, nl)[2]
+		require.True(t, strings.HasPrefix(line, rowHoverBG), "the hovered row is tinted")
+		require.Equal(t, "2", strings.TrimSpace(ansi.Strip(line)))
+
+		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 5, Y: m.listSeparatorY()})
+		require.Equal(t, hoverState{}, m.hover, "lines below the list are not rows")
+		require.Equal(t, base, m.View().Content)
+	}
+}
+
+func TestRowHoverFollowsTheRowUnderThePointer(t *testing.T) {
+	prs := make([]PullRequest, 30)
+	for i := range prs {
+		prs[i] = approvalTestPR(i + 1)
+	}
+	m := approvalTestModel("", prs...)
+	m.cfg = &Config{}
+	m.header, m.height = "PR", 12
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 5, Y: 2})
+	m, _ = updateModel(t, m, scrollwheel.Msg[wheelTarget]{Target: wheelTargetList, Delta: 12})
+	require.Positive(t, m.offset)
+	want, ok := m.rowIndexAt(2)
+	require.True(t, ok)
+	got, ok := m.hoveredRow()
+	require.True(t, ok)
+	require.Equal(t, want, got, "the highlight stays under the pointer after scrolling")
+	require.True(t, strings.HasPrefix(strings.Split(m.View().Content, nl)[2], rowHoverBG))
+}
+
+func TestClicksBelowTheListLeaveTheCursor(t *testing.T) {
+	prs := make([]PullRequest, 30)
+	for i := range prs {
+		prs[i] = approvalTestPR(i + 1)
+	}
+	m := approvalTestModel("", prs...)
+	m.cfg = &Config{}
+	m.header, m.height = "PR", 12
+	// Help hints are buttons with their own actions, so skip them.
+	for y := m.listSeparatorY(); y < m.height; y++ {
+		for x := range m.width {
+			if _, ok := m.listHelpHintAt(x, y); ok {
+				continue
+			}
+			after, _ := updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			require.Equal(t, 0, after.cursor, "x=%d y=%d is not a row", x, y)
+		}
+	}
 }

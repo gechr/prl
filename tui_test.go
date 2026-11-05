@@ -2091,15 +2091,18 @@ func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
 	}
 	m.optionsPicker = m.newFilterPicker()
 
-	model, cmd := m.updateOptionsOverlay(
-		tea.KeyPressMsg{Code: 'O', Text: "O"},
-	)
-	// No row changed, so nothing is refetched.
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.showOptions)
-	require.False(t, bm.refreshing)
+	// Every way out except Esc applies the staged choices.
+	for _, text := range []string{"O", "q"} {
+		model, cmd := m.updateOptionsOverlay(
+			tea.KeyPressMsg{Code: rune(text[0]), Text: text},
+		)
+		// No row changed, so nothing is refetched.
+		require.Nil(t, cmd)
+		bm, ok := model.(tuiModel)
+		require.True(t, ok)
+		require.False(t, bm.showOptions)
+		require.False(t, bm.refreshing)
+	}
 }
 
 func TestUpdateOptionsOverlayCLIRowsAreEditable(t *testing.T) {

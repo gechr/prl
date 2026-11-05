@@ -151,3 +151,65 @@ func TestOptionTagsUseDotDividers(t *testing.T) {
 	expected := strings.Repeat("─", m.width-ansi.StringWidth(text)) + text
 	require.Equal(t, expected, ansi.Strip(m.renderListSeparator()))
 }
+
+func TestOptionsOverlayOnlyEscDiscardsStagedChoices(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	clickTags := func(m tuiModel) tea.Msg {
+		start, _ := m.filterTagsBounds()
+		require.False(t, m.optionsDialogAt(start, m.listSeparatorY()), "tags are exposed")
+		return tea.MouseClickMsg{X: start, Y: m.listSeparatorY(), Button: tea.MouseLeft}
+	}
+	for _, tc := range []struct {
+		name    string
+		msg     func(tuiModel) tea.Msg
+		applied bool
+	}{
+		{"q", func(tuiModel) tea.Msg { return tea.KeyPressMsg{Code: 'q', Text: "q"} }, true},
+		{"tags", clickTags, true},
+		{"esc", func(tuiModel) tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEscape} }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := filterClickTestModel()
+			x, y := filterChoiceButton(t, m, filterRowCI, ciStatusFailure)
+			m, _ = updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			m, _ = updateModel(t, m, tc.msg(m))
+			require.False(t, m.showOptions)
+			want := ""
+			if tc.applied {
+				want = ciStatusFailure
+			}
+			require.Equal(t, want, m.cli.CI)
+		})
+	}
+}
+
+func TestOptionsOverlayCoversTagsUnderneath(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	covered := 0
+	for height := 12; height <= 22; height++ {
+		m := filterClickTestModel()
+		m.width, m.height, m.header = 80, height, "PR"
+		m.cli.State, m.cli.stateExplicit = valueClosed, true
+		m.optionsPicker = m.newFilterPicker()
+		start, end := m.filterTagsBounds()
+		y := m.listSeparatorY()
+		for x := start; x < end; x++ {
+			if !m.optionsDialogAt(x, y) {
+				continue
+			}
+			if _, _, ok := m.filterChoiceAt(x, y); ok {
+				continue
+			}
+			covered++
+			after, _ := updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			require.True(
+				t,
+				after.showOptions,
+				"height=%d x=%d hits the dialog, not the tags",
+				height,
+				x,
+			)
+		}
+	}
+	require.Positive(t, covered, "some heights put the dialog over the tags")
+}

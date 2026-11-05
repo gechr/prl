@@ -20,9 +20,13 @@ const (
 	presetIndicatorSuffix = " ├─"
 )
 
-type presetHoverState struct {
-	time bool
-	pr   bool
+// hoverState tracks what the pointer is over in the list view.
+type hoverState struct {
+	filters bool
+	time    bool
+	pr      bool
+	rowY    int  // pointer line, valid when rowOK
+	rowOK   bool // the pointer is over the list rows
 }
 
 func (m tuiModel) renderPresetControl(name string, style lg.Style, hovered bool, width int) string {
@@ -145,6 +149,40 @@ func (m tuiModel) presetTagBounds() (int, int) {
 
 func (m tuiModel) presetTagAt(x, y int) bool {
 	start, end := m.presetTagBounds()
+	return y == m.listSeparatorY() && x >= start && x < end
+}
+
+// filterOptionTags returns the option filter tags shown before the PR control.
+func (m tuiModel) filterOptionTags() []string {
+	tags := m.activeFilterTags()
+	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
+		tags[0] == preset.Name {
+		return tags[1:]
+	}
+	return tags
+}
+
+// filterTagsBounds mirrors the option tags' position in renderTagSeparator:
+// one gap before the PR control, truncated at the separator prefix.
+func (m tuiModel) filterTagsBounds() (int, int) {
+	prStart, prEnd := m.presetTagBounds()
+	tags := m.filterOptionTags()
+	if prStart == prEnd || len(tags) == 0 {
+		return 0, 0
+	}
+	end := prStart - lg.Width(timePresetSeparator)
+	start := max(
+		end-lg.Width(strings.Join(tags, dotSeparator)),
+		lg.Width(presetIndicatorPrefix),
+	)
+	if start >= end {
+		return 0, 0
+	}
+	return start, end
+}
+
+func (m tuiModel) filterTagsAt(x, y int) bool {
+	start, end := m.filterTagsBounds()
 	return y == m.listSeparatorY() && x >= start && x < end
 }
 

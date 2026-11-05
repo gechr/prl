@@ -348,10 +348,10 @@ func (m tuiModel) releaseCLIFilter(row filterRow) {
 
 func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case key.Esc, tuiKeybindQuit:
+	case key.Esc: // the only way to discard staged choices
 		m.showOptions = false
 		return m, nil
-	case key.Enter, tuiKeybindOptions:
+	case key.Enter, tuiKeybindOptions, tuiKeybindQuit:
 		return m.applyFilterOptions()
 	case tuiKeybindVimDown, key.Down:
 		m.optionsPicker.Down()
@@ -367,6 +367,12 @@ func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.optionsPicker.Reset()
 	}
 	return m, nil
+}
+
+// optionsDialogAt reports whether (x, y) falls inside the filter dialog box, so
+// clicks on the dialog never reach the tags it covers.
+func (m tuiModel) optionsDialogAt(x, y int) bool {
+	return overlay.Contains(m.renderOptionsOverlay(), m.width, m.height, overlay.Center, x, y)
 }
 
 // filterChoiceAt reads choice positions from the rendered picker so mouse
@@ -405,12 +411,21 @@ func (m tuiModel) filterChoiceAt(x, y int) (int, int, bool) {
 	return 0, 0, false
 }
 
+// openOptions opens the filter dialog (Shift+O, or a click on the filter tags).
+func (m *tuiModel) openOptions() {
+	m.showOptions = true
+	m.optionsPicker = m.newFilterPicker()
+}
+
 func (m tuiModel) clickFilterChoice(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if msg.Button == tea.MouseLeft {
 		if row, choice, ok := m.filterChoiceAt(msg.X, msg.Y); ok {
 			m.optionsPicker.Cursor = row
 			m.optionsPicker.Values[row] = choice
 			m.optionsPicker.IsReset[row] = false
+		} else if !m.optionsDialogAt(msg.X, msg.Y) && m.filterTagsAt(msg.X, msg.Y) {
+			// Exposed tags toggle the dialog like Shift+O, which applies and closes it.
+			return m.applyFilterOptions()
 		}
 	}
 	return m, nil
