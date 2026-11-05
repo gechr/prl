@@ -1136,6 +1136,9 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, ok := m.rowIndexAt(msg.Y); ok {
 				m.hover.rowY, m.hover.rowOK = msg.Y, true
 			}
+			if _, ok := m.listHelpHintIndex(msg.X, msg.Y); ok {
+				m.hover.helpX, m.hover.helpY, m.hover.helpOK = msg.X, msg.Y, true
+			}
 		}
 		if m.presetMenu.open {
 			if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
@@ -1977,7 +1980,7 @@ func (m tuiModel) viewList() tea.View {
 	} else {
 		b.WriteString(m.renderListSeparator())
 		b.WriteString(nl)
-		help = m.renderHelp(m.listHelpPairs())
+		help = m.listHelpBar().Render()
 	}
 	b.WriteString(m.appendRightStatus(help, m.listStatus()))
 
@@ -3193,21 +3196,43 @@ func (m tuiModel) helpLines(pairs []key.Hint) int {
 // "key desc" part is the button. The right-aligned status can drop trailing
 // hints from the last line, so only the columns fitRightStatus keeps count.
 func (m tuiModel) listHelpHintAt(x, y int) (key.Hint, bool) {
-	if !m.canOpenPresetMenu() || m.filterInput.Focused() {
-		return key.Hint{}, false
-	}
-	top := m.listSeparatorY() + 1
-	bar := m.helpBar(m.listHelpPairs())
-	hint, ok := bar.HintAt(x, y-top)
+	i, ok := m.listHelpHintIndex(x, y)
 	if !ok {
 		return key.Hint{}, false
 	}
+	return m.listHelpPairs()[i], true
+}
+
+// listHelpHintIndex is listHelpHintAt's index into listHelpPairs.
+func (m tuiModel) listHelpHintIndex(x, y int) (int, bool) {
+	if !m.canOpenPresetMenu() || m.filterInput.Focused() {
+		return 0, false
+	}
+	top := m.listSeparatorY() + 1
+	bar := m.helpBar(m.listHelpPairs())
+	i, ok := bar.Renderer.HintAt(bar.Hints, x, y-top)
+	if !ok {
+		return 0, false
+	}
 	if y-top == bar.Lines()-1 {
 		if _, kept := m.fitRightStatus(bar.Render(), m.listStatus()); x >= kept {
-			return key.Hint{}, false
+			return 0, false
 		}
 	}
-	return hint, true
+	return i, true
+}
+
+// listHelpBar is the list help bar, with the hint under the pointer painted
+// like the other hover highlights. The pointer cell is resolved on each
+// render, so the highlight follows whatever hint now sits under it.
+func (m tuiModel) listHelpBar() helpbar.Model {
+	bar := m.helpBar(m.listHelpPairs())
+	if m.hover.helpOK {
+		if i, ok := m.listHelpHintIndex(m.hover.helpX, m.hover.helpY); ok {
+			bar.Renderer.Hover, bar.Renderer.HoverBG = &i, cursorLineBG
+		}
+	}
+	return bar
 }
 
 // hasFilteredRows reports whether the query returned PRs that are still

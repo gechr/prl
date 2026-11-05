@@ -423,8 +423,9 @@ func (m tuiModel) clickFilterChoice(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 			m.optionsPicker.Cursor = row
 			m.optionsPicker.Values[row] = choice
 			m.optionsPicker.IsReset[row] = false
-		} else if !m.optionsDialogAt(msg.X, msg.Y) && m.filterTagsAt(msg.X, msg.Y) {
-			// Exposed tags toggle the dialog like Shift+O, which applies and closes it.
+		} else if !m.optionsDialogAt(msg.X, msg.Y) {
+			// A click outside the dialog (the filter tags included) dismisses
+			// it like Shift+O, which applies and closes it. Only Esc cancels.
 			return m.applyFilterOptions()
 		}
 	}

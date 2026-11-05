@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/gechr/primer/overlay"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,10 +109,11 @@ func TestOptionsOverlayIgnoresOtherClicks(t *testing.T) {
 	m.optionsPicker.Cursor = int(filterRowReview)
 	before := slices.Clone(m.optionsPicker.Values)
 	x, y := filterChoiceButton(t, m, filterRowState, valueOpen)
+	originX, originY := overlay.Origin(m.renderOptionsOverlay(), m.width, m.height, overlay.Center)
 	for _, msg := range []tea.MouseClickMsg{
 		{X: x, Y: y, Button: tea.MouseRight},
 		{X: x + len(valueOpen), Y: y, Button: tea.MouseLeft},
-		{X: 0, Y: 0, Button: tea.MouseLeft},
+		{X: originX, Y: originY, Button: tea.MouseLeft}, // the dialog's own border
 	} {
 		m, _ = updateModel(t, m, msg)
 		require.Equal(t, before, m.optionsPicker.Values)
@@ -166,6 +168,9 @@ func TestOptionsOverlayOnlyEscDiscardsStagedChoices(t *testing.T) {
 	}{
 		{"q", func(tuiModel) tea.Msg { return tea.KeyPressMsg{Code: 'q', Text: "q"} }, true},
 		{"tags", clickTags, true},
+		{"outside", func(tuiModel) tea.Msg {
+			return tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft}
+		}, true},
 		{"esc", func(tuiModel) tea.Msg { return tea.KeyPressMsg{Code: tea.KeyEscape} }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

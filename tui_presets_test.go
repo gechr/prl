@@ -196,7 +196,9 @@ func TestPresetMenuDoesNotOpenOverModal(t *testing.T) {
 			case "help":
 				m.showHelp = true
 			case "options":
+				t.Setenv("XDG_STATE_HOME", t.TempDir())
 				m.showOptions = true
+				m.optionsPicker = m.newFilterPicker()
 			case "confirm":
 				m.confirmAction = tuiActionInfo
 			}

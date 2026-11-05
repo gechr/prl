@@ -29,6 +29,14 @@ func TestMain(m *testing.M) {
 	} {
 		_ = os.Unsetenv(name)
 	}
+	// Default every test to a throwaway HOME, so one that forgets to isolate
+	// itself (by applying filters, say) can never write the user's real state
+	// or config. Tests that need their own HOME still set it.
+	home, err := os.MkdirTemp("", "prl-test-home-")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("HOME", home)
 	// A test that presses o or alt+c (or clicks their help hints) must never
 	// reach the real browser or clipboard, so shadow the launchers on PATH.
 	bin, err := os.MkdirTemp("", "prl-test-bin-")
@@ -49,6 +57,7 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code := m.Run()
 	_ = os.RemoveAll(bin)
+	_ = os.RemoveAll(home)
 	os.Exit(code)
 }
 

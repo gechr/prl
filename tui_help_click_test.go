@@ -117,3 +117,31 @@ func TestHelpStatusCannotImpersonateDroppedHint(t *testing.T) {
 func screenLine(m tuiModel, y int) string {
 	return strings.Split(ansi.Strip(m.View().Content), nl)[y]
 }
+
+func TestHelpHintHoverHighlightsTheHint(t *testing.T) {
+	m := helpClickTestModel(3)
+	lines, top := footerLines(m)
+	y, x := -1, 0
+	for i, line := range lines {
+		if before, _, ok := strings.Cut(line, "? "+tuiHelpHelp); ok {
+			y, x = top+i, ansi.StringWidth(before)
+			break
+		}
+	}
+	require.NotEqual(t, -1, y, "help hint is drawn")
+	base := m.View().Content
+
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: x + 2, Y: y})
+	require.Equal(t, hoverState{helpX: x + 2, helpY: y, helpOK: true}, m.hover)
+	i, ok := m.listHelpHintIndex(x, y)
+	require.True(t, ok)
+	hover := i
+	bar := m.helpBar(m.listHelpPairs())
+	bar.Renderer.Hover, bar.Renderer.HoverBG = &hover, cursorLineBG
+	require.Equal(t, bar.Render(), m.listHelpBar().Render(), "the hovered hint is painted")
+	require.NotEqual(t, base, m.View().Content, "the hovered view differs")
+	require.Equal(t, ansi.Strip(base), ansi.Strip(m.View().Content), "text is unchanged")
+
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 0, Y: 0})
+	require.Equal(t, base, m.View().Content, "moving away clears the highlight")
+}

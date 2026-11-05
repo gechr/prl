@@ -27,6 +27,9 @@ type hoverState struct {
 	pr      bool
 	rowY    int  // pointer line, valid when rowOK
 	rowOK   bool // the pointer is over the list rows
+	helpX   int  // pointer cell, valid when helpOK
+	helpY   int
+	helpOK  bool // the pointer is over a help hint
 }
 
 func (m tuiModel) renderPresetControl(name string, style lg.Style, hovered bool, width int) string {
