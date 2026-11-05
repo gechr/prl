@@ -196,19 +196,16 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 
 ## TUI
 
-`--interactive` opens a full-screen browser for inspecting PRs, filtering, and triggering actions. Use `--interval <duration>` with `--interactive` or `--watch` to slow the per-run auto-refresh cadence, subject to the existing minimum interval enforced from the current result count. Configurable AI review launchers are available through `tui.review.*` settings in `config.yaml`. AI reviews open in a new tab of the host terminal: inside a Herdr session (`HERDR_ENV=1`) a Herdr tab, otherwise Ghostty, iTerm2, or Kitty on macOS, or Windows Terminal when running in WSL.
-
-Stacked PRs are grouped by default, with IDs such as `1a`, `1b`, and `1c` from top to bottom; the next standalone PR is `2`. Sorting uses only the top PR in each stack. Open **Shift+O** and set **Stacks** to **show** or **hide** to switch views. Click the stack header or any tree connector to collapse or expand a stack, or use Left/Right on a stack. The display preference and folded stacks are saved between sessions.
-
-In the filter dialog (`Shift+O`), click a choice to select it, then press Enter to apply or Esc to cancel. Command-line filter options set the starting choices, and you can change them here. A changed choice is saved for later sessions. An unchanged one applies to this session only.
-
-Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle through filter presets such as Needs your review and Mergeable, and `F` to step back. Click the preset name on the separator to open a menu centred above it, then click a preset to select it or `All PRs` to clear it. prl remembers the active preset, and `tui.presets.filters` sets your own. Click the time filter immediately right of the PR preset to filter by updated time, or cycle through its ranges with `t` (`T` steps back). It starts at All Time and offers 10 minutes, 1 hour, 1 day, 1 week, 1 month and 1 year. The controls read `┤ All PRs ▾ │ All Time ▾ ├─`, join the horizontal rule at both ends, highlight their labels and menu rows on hover, and use dim pink carets and dividers matching the separator line. The time filter combines with the status preset and is remembered between sessions. Press `Ctrl+X` to clear both presets together. The `?` help lists `f/F`, `t/T` and `Ctrl+X`. Its ranges use the same age colours as the created/updated columns.
-
-Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --mode plan` for Gemini through `agy`, `--permission-mode plan` for Claude. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude and Gemini (and no sandbox). The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
-
-For Windows Terminal, run the Linux build of `prl` inside WSL. Detection uses `WSL_DISTRO_NAME` and `WT_SESSION`. The launcher tries `wt.exe` directly from `PATH`. If it cannot start, it falls back to `cmd.exe`, checking `PATH` and then `/mnt/c/Windows/System32/cmd.exe`; adding System32 to your Linux `PATH` is unnecessary with the default Windows mount. Windows interoperability must be enabled. If Windows is mounted elsewhere, put `wt.exe` or `cmd.exe` on `PATH`. A running `wt.exe` that reports an error is not retried, to avoid opening duplicate tabs.
-
-The review opens in the most recently used Windows Terminal window, using the same WSL distribution and Linux user. Your interactive login shell loads before the review starts, so install Git and your chosen AI CLI inside that distribution. Herdr still takes priority when running inside a Herdr session. Arguments containing semicolons, line breaks or NUL are rejected. The `cmd.exe` fallback also rejects shell metacharacters such as `%`, `&` and `|`; direct `wt.exe` calls pass those characters literally.
+- `prl -i`: browse PRs and diffs. `?`: all shortcuts.
+- `Shift+O`: filters and stack visibility.
+- `f/F`: status presets. `t/T`: time ranges. `Ctrl+X`: clear both.
+- Left/Right or click a stack header: collapse/expand stacks.
+- `a` in diff view: approve and advance.
+- `--interval 30s`: slow auto-refresh.
+- View preferences are saved between sessions.
+- `tui.presets` and `tui.review`: configure presets and AI reviews.
+- Reviews open in Herdr, Ghostty, iTerm2, Kitty, or Windows Terminal (WSL).
+- Reviews use read-only/plan mode. **YOLO** allows unrestricted commands and resets each time. `Alt+R` always uses restricted mode.
 
 ## Date Syntax
 
