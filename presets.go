@@ -34,13 +34,13 @@ type TUIPresetConfig struct {
 var defaultPresets = []TUIPresetConfig{
 	// Nobody can approve their own PRs, so these two can never match when the
 	// search lists only yours.
-	{Name: "Needs approval", Filter: presetTermApprovable, Color: "blue", When: presetNotSelf},
+	{Name: "Needs your review", Filter: presetTermApprovable, Color: "blue", When: presetNotSelf},
 	{
 		Name:   "Waiting for CI",
 		Filter: "scope:self !draft ci:pending OR !mine !draft !approved !review:approved ci:pending",
 		Color:  "208",
 	},
-	{Name: "Approved by me", Filter: "approved !mine", Color: "green", When: presetNotSelf},
+	{Name: "Approved by you", Filter: "approved !mine", Color: "green", When: presetNotSelf},
 	{Name: "Mergeable", Filter: presetTermMergeable, Color: "magenta"},
 	{Name: "Outdated", Filter: presetTermOutdated, Color: "yellow"},
 	{Name: "Blocked", Filter: presetTermBlocked, Color: "red"},

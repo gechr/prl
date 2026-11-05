@@ -202,7 +202,7 @@ Stacked PRs are grouped by default, with IDs such as `1a`, `1b`, and `1c` from t
 
 In the filter dialog (`Shift+O`), click a choice to select it, then press Enter to apply or Esc to cancel. Choices pinned by explicit command-line options remain locked.
 
-Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle through filter presets such as Needs approval and Mergeable, and `F` to step back. Click the preset name on the separator to open a menu centred above it, then click a preset to select it or `All PRs` to clear it. prl remembers the active preset, and `tui.presets.filters` sets your own. Click the time filter immediately right of the PR preset to filter by updated time, or cycle through its ranges with `t` (`T` steps back). It starts at All Time and offers 10 minutes, 1 hour, 1 day, 1 week, 1 month and 1 year. The controls read `┤ All PRs ▾ │ All Time ▾ ├─`, join the horizontal rule at both ends, highlight their labels and menu rows on hover, and use dim pink carets and dividers matching the separator line. The time filter combines with the status preset and is remembered between sessions. Press `Ctrl+X` to clear both presets together. The `?` help lists `f/F`, `t/T` and `Ctrl+X`. Its ranges use the same age colours as the created/updated columns.
+Approvals run in the background. In the diff view, `a` approves and moves straight to the next PR. An approved PR leaves the list as soon as it no longer matches the filters, for example with `--review=self-required`, and comes back if the approval fails. Otherwise it stays with a check mark. prl never approves a PR you have already approved. The diff view shows each PR's CI and review status, including whether you have approved it. Press `f` to cycle through filter presets such as Needs your review and Mergeable, and `F` to step back. Click the preset name on the separator to open a menu centred above it, then click a preset to select it or `All PRs` to clear it. prl remembers the active preset, and `tui.presets.filters` sets your own. Click the time filter immediately right of the PR preset to filter by updated time, or cycle through its ranges with `t` (`T` steps back). It starts at All Time and offers 10 minutes, 1 hour, 1 day, 1 week, 1 month and 1 year. The controls read `┤ All PRs ▾ │ All Time ▾ ├─`, join the horizontal rule at both ends, highlight their labels and menu rows on hover, and use dim pink carets and dividers matching the separator line. The time filter combines with the status preset and is remembered between sessions. Press `Ctrl+X` to clear both presets together. The `?` help lists `f/F`, `t/T` and `Ctrl+X`. Its ranges use the same age colours as the created/updated columns.
 
 Each review launches with its provider's default restrictions: `--sandbox read-only` for Codex, `--sandbox --mode plan` for Gemini through `agy`, `--permission-mode plan` for Claude. The review dialog's `YOLO` row drops those restrictions for one launch: `--dangerously-bypass-approvals-and-sandbox` for Codex, `--dangerously-skip-permissions` for Claude and Gemini (and no sandbox). The review agent can then run any command in the cloned checkout, with your credentials and without asking. `YOLO` defaults to `no` on every open and is never persisted, unlike provider, model and effort. The no-confirm review keybinding (`alt+r`) cannot opt in, so it always uses the defaults above.
 
@@ -330,7 +330,7 @@ tui:
   filters: {}
   presets:
     filters:
-      - name: Needs approval
+      - name: Needs your review
         filter: approvable
         when: "!scope:self"
         color: blue
@@ -400,9 +400,9 @@ authors:
     - `outdated`: open, not a draft, and behind a base branch that requires it to be up to date
     - `scope:self`: the search lists only your PRs, as with the default `authors: ["@me"]`; never with `--team`
     - `ci:<status>`, `review:<decision>`
-  - Defaults: Needs approval, Waiting for CI, Approved by me, Mergeable, Outdated and Blocked
+  - Defaults: Needs your review, Waiting for CI, Approved by you, Mergeable, Outdated and Blocked
     - Waiting for CI shows your PRs when you list only yours, and PRs you can approve once CI passes otherwise
-    - Needs approval and Approved by me are hidden when you list only your PRs
+    - Needs your review and Approved by you are hidden when you list only your PRs
 - `tui.presets.time.field`: timestamp to filter, `updated` (default) or `created`
 - `tui.presets.time.filters`: replaces the default time ranges with entries containing `name`, `max_age` and optional `color`. All Time is always available and is the initial selection. Durations use `gechr/x/human.ParseDuration`, supporting `10m`, `1h`, `1d`, `1w`, `30d`, `1y` and compounds such as `1w2d`. The default month is 30 days and year is 365 days. Filtering applies to the loaded results alongside other filters.
 - `tui.filters.time`: initial time range by name, before a saved session takes precedence

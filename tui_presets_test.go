@@ -40,13 +40,13 @@ func TestPresetMenuClickSelectsAndPersists(t *testing.T) {
 	failing.MergeStatus = MergeStatusCIFailed
 	m := approvalTestModel("", failing, approvalTestPR(2))
 	m.cfg = &Config{}
-	m.cli.preset = "Needs approval"
+	m.cli.preset = "Needs your review"
 	m.header = "Pull requests"
 	m.filterInput = textinput.New()
 	m.filterInput.Focus()
-	_, labelY := buttonAt(t, m.View().Content, "Needs approval")
+	_, labelY := buttonAt(t, m.View().Content, "Needs your review")
 
-	m, cmd := clickPresetText(t, m, "Needs approval")
+	m, cmd := clickPresetText(t, m, "Needs your review")
 	require.Nil(t, cmd)
 	require.True(t, m.presetMenu.open)
 	menu := m.View().Content
@@ -56,9 +56,9 @@ func TestPresetMenuClickSelectsAndPersists(t *testing.T) {
 	}
 	require.Equal(t, []string{
 		"All PRs",
-		"✓ Needs approval",
+		"✓ Needs your review",
 		"Waiting for CI",
-		"Approved by me",
+		"Approved by you",
 		"Mergeable",
 		"Outdated",
 		"Blocked",
@@ -179,9 +179,9 @@ func TestPresetMenuKeyboardAndResize(t *testing.T) {
 	require.False(t, m.presetMenu.open)
 	m, _ = clickPresetText(t, m, "Waiting for CI")
 	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
-	require.Equal(t, "Needs approval", m.cli.preset)
+	require.Equal(t, "Needs your review", m.cli.preset)
 	require.False(t, m.presetMenu.open)
-	m, _ = clickPresetText(t, m, "Needs approval")
+	m, _ = clickPresetText(t, m, "Needs your review")
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 3, Height: 3})
 	require.False(t, m.presetMenu.open)
 }
@@ -326,7 +326,7 @@ func TestPresetKeysKeepTheirMeaningInEitherMenu(t *testing.T) {
 			pr   string
 			time string
 		}{
-			{key: tuiKeybindCyclePreset, pr: "Needs approval"},
+			{key: tuiKeybindCyclePreset, pr: "Needs your review"},
 			{key: tuiKeybindCyclePresetBack, pr: "Blocked"},
 			{key: tuiKeybindCycleTimePreset, time: "10 minutes"},
 			{key: tuiKeybindCycleTimePresetBack, time: "1 year"},

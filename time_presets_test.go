@@ -75,8 +75,8 @@ func TestTimePresetCombinesWithStatusPreset(t *testing.T) {
 	m, _ = clickPresetText(t, m, "All Time")
 	m, _ = clickPresetText(t, m, "1 hour")
 	require.Equal(t, []int{0}, m.visibleIndices())
-	require.Equal(t, "Needs approval", m.cli.preset)
-	m, _ = clickPresetText(t, m, "Needs approval")
+	require.Equal(t, "Needs your review", m.cli.preset)
+	m, _ = clickPresetText(t, m, "Needs your review")
 	require.False(t, m.presetMenu.timeFilter)
 	m, _ = clickPresetText(t, m, "All PRs")
 	require.Equal(t, []int{0, 2}, m.visibleIndices(), "clearing status keeps the time filter")
@@ -201,9 +201,9 @@ func TestTimePresetColoursFollowTableTheme(t *testing.T) {
 func TestTimePresetHitboxesFollowLabels(t *testing.T) {
 	m := approvalTestModel("", approvalTestPR(1))
 	m.cfg = &Config{}
-	for _, width := range []int{21, 40, 80} {
+	for _, width := range []int{24, 40, 80} {
 		m.width = width
-		for _, preset := range []string{"", "Needs approval"} {
+		for _, preset := range []string{"", "Needs your review"} {
 			m.cli.preset = preset
 			line := ansi.Strip(m.renderListSeparator())
 			require.Equal(t, width, ansi.StringWidth(line))
@@ -230,13 +230,13 @@ func TestCycleTimePresets(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := approvalTestModel("", approvalTestPR(1))
 	m.cfg = &Config{}
-	m.cli.preset = "Needs approval"
+	m.cli.preset = "Needs your review"
 	for _, preset := range defaultTimePresets {
 		var cmd tea.Cmd
 		m, cmd = pressKey(t, m, tuiKeybindCycleTimePreset)
 		require.Nil(t, cmd)
 		require.Equal(t, preset.Name, m.cli.timePreset)
-		require.Equal(t, "Needs approval", m.cli.preset)
+		require.Equal(t, "Needs your review", m.cli.preset)
 	}
 	m, _ = pressKey(t, m, tuiKeybindCycleTimePreset)
 	require.Empty(t, m.cli.timePreset)
@@ -259,7 +259,7 @@ func TestClearFilterPresets(t *testing.T) {
 		pr.UpdatedAt = time.Now().Add(-2 * time.Hour)
 		m := approvalTestModel("", pr)
 		m.cfg = &Config{}
-		m.cli.preset, m.cli.timePreset = "Needs approval", "10 minutes"
+		m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
 		m.cfg.TUI.Filters.Preset, m.cfg.TUI.Filters.Time = m.cli.preset, m.cli.timePreset
 		m.cli.NoBot = true
 		require.Empty(t, m.visibleIndices())
@@ -286,14 +286,14 @@ func TestActiveTimePresetStaysVisibleInNarrowTerminal(t *testing.T) {
 	recent.UpdatedAt, stale.UpdatedAt = now, now.Add(-time.Hour)
 	m := approvalTestModel("", recent, stale)
 	m.cfg = &Config{}
-	m.cli.preset, m.cli.timePreset = "Needs approval", "10 minutes"
+	m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
 	m.width = 35
 	require.Equal(t, []int{0}, m.visibleIndices())
 	line := ansi.Strip(m.renderListSeparator())
-	require.Equal(t, "┤ Needs approv… ▾ │ 10 minutes ▾ ├─", line)
+	require.Equal(t, "┤ Needs your r… ▾ │ 10 minutes ▾ ├─", line)
 	prStart, prEnd := m.presetTagBounds()
 	timeStart, timeEnd := m.timeTagBounds()
-	require.Equal(t, "Needs approv… ▾", ansi.Cut(line, prStart, prEnd))
+	require.Equal(t, "Needs your r… ▾", ansi.Cut(line, prStart, prEnd))
 	require.Equal(t, "10 minutes ▾", ansi.Cut(line, timeStart, timeEnd))
 	m, _ = clickPresetText(t, m, "10 minutes")
 	require.True(t, m.presetMenu.timeFilter)

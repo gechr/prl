@@ -818,7 +818,7 @@ tui:
   # If omitted, prl uses these presets:
   # presets:
   #   filters:
-  #     - name: Needs approval
+  #     - name: Needs your review
   #       filter: approvable
   #       when: "!scope:self"
   #       color: blue
@@ -827,7 +827,7 @@ tui:
   #         scope:self !draft ci:pending OR
   #         !mine !draft !approved !review:approved ci:pending
   #       color: "208"
-  #     - name: Approved by me
+  #     - name: Approved by you
   #       filter: approved !mine
   #       when: "!scope:self"
   #       color: green

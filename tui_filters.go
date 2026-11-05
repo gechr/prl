@@ -48,7 +48,7 @@ func (m tuiModel) newFilterPicker() picker.Model {
 			Inactive:       lg.NewStyle().Faint(true),
 			Label:          m.styles.helpKey,
 			LockedInactive: styleDim.Faint(true),
-			LockedLabel:    lg.NewStyle().Faint(true),
+			LockedLabel:    m.styles.helpKey.Faint(true),
 			LockedSuffix:   "  (CLI)",
 			Selected:       styleTitle.Bold(true),
 		},
