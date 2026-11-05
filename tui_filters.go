@@ -21,11 +21,6 @@ func (m tuiModel) newFilterPicker() picker.Model {
 		rows[i] = picker.Row{Label: def.label, Choices: choiceLabels(m.filterChoices(filterRow(i)))}
 	}
 
-	locked := make([]bool, len(filterOptionDefs))
-	for i := range filterOptionDefs {
-		locked[i] = m.isFilterRowLocked(filterRow(i))
-	}
-
 	defaults := make([]int, len(filterOptionDefs))
 	for i := range filterOptionDefs {
 		defaults[i] = m.defaultFilterChoice(filterRow(i))
@@ -35,22 +30,19 @@ func (m tuiModel) newFilterPicker() picker.Model {
 		rows,
 		m.currentFilterValues(),
 		defaults,
-		locked,
+		make([]bool, len(filterOptionDefs)),
 		make([]bool, len(filterOptionDefs)),
 		picker.Styles{
-			Box:            m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX),
-			Cursor:         m.styles.cursor.Render("❯ "),
-			CursorLineBG:   cursorLineBG,
-			CursorPad:      "  ",
-			Default:        m.styles.defaultChoice,
-			HelpKey:        m.styles.helpKey,
-			HelpText:       m.styles.helpText,
-			Inactive:       lg.NewStyle().Faint(true),
-			Label:          m.styles.helpKey,
-			LockedInactive: styleDim.Faint(true),
-			LockedLabel:    m.styles.helpKey.Faint(true),
-			LockedSuffix:   "  (CLI)",
-			Selected:       styleTitle.Bold(true),
+			Box:          m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX),
+			Cursor:       m.styles.cursor.Render("❯ "),
+			CursorLineBG: cursorLineBG,
+			CursorPad:    "  ",
+			Default:      m.styles.defaultChoice,
+			HelpKey:      m.styles.helpKey,
+			HelpText:     m.styles.helpText,
+			Inactive:     lg.NewStyle().Faint(true),
+			Label:        m.styles.helpKey,
+			Selected:     styleTitle.Bold(true),
 		},
 	)
 	p.Hints = []picker.HelpHint{
@@ -334,25 +326,24 @@ func (m tuiModel) persistedFilterValue(row filterRow) any {
 	}
 }
 
-// isFilterRowLocked returns true if the given filter row was explicitly set on CLI.
-func (m tuiModel) isFilterRowLocked(row filterRow) bool {
+// releaseCLIFilter hands a row set on the command line over to the TUI, so
+// persistFilterState saves it from then on.
+func (m tuiModel) releaseCLIFilter(row filterRow) {
 	switch row {
 	case filterRowState:
-		return m.cli.stateExplicit
+		m.cli.stateExplicit = false
 	case filterRowDraft:
-		return m.cli.draftExplicit
+		m.cli.draftExplicit = false
 	case filterRowBots:
-		return m.cli.noBotExplicit
+		m.cli.noBotExplicit = false
 	case filterRowArchived:
-		return m.cli.archivedExplicit
+		m.cli.archivedExplicit = false
 	case filterRowCI:
-		return m.cli.ciExplicit
+		m.cli.ciExplicit = false
 	case filterRowReview:
-		return m.cli.reviewExplicit
+		m.cli.reviewExplicit = false
 	case filterRowStacks:
-		return false
 	}
-	return false
 }
 
 func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -416,7 +407,7 @@ func (m tuiModel) filterChoiceAt(x, y int) (int, int, bool) {
 
 func (m tuiModel) clickFilterChoice(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if msg.Button == tea.MouseLeft {
-		if row, choice, ok := m.filterChoiceAt(msg.X, msg.Y); ok && !m.optionsPicker.Locked[row] {
+		if row, choice, ok := m.filterChoiceAt(msg.X, msg.Y); ok {
 			m.optionsPicker.Cursor = row
 			m.optionsPicker.Values[row] = choice
 			m.optionsPicker.IsReset[row] = false
@@ -428,37 +419,29 @@ func (m tuiModel) clickFilterChoice(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) 
 func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	m.showOptions = false
 	oldFilters := m.currentFilterValues()
-	oldFilters[filterRowStacks] = 0
 	oldStacks := m.stacksEnabled()
 
-	// Map overlay values back to CLI fields, skipping CLI-explicit ones.
-	if !m.cli.stateExplicit {
-		m.applyFilterRow(filterRowState)
+	// Map overlay values back to CLI fields. A row changed here overrides its
+	// command-line flag and is saved like any other TUI choice.
+	for _, row := range []filterRow{
+		filterRowState, filterRowDraft, filterRowBots, filterRowArchived,
+		filterRowCI, filterRowReview, filterRowStacks,
+	} {
+		m.applyFilterRow(row)
 	}
-	if !m.cli.draftExplicit {
-		m.applyFilterRow(filterRowDraft)
-	}
-	if !m.cli.noBotExplicit {
-		m.applyFilterRow(filterRowBots)
-	}
-	if !m.cli.archivedExplicit {
-		m.applyFilterRow(filterRowArchived)
-	}
-	if !m.cli.ciExplicit {
-		m.applyFilterRow(filterRowCI)
-	}
-	if !m.cli.reviewExplicit {
-		m.applyFilterRow(filterRowReview)
+	newFilters := m.currentFilterValues()
+	for row := range newFilters {
+		if newFilters[row] != oldFilters[row] {
+			m.releaseCLIFilter(filterRow(row))
+		}
 	}
 
-	m.applyFilterRow(filterRowStacks)
 	if oldStacks != m.stacksEnabled() {
 		header, rows, widths := m.rerender()
 		m = m.reindexRows(m.rows, rows)
 		m.header, m.rows, m.colWidths = header, rows, widths
 	}
-	newFilters := m.currentFilterValues()
-	newFilters[filterRowStacks] = 0
+	oldFilters[filterRowStacks], newFilters[filterRowStacks] = 0, 0
 	// CI is filtered locally; only the other rows change what is fetched.
 	oldFilters[filterRowCI], newFilters[filterRowCI] = 0, 0
 	if slices.Equal(oldFilters, newFilters) {
@@ -611,9 +594,10 @@ func (m tuiModel) shows(df displayFilter, item PRRowModel) bool {
 }
 
 // persistFilterState mirrors the current non-explicit filter values into config
-// and writes a state snapshot to disk. CLI-explicit rows are session-only, so
-// they're left untouched, preserving the user's persisted choice. The stack
-// display setting is always persisted.
+// and writes a state snapshot to disk. Rows still set by a command-line flag
+// are session-only, so they're left untouched, preserving the user's persisted
+// choice until the overlay changes them. The stack display setting is always
+// persisted.
 func (m tuiModel) persistFilterState() {
 	f := &m.cfg.TUI.Filters
 	if !m.cli.stateExplicit {

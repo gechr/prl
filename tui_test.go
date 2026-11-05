@@ -2094,7 +2094,7 @@ func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
 	model, cmd := m.updateOptionsOverlay(
 		tea.KeyPressMsg{Code: 'O', Text: "O"},
 	)
-	// Every row is locked, so nothing changed and nothing is refetched.
+	// No row changed, so nothing is refetched.
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
@@ -2102,7 +2102,7 @@ func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
 	require.False(t, bm.refreshing)
 }
 
-func TestUpdateOptionsOverlayLockedRowsAreNoOps(t *testing.T) {
+func TestUpdateOptionsOverlayCLIRowsAreEditable(t *testing.T) {
 	cli := testCLI()
 	cli.stateExplicit = true
 	m := tuiModel{
@@ -2112,14 +2112,12 @@ func TestUpdateOptionsOverlayLockedRowsAreNoOps(t *testing.T) {
 	}
 	m.optionsPicker = m.newFilterPicker()
 
-	// Right on locked row 0 → no change
 	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'l', Text: "l"})
 	require.Nil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsPicker.Values[0])
+	require.Equal(t, 1, bm.optionsPicker.Values[0])
 
-	// Backspace on locked row → no change
 	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	require.Nil(t, cmd)
 	bm, ok = model.(tuiModel)
@@ -2127,7 +2125,32 @@ func TestUpdateOptionsOverlayLockedRowsAreNoOps(t *testing.T) {
 	require.Equal(t, 0, bm.optionsPicker.Values[0])
 }
 
-func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
+func TestApplyFilterOptionsSavesOnlyChangedCLIRows(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", "")
+
+	cli := testCLI()
+	cli.State, cli.stateExplicit = valueMerged, true
+	cli.Review, cli.reviewExplicit = valueReviewFilterApproved, true
+	m := tuiModel{
+		showOptions: true,
+		cli:         cli,
+		cfg:         &Config{},
+		styles:      newTuiStyles(),
+	}
+	m.optionsPicker = m.newFilterPicker()
+	m.optionsPicker.Values[filterRowState] = filterChoiceIndex(filterRowState, valueClosed)
+
+	model, _ := m.applyFilterOptions()
+	bm, ok := model.(tuiModel)
+	require.True(t, ok)
+	require.Equal(t, valueClosed, bm.cli.State)
+	require.Equal(t, valueReviewFilterApproved, bm.cli.Review)
+	require.Equal(t, valueClosed, bm.cfg.TUI.Filters.State)
+	require.Empty(t, bm.cfg.TUI.Filters.Review, "an unchanged flag stays session-only")
+}
+
+func TestRenderOptionsOverlayCLIRowMatchesOtherRows(t *testing.T) {
 	cli := testCLI()
 	cli.State = valueMerged
 	cli.stateExplicit = true
@@ -2148,7 +2171,7 @@ func TestRenderOptionsOverlayLockedSelectionUsesSelectedStyle(t *testing.T) {
 
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m    \x1b[2m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2;38;5;240mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2;38;5;240mready\x1b[m  \x1b[2;38;5;240mall\x1b[m\x1b[2m  (CLI)\x1b[m                \x1b[38;5;198m│\x1b[m",
+		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                       \x1b[38;5;198m│\x1b[m",
 		strings.Split(overlay, nl)[2],
 	)
 }

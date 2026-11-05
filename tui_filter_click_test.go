@@ -67,17 +67,20 @@ func TestOptionsOverlayClickSelectsEveryChoice(t *testing.T) {
 	}
 }
 
-func TestOptionsOverlayClickRespectsLockedRows(t *testing.T) {
+func TestOptionsOverlayClickChangesCLIRows(t *testing.T) {
 	m := filterClickTestModel()
 	m.cli.State, m.cli.stateExplicit = valueMerged, true
 	m.optionsPicker = m.newFilterPicker()
-	before := slices.Clone(m.optionsPicker.Values)
-	cursor := m.optionsPicker.Cursor
+	m.optionsPicker.Cursor = int(filterRowReview)
 	x, y := filterChoiceButton(t, m, filterRowState, valueClosed)
 	m, cmd := updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	require.Nil(t, cmd)
-	require.Equal(t, before, m.optionsPicker.Values)
-	require.Equal(t, cursor, m.optionsPicker.Cursor)
+	require.Equal(
+		t,
+		filterChoiceIndex(filterRowState, valueClosed),
+		m.optionsPicker.Values[filterRowState],
+	)
+	require.Equal(t, int(filterRowState), m.optionsPicker.Cursor)
 	require.True(t, m.showOptions)
 }
 
