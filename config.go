@@ -116,6 +116,7 @@ type TUIFiltersConfig struct {
 	Review   string `koanf:"review"   yaml:"review"`
 	// Preset is the name of the active preset from tui.presets.filters.
 	Preset string `koanf:"preset" yaml:"preset,omitempty"`
+	Time   string `koanf:"time"   yaml:"time,omitempty"`
 }
 
 type TUIReviewProviderConfig struct {
@@ -359,6 +360,9 @@ func loadConfig() (*Config, error) {
 		}
 	}
 	if err := validatePresets(cfg.TUI.Presets.Filters); err != nil {
+		return nil, err
+	}
+	if err := validateTimePresets(cfg.TUI.Presets.Time); err != nil {
 		return nil, err
 	}
 	if cfg.TUI.Filters.CI != "" {
@@ -814,7 +818,7 @@ tui:
   # If omitted, prl uses these presets:
   # presets:
   #   filters:
-  #     - name: Approvable
+  #     - name: Needs approval
   #       filter: approvable
   #       when: "!scope:self"
   #       color: blue
@@ -836,6 +840,29 @@ tui:
   #     - name: Blocked
   #       filter: blocked
   #       color: red
+
+  # Time filter immediately right of the PR preset (t/T cycles ranges). It starts
+  # at All Time and combines with the status preset. Override the timestamp field
+  # (updated or created) and replace the default ranges below. All Time is
+  # always available. max_age uses gechr/x/human.ParseDuration (1w, 1w2d, etc.).
+  # A month is 30 days, a year is 365 days. The selection is saved in state.
+  # presets:
+  #   time:
+  #     field: updated
+  #     filters:
+  #       - name: 10 minutes
+  #         max_age: 10m
+  #       - name: 1 hour
+  #         max_age: 1h
+  #       - name: 1 day
+  #         max_age: 1d
+  #       - name: 1 week
+  #         max_age: 1w
+  #       - name: 1 month
+  #         max_age: 30d
+  #       - name: 1 year
+  #         max_age: 1y
+  # Use tui.filters.time to seed a selection by name before state is saved.
 
   # Group stacked PRs into hierarchies. Shift+O changes this for later sessions.
   stacks:

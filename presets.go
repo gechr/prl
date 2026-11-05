@@ -14,7 +14,8 @@ import (
 // TUIPresetsConfig holds the TUI's presets.
 type TUIPresetsConfig struct {
 	// Filters are the named filters the f key cycles through.
-	Filters []TUIPresetConfig `koanf:"filters" yaml:"filters"`
+	Filters []TUIPresetConfig    `koanf:"filters" yaml:"filters"`
+	Time    TUITimePresetsConfig `koanf:"time"    yaml:"time"`
 }
 
 // TUIPresetConfig is a named filter that the TUI's f key cycles through.
@@ -33,7 +34,7 @@ type TUIPresetConfig struct {
 var defaultPresets = []TUIPresetConfig{
 	// Nobody can approve their own PRs, so these two can never match when the
 	// search lists only yours.
-	{Name: "Approvable", Filter: presetTermApprovable, Color: "blue", When: presetNotSelf},
+	{Name: "Needs approval", Filter: presetTermApprovable, Color: "blue", When: presetNotSelf},
 	{
 		Name:   "Waiting for CI",
 		Filter: "scope:self !draft ci:pending OR !mine !draft !approved !review:approved ci:pending",
@@ -392,6 +393,9 @@ func validatePresets(presets []TUIPresetConfig) error {
 	for i, preset := range presets {
 		if strings.TrimSpace(preset.Name) == "" {
 			return fmt.Errorf("tui.presets.filters[%d]: name is required", i)
+		}
+		if preset.Name == noPresetLabel {
+			return fmt.Errorf("tui.presets.filters: reserved name %q", preset.Name)
 		}
 		if seen[preset.Name] {
 			return fmt.Errorf("tui.presets.filters: duplicate name %q", preset.Name)

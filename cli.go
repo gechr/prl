@@ -139,8 +139,9 @@ type CLI struct {
 	sortExplicit     bool `kong:"-"`
 	stateExplicit    bool `kong:"-"`
 
-	// preset names the active TUI filter preset (tui.presets.filters).
-	preset string `kong:"-"`
+	// Names of the active status and time presets (tui.presets).
+	preset     string `kong:"-"`
+	timePreset string `kong:"-"`
 
 	prl *prl    `kong:"-"`
 	cfg *Config `kong:"-"`

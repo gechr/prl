@@ -150,6 +150,11 @@ func TestParsePresetFilterRejectsInvalid(t *testing.T) {
 
 func TestValidatePresets(t *testing.T) {
 	require.NoError(t, validatePresets(defaultPresets))
+	require.EqualError(
+		t,
+		validatePresets([]TUIPresetConfig{{Name: noPresetLabel, Filter: "ready"}}),
+		`tui.presets.filters: reserved name "All PRs"`,
+	)
 	require.NoError(t, validatePresets(nil))
 	require.EqualError(
 		t,

@@ -473,6 +473,7 @@ type tuiModel struct {
 	showOptions     bool
 	optionsPicker   picker.Model
 	presetMenu      presetMenuState
+	presetHover     presetHoverState
 	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
 	// the search filters just applied via the overlay, or because an approval
@@ -1015,21 +1016,29 @@ func (m *tuiModel) exitDiffView() tea.Cmd {
 // set up (or cleared) anywhere opens or closes before the next View.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
-	if tm, ok := model.(tuiModel); ok {
-		tm.syncConfirmDialog()
-		if tm.presetMenu.open {
-			if tm.canOpenPresetMenu() {
-				tm.movePresetMenu(0)
-			} else {
-				tm.presetMenu.open = false
-			}
-		}
-		return tm, cmd
+	tm, ok := model.(tuiModel)
+	if !ok {
+		return model, cmd
 	}
-	return model, cmd
+	tm.syncConfirmDialog()
+	if tm.presetMenu.open {
+		if tm.canKeepPresetMenuOpen() {
+			tm.movePresetMenu(0)
+		} else {
+			tm.presetMenu.open = false
+		}
+	}
+	if !tm.canOpenPresetMenu() || tm.presetMenu.open {
+		tm.presetHover = presetHoverState{}
+	}
+	return tm, cmd
 }
 
 func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case tea.KeyMsg, tea.WindowSizeMsg:
+		m.presetHover = presetHoverState{}
+	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
 		(keyMsg.String() == key.CtrlC || keyMsg.String() == key.CtrlD) &&
 		!m.filterInput.Focused() {
@@ -1061,8 +1070,15 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.touchInteraction()
+		if m.showOptions {
+			return m.clickFilterChoice(msg)
+		}
 		if m.presetMenu.open {
 			return m.updatePresetMenuClick(msg)
+		}
+		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.timeTagAt(msg.X, msg.Y) {
+			m.openFilterPresetMenu(true)
+			return m, nil
 		}
 		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.presetTagAt(msg.X, msg.Y) {
 			m.openPresetMenu()
@@ -1100,7 +1116,15 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMotionMsg:
-		m.touchInteraction()
+		if msg.Button != tea.MouseNone {
+			m.touchInteraction()
+		}
+		if m.canOpenPresetMenu() && !m.presetMenu.open {
+			m.presetHover = presetHoverState{
+				time: m.timeTagAt(msg.X, msg.Y),
+				pr:   m.presetTagAt(msg.X, msg.Y),
+			}
+		}
 		if m.presetMenu.open {
 			if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
 				m.presetMenu.cursor = idx
@@ -1715,6 +1739,15 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 		return m, nil
 
+	case tuiKeybindCycleTimePreset:
+		return m.cycleTimePreset(1)
+
+	case tuiKeybindCycleTimePresetBack:
+		return m.cycleTimePreset(-1)
+
+	case tuiKeybindClearPresets:
+		return m.clearFilterPresets()
+
 	case tuiKeybindCyclePreset:
 		return m.cyclePreset(1)
 
@@ -1941,7 +1974,7 @@ func (m tuiModel) viewList() tea.View {
 
 	v := tea.NewView(layout.ExpandTabs(b.String()))
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeAllMotion
 	m.applyRepaintMarker(&v)
 	return v
 }
@@ -2104,19 +2137,31 @@ func (m tuiModel) renderListSeparator(junctionCol ...int) string {
 }
 
 func (m tuiModel) renderTagSeparator(tags []string, col int) string {
-	filterTagStyle := styleFilterTag.Faint(true)
+	filterTagStyle := styleFilterTag.Faint(false)
 	filterTagKeyStyle := filterTagStyle.Bold(true)
+	prStart, prEnd := m.presetTagBounds()
 	// The active preset follows the option filters, in its own colour, set
-	// apart from them by a dot.
-	presetTag := m.styles.separator.Faint(false).Bold(true).Render(noPresetLabel)
+	// apart from them by a vertical rule.
+	presetTag := m.renderPresetControl(
+		noPresetLabel,
+		m.styles.separator.Faint(false),
+		m.presetHover.pr,
+		prEnd-prStart,
+	)
 	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
 		tags[0] == preset.Name {
 		style := filterTagKeyStyle
 		if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
 			style = lg.NewStyle().Foreground(c).Bold(true)
 		}
-		presetTag = style.Render(preset.Name)
+		presetTag = m.renderPresetControl(preset.Name, style, m.presetHover.pr, prEnd-prStart)
 		tags = tags[1:]
+	}
+	if timeTag := m.renderTimeTag(); timeTag != "" {
+		if presetTag != "" {
+			presetTag += m.styles.separator.Render(timePresetSeparator)
+		}
+		presetTag += timeTag
 	}
 	renderedTags := make([]string, 0, len(tags))
 	for _, tag := range tags {
@@ -2129,11 +2174,12 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 			renderedTags = append(renderedTags, filterTagKeyStyle.Render(tag))
 		}
 	}
-	options := strings.Join(renderedTags, " ")
-	suffixText := strings.Repeat("─", 2) //nolint:mnd // fixed suffix width
-	suffix := m.styles.separator.Render(" " + suffixText)
-	const indicatorPrefix = " "
-	available := m.width - lg.Width(indicatorPrefix) - lg.Width(suffix)
+	options := strings.Join(renderedTags, filterTagStyle.Faint(true).Render(dotSeparator))
+	if prStart == prEnd {
+		options = ""
+	}
+	suffix := m.styles.separator.Render(presetIndicatorSuffix)
+	available := m.width - lg.Width(presetIndicatorPrefix) - lg.Width(suffix)
 	if available <= 0 {
 		return xansi.Truncate(suffix, m.width, "")
 	}
@@ -2141,9 +2187,8 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	if lg.Width(indicator) > available {
 		indicator = xansi.Truncate(indicator, available, valueEllipsis)
 	}
-	pad := max(m.width-lg.Width(indicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
-	return m.styles.separator.Render(layout.Separator(pad, col)) +
-		indicatorPrefix +
+	pad := max(m.width-lg.Width(presetIndicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
+	return m.styles.separator.Render(layout.Separator(pad, col)+presetIndicatorPrefix) +
 		indicator +
 		suffix
 }
@@ -2154,7 +2199,7 @@ func (m tuiModel) joinPresetTag(options, presetTag string, width int) string {
 	if presetTag == "" {
 		return options
 	}
-	gap := m.styles.separator.Render(dotSeparator)
+	gap := m.styles.separator.Render(timePresetSeparator)
 	room := width - lg.Width(gap) - lg.Width(presetTag)
 	if options == "" || room <= 0 {
 		return presetTag
@@ -2542,7 +2587,7 @@ func (m tuiModel) plainBodyLines(body string) []string {
 
 // isRowHidden reports whether the row at idx is excluded from the list:
 // acted on (removed), hidden while a refresh catches up, or outside the CI
-// filter or active preset.
+// filter, active preset or time range.
 func (m tuiModel) isRowHidden(idx int) bool {
 	return m.rowHiddenBy(m.displayFilter(), idx)
 }
@@ -2981,6 +3026,11 @@ func (m tuiModel) renderHelpOverlay() string {
 		{Key: key.Tab, Desc: tuiDescCycleSortOrder},
 		{Key: tuiKeybindOptions, Desc: tuiDescOptions},
 		{Key: tuiKeybindCyclePreset + "/" + tuiKeybindCyclePresetBack, Desc: tuiDescCyclePreset},
+		{
+			Key:  tuiKeybindCycleTimePreset + "/" + tuiKeybindCycleTimePresetBack,
+			Desc: tuiDescCycleTimePreset,
+		},
+		{Key: tuiKeybindClearPresets, Desc: tuiDescClearPresets},
 		{Key: tuiKeybindToggleRefresh, Desc: tuiDescRefresh},
 		{Key: tuiKeybindHelp, Desc: tuiDescHelp},
 		{Key: tuiKeybindQuit, Desc: tuiDescQuit},

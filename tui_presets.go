@@ -7,15 +7,79 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/primer/key"
+	"github.com/gechr/primer/layout"
 	xansi "github.com/gechr/x/ansi"
 )
 
-const noPresetLabel = "All"
+const noPresetLabel = "All PRs"
+
+const presetControlSuffix = " ▾"
+
+const (
+	presetIndicatorPrefix = "┤ "
+	presetIndicatorSuffix = " ├─"
+)
+
+type presetHoverState struct {
+	time bool
+	pr   bool
+}
+
+func (m tuiModel) renderPresetControl(name string, style lg.Style, hovered bool, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	caretWidth := lg.Width(presetControlSuffix)
+	var rendered string
+	if width <= caretWidth {
+		rendered = style.Bold(true).Render(xansi.Truncate(name, width, valueEllipsis))
+	} else {
+		label := xansi.Truncate(name, width-caretWidth, valueEllipsis)
+		rendered = style.Bold(true).Render(label) + m.styles.separator.Render(presetControlSuffix)
+	}
+	if hovered {
+		return layout.PreserveBackgroundWidth(rendered, cursorLineBG, lg.Width(rendered))
+	}
+	return rendered
+}
 
 type presetMenuState struct {
-	open   bool
-	cursor int
-	offset int
+	open       bool
+	timeFilter bool
+	cursor     int
+	offset     int
+}
+
+// Both separator menus share navigation, scrolling, rendering and dismissal.
+func (m tuiModel) menuPresets() []TUIPresetConfig {
+	if !m.presetMenu.timeFilter {
+		return availablePresets(m.cfg, m.searchesSelf())
+	}
+	var presets []TUIPresetConfig
+	for _, preset := range configuredTimePresets(m.cfg) {
+		presets = append(presets, TUIPresetConfig{Name: preset.Name, Color: preset.Color})
+	}
+	return presets
+}
+
+func (m tuiModel) menuSelection() string {
+	if m.presetMenu.timeFilter {
+		if preset, ok := timePresetByName(m.cfg, m.cli.timePreset); ok {
+			return preset.Name
+		}
+		return ""
+	}
+	if preset, _, ok := m.activePreset(m.searchesSelf()); ok {
+		return preset.Name
+	}
+	return ""
+}
+
+func (m tuiModel) menuAllLabel() string {
+	if m.presetMenu.timeFilter {
+		return allTimeLabel
+	}
+	return noPresetLabel
 }
 
 type presetMenuLayout struct {
@@ -34,15 +98,49 @@ func (m tuiModel) listSeparatorY() int {
 	return y
 }
 
-// presetTagBounds mirrors the right-aligned preset and suffix in renderTagSeparator.
-func (m tuiModel) presetTagBounds() (int, int) {
-	name := noPresetLabel
-	if preset, _, ok := m.activePreset(m.searchesSelf()); ok {
-		name = preset.Name
+func (m tuiModel) presetTagLabel() string {
+	if m.cli != nil {
+		if preset, _, ok := m.activePreset(m.searchesSelf()); ok {
+			return preset.Name
+		}
 	}
-	const suffixWidth = 3 // space and two separator characters
-	end := m.width - suffixWidth
-	return max(1, end-lg.Width(name)), end
+	return noPresetLabel
+}
+
+// Keep an active time range visible before spending space on PR labels or
+// option tags. If only one control fits, the active time range takes priority.
+func (m tuiModel) presetControlWidths() (int, int) {
+	available := max(0, m.width-lg.Width(presetIndicatorPrefix)-lg.Width(presetIndicatorSuffix))
+	prWidth := min(available, lg.Width(m.presetTagLabel()+presetControlSuffix))
+	if m.cli == nil || available == 0 {
+		return prWidth, 0
+	}
+	timeWidth := lg.Width(m.timeTagLabel() + presetControlSuffix)
+	gapWidth := lg.Width(timePresetSeparator)
+	if prWidth+gapWidth+timeWidth <= available {
+		return prWidth, timeWidth
+	}
+	if _, active := timePresetByName(m.cfg, m.cli.timePreset); !active {
+		return prWidth, 0
+	}
+	room := available - timeWidth - gapWidth
+	if room >= lg.Width(valueEllipsis+presetControlSuffix) {
+		return min(prWidth, room), timeWidth
+	}
+	return 0, min(timeWidth, available)
+}
+
+// presetTagBounds mirrors the PR control's position in renderTagSeparator.
+func (m tuiModel) presetTagBounds() (int, int) {
+	prWidth, timeWidth := m.presetControlWidths()
+	if prWidth == 0 {
+		return 0, 0
+	}
+	end := m.width - lg.Width(presetIndicatorSuffix)
+	if timeWidth > 0 {
+		end -= timeWidth + lg.Width(timePresetSeparator)
+	}
+	return end - prWidth, end
 }
 
 func (m tuiModel) presetTagAt(x, y int) bool {
@@ -56,16 +154,35 @@ func (m tuiModel) canOpenPresetMenu() bool {
 		!m.detailLoading && !m.diffLoading && m.width >= 5 && m.listSeparatorY() >= 3
 }
 
+func (m tuiModel) canKeepPresetMenuOpen() bool {
+	if !m.canOpenPresetMenu() {
+		return false
+	}
+	start, end := m.presetTagBounds()
+	if m.presetMenu.timeFilter {
+		start, end = m.timeTagBounds()
+	}
+	return end > start
+}
+
 func (m *tuiModel) openPresetMenu() {
-	presets := availablePresets(m.cfg, m.searchesSelf())
-	idx := slices.IndexFunc(presets, func(p TUIPresetConfig) bool { return p.Name == m.cli.preset })
-	m.presetMenu = presetMenuState{open: true, cursor: idx + 1}
+	m.openFilterPresetMenu(false)
+}
+
+func (m *tuiModel) openFilterPresetMenu(timeFilter bool) {
+	m.presetMenu = presetMenuState{open: true, timeFilter: timeFilter}
+	presets := m.menuPresets()
+	idx := slices.IndexFunc(
+		presets,
+		func(p TUIPresetConfig) bool { return p.Name == m.menuSelection() },
+	)
+	m.presetMenu.cursor = idx + 1
 	m.movePresetMenu(0)
 }
 
 func (m tuiModel) presetMenuGeometry() presetMenuLayout {
-	presets := availablePresets(m.cfg, m.searchesSelf())
-	width := lg.Width(noPresetLabel)
+	presets := m.menuPresets()
+	width := lg.Width(m.menuAllLabel())
 	for _, preset := range presets {
 		width = max(width, lg.Width(preset.Name))
 	}
@@ -74,15 +191,19 @@ func (m tuiModel) presetMenuGeometry() presetMenuLayout {
 	const borders = 2
 	rows := min(len(presets)+1, max(0, m.listSeparatorY()-borders))
 	first := min(m.presetMenu.offset, len(presets)+1-rows)
-	start, _ := m.presetTagBounds()
+	start, end := m.presetTagBounds()
+	if m.presetMenu.timeFilter {
+		start, end = m.timeTagBounds()
+	}
+	x := (start + end - width) / 2 //nolint:mnd // midpoint centers the menu over its control
 	return presetMenuLayout{
-		x: max(0, min(start, m.width-width)), y: m.listSeparatorY() - rows - borders,
+		x: max(0, min(x, m.width-width)), y: m.listSeparatorY() - rows - borders,
 		width: width, first: first, rows: rows,
 	}
 }
 
 func (m *tuiModel) movePresetMenu(delta int) {
-	count := len(availablePresets(m.cfg, m.searchesSelf())) + 1
+	count := len(m.menuPresets()) + 1
 	m.presetMenu.cursor = max(0, min(m.presetMenu.cursor+delta, count-1))
 	l := m.presetMenuGeometry()
 	m.presetMenu.offset = max(0, min(l.first, m.presetMenu.cursor))
@@ -98,10 +219,13 @@ func (m tuiModel) presetMenuIndexAt(x, y int) (int, bool) {
 }
 
 func (m tuiModel) choosePresetMenuItem(idx int) (tea.Model, tea.Cmd) {
-	presets := availablePresets(m.cfg, m.searchesSelf())
+	presets := m.menuPresets()
 	name := ""
 	if idx > 0 && idx <= len(presets) {
 		name = presets[idx-1].Name
+	}
+	if m.presetMenu.timeFilter {
+		return m.selectTimePreset(name)
 	}
 	return m.selectPreset(name)
 }
@@ -131,9 +255,15 @@ func (m tuiModel) updatePresetMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Home:
 		m.movePresetMenu(-m.presetMenu.cursor)
 	case key.End:
-		m.movePresetMenu(len(availablePresets(m.cfg, m.searchesSelf())))
+		m.movePresetMenu(len(m.menuPresets()))
 	case key.Enter, key.Space:
 		return m.choosePresetMenuItem(m.presetMenu.cursor)
+	case tuiKeybindCycleTimePreset:
+		return m.cycleTimePreset(1)
+	case tuiKeybindCycleTimePresetBack:
+		return m.cycleTimePreset(-1)
+	case tuiKeybindClearPresets:
+		return m.clearFilterPresets()
 	case tuiKeybindCyclePreset:
 		return m.cyclePreset(1)
 	case tuiKeybindCyclePresetBack:
@@ -143,17 +273,14 @@ func (m tuiModel) updatePresetMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) viewPresetMenu(background string) string {
-	presets := availablePresets(m.cfg, m.searchesSelf())
-	activeName := ""
-	if preset, _, ok := m.activePreset(m.searchesSelf()); ok {
-		activeName = preset.Name
-	}
+	presets := m.menuPresets()
+	activeName := m.menuSelection()
 	l := m.presetMenuGeometry()
 	const frameWidth = 4 // borders and padding
 	innerWidth := max(0, l.width-frameWidth)
 	lines := make([]string, 0, l.rows)
 	for idx := l.first; idx < l.first+l.rows; idx++ {
-		name := noPresetLabel
+		name := m.menuAllLabel()
 		style := m.styles.separator.Faint(false)
 		active := activeName == ""
 		if idx > 0 {
@@ -161,7 +288,11 @@ func (m tuiModel) viewPresetMenu(background string) string {
 			name = preset.Name
 			active = preset.Name == activeName
 			style = m.styles.helpText
-			if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
+			if m.presetMenu.timeFilter {
+				if timePreset, ok := timePresetByName(m.cfg, preset.Name); ok {
+					style = m.timePresetStyle(timePreset)
+				}
+			} else if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
 				style = lg.NewStyle().Foreground(c)
 			}
 		}
@@ -171,11 +302,11 @@ func (m tuiModel) viewPresetMenu(background string) string {
 		}
 		line := xansi.Truncate(prefix+name, innerWidth, valueEllipsis)
 		line += strings.Repeat(" ", max(0, innerWidth-lg.Width(line)))
-		style = style.Bold(active)
+		line = style.Bold(active).Render(line)
 		if idx == m.presetMenu.cursor {
-			style = style.Background(lg.Color(cursorLineBG))
+			line = layout.PreserveBackgroundWidth(line, cursorLineBG, innerWidth)
 		}
-		lines = append(lines, style.Render(line))
+		lines = append(lines, line)
 	}
 	box := m.styles.overlayBox.Padding(0, 1).Render(strings.Join(lines, nl))
 	return lg.NewCompositor(

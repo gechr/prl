@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -15,6 +16,10 @@ import (
 func clickPresetText(t *testing.T, m tuiModel, label string) (tuiModel, tea.Cmd) {
 	t.Helper()
 	x, y := buttonAt(t, m.View().Content, label)
+	if label == noPresetLabel && !m.presetMenu.open {
+		x, _ = m.presetTagBounds()
+		y = m.listSeparatorY()
+	}
 	return updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 }
 
@@ -35,13 +40,13 @@ func TestPresetMenuClickSelectsAndPersists(t *testing.T) {
 	failing.MergeStatus = MergeStatusCIFailed
 	m := approvalTestModel("", failing, approvalTestPR(2))
 	m.cfg = &Config{}
-	m.cli.preset = "Approvable"
+	m.cli.preset = "Needs approval"
 	m.header = "Pull requests"
 	m.filterInput = textinput.New()
 	m.filterInput.Focus()
-	_, labelY := buttonAt(t, m.View().Content, "Approvable")
+	_, labelY := buttonAt(t, m.View().Content, "Needs approval")
 
-	m, cmd := clickPresetText(t, m, "Approvable")
+	m, cmd := clickPresetText(t, m, "Needs approval")
 	require.Nil(t, cmd)
 	require.True(t, m.presetMenu.open)
 	menu := m.View().Content
@@ -50,8 +55,8 @@ func TestPresetMenuClickSelectsAndPersists(t *testing.T) {
 		require.Less(t, y, labelY, "the menu opens above the label")
 	}
 	require.Equal(t, []string{
-		"All",
-		"✓ Approvable",
+		"All PRs",
+		"✓ Needs approval",
 		"Waiting for CI",
 		"Approved by me",
 		"Mergeable",
@@ -70,11 +75,11 @@ func TestPresetMenuClickSelectsAndPersists(t *testing.T) {
 	require.Equal(t, "Blocked", st.Filters.Preset)
 
 	m, _ = clickPresetText(t, m, "Blocked")
-	m, _ = clickPresetText(t, m, "All")
+	m, _ = clickPresetText(t, m, "All PRs")
 	require.Empty(t, m.cli.preset)
 	require.Empty(t, m.cfg.TUI.Filters.Preset)
 	require.Len(t, m.visibleIndices(), 2)
-	m, _ = clickPresetText(t, m, "All")
+	m, _ = clickPresetText(t, m, "All PRs")
 	require.True(t, m.presetMenu.open, "the menu can be reopened without a selected filter")
 }
 
@@ -108,9 +113,9 @@ func TestPresetMenuRespectsConfiguredAvailability(t *testing.T) {
 	m.cli.Author = &CSVFlag{Values: []string{valueAtMe}}
 	m.cli.preset = "Other authors"
 	m.width = 16
-	m, _ = clickPresetText(t, m, "All")
+	m, _ = clickPresetText(t, m, "All PRs")
 	content := ansi.Strip(m.View().Content)
-	require.Equal(t, []string{"✓ All", "\u5f85\u6a5f\u4e2d"}, renderedPresetMenuRows(m))
+	require.Equal(t, []string{"✓ All PRs", "\u5f85\u6a5f\u4e2d"}, renderedPresetMenuRows(m))
 	for line := range strings.SplitSeq(content, nl) {
 		require.LessOrEqual(t, ansi.StringWidth(line), m.width)
 	}
@@ -136,7 +141,7 @@ func TestPresetMenuScrollsInShortTerminal(t *testing.T) {
 	expected := make([]string, 0, len(before))
 	for i := range before {
 		if i == 0 {
-			expected = append(expected, "All")
+			expected = append(expected, "All PRs")
 			continue
 		}
 		prefix := ""
@@ -165,7 +170,7 @@ func TestPresetMenuKeyboardAndResize(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "")
 	m := approvalTestModel("", approvalTestPR(1))
 	m.cfg = &Config{}
-	m, _ = clickPresetText(t, m, "All")
+	m, _ = clickPresetText(t, m, "All PRs")
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
@@ -174,9 +179,9 @@ func TestPresetMenuKeyboardAndResize(t *testing.T) {
 	require.False(t, m.presetMenu.open)
 	m, _ = clickPresetText(t, m, "Waiting for CI")
 	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
-	require.Equal(t, "Approvable", m.cli.preset)
+	require.Equal(t, "Needs approval", m.cli.preset)
 	require.False(t, m.presetMenu.open)
-	m, _ = clickPresetText(t, m, "Approvable")
+	m, _ = clickPresetText(t, m, "Needs approval")
 	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 3, Height: 3})
 	require.False(t, m.presetMenu.open)
 }
@@ -186,7 +191,7 @@ func TestPresetMenuDoesNotOpenOverModal(t *testing.T) {
 		t.Run(modal, func(t *testing.T) {
 			m := approvalTestModel("", approvalTestPR(1))
 			m.cfg = &Config{}
-			x, y := buttonAt(t, m.View().Content, "All")
+			x, y := buttonAt(t, m.View().Content, "All PRs")
 			switch modal {
 			case "help":
 				m.showHelp = true
@@ -199,4 +204,169 @@ func TestPresetMenuDoesNotOpenOverModal(t *testing.T) {
 			require.False(t, m.presetMenu.open)
 		})
 	}
+}
+
+func TestPresetControlsHoverAndCaretClicks(t *testing.T) {
+	for _, timeFilter := range []bool{false, true} {
+		m := approvalTestModel("", approvalTestPR(1))
+		m.cfg = &Config{}
+		require.Equal(t, tea.MouseModeAllMotion, m.View().MouseMode)
+		base := m.renderListSeparator()
+		_, end := m.presetTagBounds()
+		if timeFilter {
+			_, end = m.timeTagBounds()
+		}
+		y := m.listSeparatorY()
+		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: end - 1, Y: y})
+		require.Equal(t, presetHoverState{time: timeFilter, pr: !timeFilter}, m.presetHover)
+		require.NotEqual(t, base, m.renderListSeparator())
+		require.Equal(t, ansi.Strip(base), ansi.Strip(m.renderListSeparator()))
+		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 0, Y: 0})
+		require.Equal(t, base, m.renderListSeparator())
+		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: end - 1, Y: y})
+		m, _ = updateModel(t, m, tea.MouseClickMsg{X: end - 1, Y: y, Button: tea.MouseLeft})
+		require.True(t, m.presetMenu.open, "the caret opens the dropdown")
+		require.Equal(t, timeFilter, m.presetMenu.timeFilter)
+		require.Equal(t, presetHoverState{}, m.presetHover)
+	}
+}
+
+func TestPresetMenuUnknownTimePresetChecksAllTime(t *testing.T) {
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	m.cli.timePreset = "Removed"
+	m.openFilterPresetMenu(true)
+	require.Equal(t, []string{
+		"✓ All Time", "10 minutes", "1 hour", "1 day", "1 week", "1 month", "1 year",
+	}, renderedPresetMenuRows(m))
+}
+
+func TestPresetHoverPreservesIdleRefreshTimer(t *testing.T) {
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	idleSince := time.Now().Add(-time.Hour)
+	m.lastInteraction = idleSince
+	start, _ := m.presetTagBounds()
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
+	require.True(t, m.presetHover.pr)
+	require.Equal(t, idleSince, m.lastInteraction, "hover alone keeps the idle timer")
+	m, _ = updateModel(
+		t,
+		m,
+		tea.MouseMotionMsg{X: start, Y: m.listSeparatorY(), Button: tea.MouseLeft},
+	)
+	require.True(t, m.lastInteraction.After(idleSince), "dragging is an interaction")
+}
+
+func TestPresetMenusCenterOverTheirControls(t *testing.T) {
+	for _, timeFilter := range []bool{false, true} {
+		m := approvalTestModel("", approvalTestPR(1))
+		m.cfg = &Config{}
+		if timeFilter {
+			m.cli.timePreset = "10 minutes"
+		}
+		m.openFilterPresetMenu(timeFilter)
+		start, end := m.presetTagBounds()
+		if timeFilter {
+			start, end = m.timeTagBounds()
+		}
+		menu := m.presetMenuGeometry()
+		require.InDelta(t, float64(start+end)/2, float64(menu.x)+float64(menu.width)/2, 0.5)
+		require.GreaterOrEqual(t, menu.x, 0)
+		require.LessOrEqual(t, menu.x+menu.width, m.width)
+	}
+}
+
+func TestPresetMenuCenteringClampsToTerminal(t *testing.T) {
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	// A long time label moves the PR control near the left edge.
+	name := strings.Repeat("t", 61)
+	m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{{Name: name, MaxAge: "1h"}}
+	m.cli.timePreset = name
+	m.openPresetMenu()
+	require.Equal(t, 0, m.presetMenuGeometry().x)
+	// A long menu entry extends past the right edge of a short time control.
+	m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{
+		{Name: strings.Repeat("t", 30), MaxAge: "1h"},
+	}
+	m.cli.timePreset = ""
+	m.openFilterPresetMenu(true)
+	menu := m.presetMenuGeometry()
+	require.Equal(t, m.width, menu.x+menu.width)
+}
+
+func TestPresetMenuHoverHighlightsWithoutSelecting(t *testing.T) {
+	for _, timeFilter := range []bool{false, true} {
+		m := approvalTestModel("", approvalTestPR(1))
+		m.cfg = &Config{}
+		m.openFilterPresetMenu(timeFilter)
+		before := m.View().Content
+		menu := m.presetMenuGeometry()
+		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: menu.x + 2, Y: menu.y + 2})
+		require.Equal(t, 1, m.presetMenu.cursor)
+		after := m.View().Content
+		require.NotEqual(t, before, after, "hover moves the row highlight")
+		require.Equal(
+			t,
+			ansi.Strip(before),
+			ansi.Strip(after),
+			"hover keeps labels and check marks",
+		)
+		require.Empty(t, m.cli.preset)
+		require.Empty(t, m.cli.timePreset)
+	}
+}
+
+func TestPresetKeysKeepTheirMeaningInEitherMenu(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	for _, timeMenu := range []bool{false, true} {
+		for _, tc := range []struct {
+			key  string
+			pr   string
+			time string
+		}{
+			{key: tuiKeybindCyclePreset, pr: "Needs approval"},
+			{key: tuiKeybindCyclePresetBack, pr: "Blocked"},
+			{key: tuiKeybindCycleTimePreset, time: "10 minutes"},
+			{key: tuiKeybindCycleTimePresetBack, time: "1 year"},
+		} {
+			m := approvalTestModel("", approvalTestPR(1))
+			m.cfg = &Config{}
+			m.openFilterPresetMenu(timeMenu)
+			m, cmd := pressKey(t, m, tc.key)
+			require.Nil(t, cmd)
+			require.Equal(t, tc.pr, m.cli.preset)
+			require.Equal(t, tc.time, m.cli.timePreset)
+			require.False(t, m.presetMenu.open)
+		}
+	}
+}
+
+func TestPresetHoverClearsOnKeysAndResize(t *testing.T) {
+	for _, timeControl := range []bool{false, true} {
+		for _, msg := range []tea.Msg{
+			tea.KeyPressMsg{Code: 'z', Text: "z"},
+			tea.WindowSizeMsg{Width: 120, Height: 30},
+		} {
+			m := approvalTestModel("", approvalTestPR(1))
+			m.cfg = &Config{}
+			start, _ := m.presetTagBounds()
+			if timeControl {
+				start, _ = m.timeTagBounds()
+			}
+			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
+			require.NotEqual(t, presetHoverState{}, m.presetHover)
+			m, _ = updateModel(t, m, msg)
+			require.Equal(t, presetHoverState{}, m.presetHover)
+		}
+	}
+}
+
+func TestTimeMenuClosesWhenItsControlDisappears(t *testing.T) {
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	m.openFilterPresetMenu(true)
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 21, Height: 20})
+	require.False(t, m.presetMenu.open)
 }

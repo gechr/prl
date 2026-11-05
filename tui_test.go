@@ -175,18 +175,28 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	if xos.IsDarwin() {
 		require.Equal(
 			t,
-			"│          d  View diff                         r  Launch AI review                 │",
-			lines[14],
-		)
-		require.Equal(
-			t,
-			"│          D  Toggle draft                  alt+r  Launch AI review (no confirm)    │",
+			"│          D  Toggle draft                      r  Launch AI review                 │",
 			lines[15],
 		)
 		require.Equal(
 			t,
-			"│    shift+↕  Extend selection              alt+c  Copy URL(s)                      │",
+			"│          m  Merge/Automerge PRs           alt+r  Launch AI review (no confirm)    │",
+			lines[16],
+		)
+		require.Equal(
+			t,
+			"│    shift+↕  Extend selection                  s  Send to Slack                    │",
 			lines[7],
+		)
+		require.Equal(
+			t,
+			"│          A  Approve/Merge PRs               t/T  Cycle time presets               │",
+			lines[12],
+		)
+		require.Equal(
+			t,
+			"│      alt+a  Approve PRs (no confirm)     ctrl+x  Clear all presets                │",
+			lines[13],
 		)
 	} else {
 		// Without WSL or Herdr, non-darwin has no launcher, which gates the review
@@ -495,7 +505,7 @@ func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
 	require.Equal(
 		t,
 		"\n\n\n\n\n\n\n\n"+
-			"────────────────────────────────────────────────────────── state:closed · All ──\n"+
+			"──────────────────────────────────────┤ state:closed │ All PRs ▾ │ All Time ▾ ├─\n"+
 			" enter show  space select  / filter  diff  comment  Close  open  alt+copy\n"+
 			"Refresh off  Options  ? help  quit",
 		out,

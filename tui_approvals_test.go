@@ -782,10 +782,10 @@ func TestCyclePreset(t *testing.T) {
 	m, cmd := pressKey(t, m, tuiKeybindCyclePreset)
 	require.Nil(t, cmd, "presets filter locally, without a refetch")
 	require.False(t, m.refreshing)
-	require.Equal(t, "Approvable", m.cli.preset)
-	require.Equal(t, "Approvable", m.cfg.TUI.Filters.Preset)
+	require.Equal(t, "Needs approval", m.cli.preset)
+	require.Equal(t, "Needs approval", m.cfg.TUI.Filters.Preset)
 	require.False(t, isShown(m, key), "failing CI is not approvable")
-	require.Equal(t, "Approvable", m.activeFilterTags()[0])
+	require.Equal(t, "Needs approval", m.activeFilterTags()[0])
 
 	var seen []string
 	for range defaultPresets {
@@ -808,7 +808,7 @@ func TestCyclePreset(t *testing.T) {
 	// An unknown active preset counts as "no preset".
 	m.cli.preset = "Removed from config"
 	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-	require.Equal(t, "Approvable", m.cli.preset)
+	require.Equal(t, "Needs approval", m.cli.preset)
 }
 
 func TestCyclePresetUsesConfiguredPresets(t *testing.T) {
@@ -869,22 +869,22 @@ func TestOverlayCIOnlyChangeAppliesWithoutRefetch(t *testing.T) {
 func TestTagSeparatorSetsPresetApart(t *testing.T) {
 	m := approvalTestModel("")
 	m.cfg = &Config{}
-	m.cli.preset = "Approvable"
+	m.cli.preset = "Needs approval"
 	m.cli.NoBot = true
 
 	line := ansi.Strip(m.renderTagSeparator(m.activeFilterTags(), -1))
 
 	require.Equal(
 		t,
-		" bots:hide · Approvable ──",
-		line[len(line)-len(" bots:hide · Approvable ──"):],
+		"┤ bots:hide │ Needs approval ▾ │ All Time ▾ ├─",
+		line[len(line)-len("┤ bots:hide │ Needs approval ▾ │ All Time ▾ ├─"):],
 	)
 
 	// Narrow: the option filters are shortened, the preset stays whole.
-	m.width = 22
+	m.width = 28
 	m.cli.State = valueMerged
 	line = ansi.Strip(m.renderTagSeparator(m.activeFilterTags(), -1))
-	require.Equal(t, " stat… · Approvable ──", line)
+	require.Equal(t, "┤ sta… │ Needs approval ▾ ├─", line)
 }
 
 func TestCyclePresetIsRestoredOnNextLaunch(t *testing.T) {
@@ -901,7 +901,7 @@ func TestCyclePresetIsRestoredOnNextLaunch(t *testing.T) {
 	applyTUIState(cfg, st)
 	cli := testCLI()
 	applyTUIFilterDefaults(cli, cfg)
-	require.Equal(t, "Approvable", cli.preset)
+	require.Equal(t, "Needs approval", cli.preset)
 }
 
 func TestDiffArrowKeysNavigateQueue(t *testing.T) {
@@ -924,7 +924,7 @@ func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {
 	m := approvalTestModel("", failing)
 	m.filterInput = textinput.New()
 	m.cfg = &Config{}
-	m.cli.preset = "Approvable"
+	m.cli.preset = "Needs approval"
 	require.Equal(t, "No pull requests match the current filter", emptyOverlayHeadline(m))
 
 	m.removed[makePRKey(failing)] = true
@@ -1056,18 +1056,18 @@ func TestCyclePresetSkipsUnavailablePresets(t *testing.T) {
 
 	// A saved preset the search rules out applies no filter and shows no tag,
 	// but stays saved for searches it suits.
-	m.cli.preset = "Approvable"
+	m.cli.preset = "Needs approval"
 	require.True(t, isShown(m, makePRKey(pr)))
-	require.NotContains(t, m.activeFilterTags(), "Approvable")
+	require.NotContains(t, m.activeFilterTags(), "Needs approval")
 	m.cli.Author = &CSVFlag{Values: []string{valueAll}}
-	require.Equal(t, "Approvable", m.activeFilterTags()[0])
+	require.Equal(t, "Needs approval", m.activeFilterTags()[0])
 }
 
 func TestUnavailablePresetSurvivesStateSaveAndReturns(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", "")
 	saved := &Config{}
-	saved.TUI.Filters.Preset = "Approvable"
+	saved.TUI.Filters.Preset = "Needs approval"
 	require.NoError(t, saveTUIState(saved))
 
 	st, err := loadTUIState()
@@ -1077,7 +1077,7 @@ func TestUnavailablePresetSurvivesStateSaveAndReturns(t *testing.T) {
 	cli := testCLI()
 	cli.Author = &CSVFlag{Values: []string{valueAtMe}}
 	applyTUIFilterDefaults(cli, cfg)
-	require.Equal(t, "Approvable", cli.preset)
+	require.Equal(t, "Needs approval", cli.preset)
 
 	failing := approvalTestPR(1)
 	failing.MergeStatus = MergeStatusCIFailed
@@ -1092,7 +1092,7 @@ func TestUnavailablePresetSurvivesStateSaveAndReturns(t *testing.T) {
 	m.persistFilterState()
 	st, err = loadTUIState()
 	require.NoError(t, err)
-	require.Equal(t, "Approvable", st.Filters.Preset, "unrelated saves keep the preset")
+	require.Equal(t, "Needs approval", st.Filters.Preset, "unrelated saves keep the preset")
 
 	m.cli.Author = &CSVFlag{Values: []string{valueAll}}
 	require.False(t, isShown(m, key), "the preset filters again once available")
@@ -1104,7 +1104,7 @@ func TestCyclePresetBackFromUnavailablePreset(t *testing.T) {
 	m := approvalTestModel("", approvalTestPR(1))
 	m.cfg = &Config{}
 	m.cli.Author = &CSVFlag{Values: []string{valueAtMe}}
-	m.cli.preset = "Approvable"
+	m.cli.preset = "Needs approval"
 
 	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
 	require.Equal(t, "Blocked", m.cli.preset)

@@ -3,10 +3,13 @@ package main
 import (
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
+	"github.com/gechr/primer/overlay"
 	"github.com/gechr/primer/picker"
 	xslices "github.com/gechr/x/slices"
 )
@@ -375,6 +378,53 @@ func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// filterChoiceAt reads choice positions from the rendered picker so mouse
+// targets follow its padding, labels and any extra CI choice.
+func (m tuiModel) filterChoiceAt(x, y int) (int, int, bool) {
+	if x < 0 || x >= m.width || y < 0 || y >= m.height {
+		return 0, 0, false
+	}
+	view := m.renderOptionsOverlay()
+	originX, originY := overlay.Origin(view, m.width, m.height, overlay.Center)
+	lines := strings.Split(ansi.Strip(view), nl)
+	lineIndex := y - originY
+	if lineIndex < 0 || lineIndex >= len(lines) {
+		return 0, 0, false
+	}
+	line := lines[lineIndex]
+	for rowIndex, row := range m.optionsPicker.Rows {
+		before, remaining, found := strings.Cut(line, row.Label)
+		if !found {
+			continue
+		}
+		offset := lg.Width(before + row.Label)
+		for choiceIndex, choice := range row.Choices {
+			gap, after, ok := strings.Cut(remaining, choice)
+			if !ok {
+				break
+			}
+			start := originX + offset + lg.Width(gap)
+			if x >= start && x < start+lg.Width(choice) {
+				return rowIndex, choiceIndex, true
+			}
+			offset += lg.Width(gap + choice)
+			remaining = after
+		}
+	}
+	return 0, 0, false
+}
+
+func (m tuiModel) clickFilterChoice(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if msg.Button == tea.MouseLeft {
+		if row, choice, ok := m.filterChoiceAt(msg.X, msg.Y); ok && !m.optionsPicker.Locked[row] {
+			m.optionsPicker.Cursor = row
+			m.optionsPicker.Values[row] = choice
+			m.optionsPicker.IsReset[row] = false
+		}
+	}
+	return m, nil
+}
+
 func (m tuiModel) applyFilterOptions() (tea.Model, tea.Cmd) {
 	m.showOptions = false
 	oldFilters := m.currentFilterValues()
@@ -474,11 +524,13 @@ func (m tuiModel) selectPreset(name string) (tea.Model, tea.Cmd) {
 }
 
 // displayFilter holds the filters applied whenever rows are shown - the CI
-// filter and the active preset - parsed once per pass over the rows.
+// filter, active preset and time range - parsed once per pass over the rows.
 type displayFilter struct {
 	ci        CIFilter
 	preset    presetFilter
 	selfScope bool
+	cutoff    time.Time
+	timeField string
 }
 
 func (m tuiModel) displayFilter() displayFilter {
@@ -487,7 +539,14 @@ func (m tuiModel) displayFilter() displayFilter {
 	}
 	selfScope := m.searchesSelf()
 	_, filter, _ := m.activePreset(selfScope)
-	return displayFilter{ci: m.cli.CIFilter(), preset: filter, selfScope: selfScope}
+	df := displayFilter{ci: m.cli.CIFilter(), preset: filter, selfScope: selfScope}
+	if preset, ok := timePresetByName(m.cfg, m.cli.timePreset); ok {
+		if age, err := parseTimePresetAge(preset.MaxAge); err == nil {
+			df.cutoff = time.Now().Add(-age)
+			df.timeField = configuredTimeField(m.cfg)
+		}
+	}
+	return df
 }
 
 // activePreset returns the active preset and its parsed filter when the search
@@ -533,6 +592,15 @@ func (m tuiModel) searchesSelf() bool {
 // shows reports whether a row passes the display filters.
 func (m tuiModel) shows(df displayFilter, item PRRowModel) bool {
 	pr := item.PR
+	if !df.cutoff.IsZero() {
+		stamp := pr.UpdatedAt
+		if df.timeField == valueCreated {
+			stamp = pr.CreatedAt
+		}
+		if stamp.Before(df.cutoff) {
+			return false
+		}
+	}
 	if df.ci.Active() && !df.ci.Matches(pr) {
 		return false
 	}
@@ -686,6 +754,9 @@ func applyTUIFilterDefaults(cli *CLI, cfg *Config) bool {
 	// Presets filter locally, so restoring one needs no new search.
 	if _, ok := presetFilterByName(cfg, f.Preset); ok {
 		cli.preset = f.Preset
+	}
+	if _, ok := timePresetByName(cfg, f.Time); ok {
+		cli.timePreset = f.Time
 	}
 	return changed
 }
