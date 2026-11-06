@@ -689,6 +689,19 @@ func TestDeriveMergeReason_ChangesRequested(t *testing.T) {
 	require.Equal(t, valueNeedsReview, deriveMergeReason(awaiting))
 }
 
+func TestRenderMergeStatus_Draft(t *testing.T) {
+	for _, ms := range []MergeStatus{MergeStatusReady, MergeStatusBlocked} {
+		draft := PullRequest{State: valueOpen, MergeStatus: ms, IsDraft: true}
+		require.Equal(t, valueDraft, testPRL.renderMergeStatus(draft))
+	}
+
+	ready := PullRequest{State: valueOpen, MergeStatus: MergeStatusReady, IsDraft: true}
+	require.Equal(t, valueReadyToMerge, deriveMergeReason(ready))
+
+	nonDraft := PullRequest{State: valueOpen, MergeStatus: MergeStatusReady}
+	require.Equal(t, valueReady, testPRL.renderMergeStatus(nonDraft))
+}
+
 func TestRender_URLColumn(t *testing.T) {
 	models := testModels("")[:1]
 	defs := testPRL.allColumnDefs(tableLayout{})

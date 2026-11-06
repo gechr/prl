@@ -353,6 +353,9 @@ func (p *prl) renderMergeStatus(pr PullRequest) string {
 	if state != valueOpen {
 		return valueUnknown
 	}
+	if pr.IsDraft {
+		return valueDraft
+	}
 	switch pr.MergeStatus {
 	case MergeStatusReady:
 		return valueReady
