@@ -2152,8 +2152,8 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	filterTagStyle := styleFilterTag.Faint(false)
 	filterTagKeyStyle := filterTagStyle.Bold(true)
 	prStart, prEnd := m.presetTagBounds()
-	// The active preset follows the option filters, in its own colour, set
-	// apart from them by a vertical rule.
+	// The PR preset stays at the far right, after the time control, in its
+	// own colour and set apart by a vertical rule.
 	presetTag := m.renderPresetControl(
 		noPresetLabel,
 		m.styles.separator.Faint(false),
@@ -2171,9 +2171,9 @@ func (m tuiModel) renderTagSeparator(tags []string, col int) string {
 	}
 	if timeTag := m.renderTimeTag(); timeTag != "" {
 		if presetTag != "" {
-			presetTag += m.styles.separator.Render(timePresetSeparator)
+			timeTag += m.styles.separator.Render(timePresetSeparator)
 		}
-		presetTag += timeTag
+		presetTag = timeTag + presetTag
 	}
 	renderedTags := make([]string, 0, len(tags))
 	for _, tag := range tags {

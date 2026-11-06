@@ -25,7 +25,7 @@ func TestTimePresetMenuFiltersUpdatedAndPersists(t *testing.T) {
 	m.cfg = &Config{}
 	m.cli.NoBot = false
 	line := ansi.Strip(m.renderListSeparator())
-	require.Equal(t, strings.Repeat("─", 53)+"┤ All PRs ▾ │ All Time ▾ ├─", line)
+	require.Equal(t, strings.Repeat("─", 53)+"┤ All Time ▾ │ All PRs ▾ ├─", line)
 	require.Len(t, m.visibleIndices(), 2)
 	m, _ = clickPresetText(t, m, "All Time")
 	require.True(t, m.presetMenu.open)
@@ -33,8 +33,8 @@ func TestTimePresetMenuFiltersUpdatedAndPersists(t *testing.T) {
 	start, end := m.timeTagBounds()
 	menu := m.presetMenuGeometry()
 	require.InDelta(t, float64(start+end)/2, float64(menu.x)+float64(menu.width)/2, 0.5)
-	_, prEnd := m.presetTagBounds()
-	require.Equal(t, " │ ", ansi.Cut(line, prEnd, start))
+	prStart, _ := m.presetTagBounds()
+	require.Equal(t, " │ ", ansi.Cut(line, end, prStart))
 	require.Equal(t, []string{
 		"✓ All Time", "10 minutes", "1 hour", "1 day", "1 week", "1 month", "1 year",
 	}, renderedPresetMenuRows(m))
@@ -44,7 +44,7 @@ func TestTimePresetMenuFiltersUpdatedAndPersists(t *testing.T) {
 	require.Equal(t, []int{0}, m.visibleIndices(), "updated time determines visibility")
 	require.Equal(
 		t,
-		strings.Repeat("─", 51)+"┤ All PRs ▾ │ 10 minutes ▾ ├─",
+		strings.Repeat("─", 51)+"┤ 10 minutes ▾ │ All PRs ▾ ├─",
 		ansi.Strip(m.renderListSeparator()),
 	)
 	st, err := loadTUIState()
@@ -211,7 +211,7 @@ func TestTimePresetHitboxesFollowLabels(t *testing.T) {
 			prStart, prEnd := m.presetTagBounds()
 			if start != end {
 				require.Equal(t, allTimeLabel+presetControlSuffix, ansi.Cut(line, start, end))
-				require.Equal(t, timePresetSeparator, ansi.Cut(line, prEnd, start))
+				require.Equal(t, timePresetSeparator, ansi.Cut(line, end, prStart))
 				require.True(t, m.timeTagAt(start, m.listSeparatorY()))
 				require.False(t, m.presetTagAt(start, m.listSeparatorY()))
 			}
@@ -287,37 +287,103 @@ func TestActiveTimePresetStaysVisibleInNarrowTerminal(t *testing.T) {
 	m := approvalTestModel("", recent, stale)
 	m.cfg = &Config{}
 	m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
-	m.width = 35
-	require.Equal(t, []int{0}, m.visibleIndices())
-	line := ansi.Strip(m.renderListSeparator())
-	require.Equal(t, "┤ Needs your r… ▾ │ 10 minutes ▾ ├─", line)
-	prStart, prEnd := m.presetTagBounds()
-	timeStart, timeEnd := m.timeTagBounds()
-	require.Equal(t, "Needs your r… ▾", ansi.Cut(line, prStart, prEnd))
-	require.Equal(t, "10 minutes ▾", ansi.Cut(line, timeStart, timeEnd))
-	m, _ = clickPresetText(t, m, "10 minutes")
-	require.True(t, m.presetMenu.timeFilter)
-	require.True(t, m.presetMenu.open)
-	// If both controls cannot fit, keep the active time filter visible alone.
 	for _, tc := range []struct {
-		width int
-		line  string
-		label string
+		width     int
+		line      string
+		prLabel   string
+		timeLabel string
 	}{
-		{6, "┤ … ├─", "…"},
-		{7, "┤ 1… ├─", "1…"},
-		{20, "───┤ 10 minutes ▾ ├─", "10 minutes ▾"},
-		{21, "────┤ 10 minutes ▾ ├─", "10 minutes ▾"},
-		{22, "─────┤ 10 minutes ▾ ├─", "10 minutes ▾"},
+		{39, "┤ 10 minutes ▾ │ Needs your review ▾ ├─", "Needs your review ▾", "10 minutes ▾"},
+		{35, "───┤ 10m ▾ │ Needs your review ▾ ├─", "Needs your review ▾", "10m ▾"},
+		{32, "┤ 10m ▾ │ Needs your review ▾ ├─", "Needs your review ▾", "10m ▾"},
+		{20, "┤ 10m ▾ │ Need… ▾ ├─", "Need… ▾", "10m ▾"},
+		{16, "┤ 10m ▾ │ … ▾ ├─", "… ▾", "10m ▾"},
+		{15, "─────┤ 10m ▾ ├─", "", "10m ▾"},
+		{10, "┤ 10m ▾ ├─", "", "10m ▾"},
+		{7, "┤ 1… ├─", "", "1…"},
+		{6, "┤ … ├─", "", "…"},
 	} {
 		m.width = tc.width
-		line = ansi.Strip(m.renderListSeparator())
-		require.Equal(t, tc.line, line)
-		prStart, prEnd = m.presetTagBounds()
-		require.Equal(t, 0, prStart)
-		require.Equal(t, 0, prEnd)
-		timeStart, timeEnd = m.timeTagBounds()
-		require.Equal(t, tc.label, ansi.Cut(line, timeStart, timeEnd))
+		line := ansi.Strip(m.renderListSeparator())
+		require.Equal(t, tc.line, line, "width=%d", tc.width)
+		prStart, prEnd := m.presetTagBounds()
+		timeStart, timeEnd := m.timeTagBounds()
+		require.Equal(t, tc.prLabel, ansi.Cut(line, prStart, prEnd))
+		require.Equal(t, tc.timeLabel, ansi.Cut(line, timeStart, timeEnd))
 		require.Equal(t, []int{0}, m.visibleIndices())
+
+		m, _ = updateModel(t, m, tea.MouseClickMsg{
+			X: timeStart, Y: m.listSeparatorY(), Button: tea.MouseLeft,
+		})
+		require.True(t, m.presetMenu.open)
+		require.True(t, m.presetMenu.timeFilter)
+		require.Equal(t, "10 minutes", m.menuSelection())
+		m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	}
+}
+
+func TestTimePresetLabelsCompressBeforePRLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name, compact string
+	}{
+		{"10 seconds", "10s"},
+		{"10 minutes", "10m"},
+		{"2 hours", "2h"},
+		{"2 days", "2d"},
+		{"2 weeks", "2w"},
+		{"2 months", "2mo"},
+		{"2 years", "2y"},
+		{"1 hour", "1h"},
+		{"1 day", "1d"},
+		{"1 week", "1w"},
+		{"1 month", "1mo"},
+		{"1 year", "1y"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := approvalTestModel("", approvalTestPR(1))
+			m.cfg = &Config{}
+			m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{
+				{Name: tc.name, MaxAge: "1h"},
+			}
+			m.cli.preset, m.cli.timePreset = "Needs your review", tc.name
+			m.cli.NoBot = false
+			fullWidth := ansi.StringWidth("┤ " + tc.name + " ▾ │ Needs your review ▾ ├─")
+			compactWidth := ansi.StringWidth("┤ " + tc.compact + " ▾ │ Needs your review ▾ ├─")
+			for _, width := range []int{fullWidth, fullWidth - 1, compactWidth} {
+				label := tc.compact
+				if width == fullWidth {
+					label = tc.name
+				}
+				expected := "┤ " + label + " ▾ │ Needs your review ▾ ├─"
+				expected = strings.Repeat("─", width-ansi.StringWidth(expected)) + expected
+				m.width = width
+				line := ansi.Strip(m.renderListSeparator())
+				require.Equal(t, expected, line)
+				start, end := m.timeTagBounds()
+				require.Equal(t, label+presetControlSuffix, ansi.Cut(line, start, end))
+				require.True(t, m.timeTagAt(start, m.listSeparatorY()))
+				require.False(t, m.presetTagAt(start, m.listSeparatorY()))
+			}
+			m, _ = clickPresetText(t, m, tc.compact)
+			require.True(t, m.presetMenu.timeFilter)
+			require.Contains(t, renderedPresetMenuRows(m), "✓ "+tc.name)
+			require.Equal(t, tc.name, m.cli.timePreset)
+		})
+	}
+}
+
+func TestCustomTimePresetLabelKeepsItsName(t *testing.T) {
+	m := approvalTestModel("", approvalTestPR(1))
+	m.cfg = &Config{}
+	m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{
+		{Name: "Last 10 minutes", MaxAge: "10m"},
+	}
+	m.cli.preset, m.cli.timePreset = "Needs your review", "Last 10 minutes"
+	m.width = 35
+	line := ansi.Strip(m.renderListSeparator())
+	start, end := m.timeTagBounds()
+	require.Equal(t, "Last 10 minutes ▾", ansi.Cut(line, start, end))
+	m, _ = clickPresetText(t, m, "Last 10 minutes")
+	require.True(t, m.presetMenu.timeFilter)
+	require.Contains(t, renderedPresetMenuRows(m), "✓ Last 10 minutes")
 }

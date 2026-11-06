@@ -114,16 +114,16 @@ func (m tuiModel) presetTagLabel() string {
 	return noPresetLabel
 }
 
-// Keep an active time range visible before spending space on PR labels or
-// option tags. If only one control fits, the active time range takes priority.
+// Shorten duration labels before truncating PR labels or hiding controls.
+// If only one control fits, the active time range takes priority.
 func (m tuiModel) presetControlWidths() (int, int) {
 	available := max(0, m.width-lg.Width(presetIndicatorPrefix)-lg.Width(presetIndicatorSuffix))
 	prWidth := min(available, lg.Width(m.presetTagLabel()+presetControlSuffix))
 	if m.cli == nil || available == 0 {
 		return prWidth, 0
 	}
-	timeWidth := lg.Width(m.timeTagLabel() + presetControlSuffix)
 	gapWidth := lg.Width(timePresetSeparator)
+	timeWidth := lg.Width(m.timeControlLabel(available-prWidth-gapWidth) + presetControlSuffix)
 	if prWidth+gapWidth+timeWidth <= available {
 		return prWidth, timeWidth
 	}
@@ -139,14 +139,11 @@ func (m tuiModel) presetControlWidths() (int, int) {
 
 // presetTagBounds mirrors the PR control's position in renderTagSeparator.
 func (m tuiModel) presetTagBounds() (int, int) {
-	prWidth, timeWidth := m.presetControlWidths()
+	prWidth, _ := m.presetControlWidths()
 	if prWidth == 0 {
 		return 0, 0
 	}
 	end := m.width - lg.Width(presetIndicatorSuffix)
-	if timeWidth > 0 {
-		end -= timeWidth + lg.Width(timePresetSeparator)
-	}
 	return end - prWidth, end
 }
 
@@ -155,7 +152,7 @@ func (m tuiModel) presetTagAt(x, y int) bool {
 	return y == m.listSeparatorY() && x >= start && x < end
 }
 
-// filterOptionTags returns the option filter tags shown before the PR control.
+// filterOptionTags returns the option filter tags shown before the preset controls.
 func (m tuiModel) filterOptionTags() []string {
 	tags := m.activeFilterTags()
 	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
@@ -166,14 +163,18 @@ func (m tuiModel) filterOptionTags() []string {
 }
 
 // filterTagsBounds mirrors the option tags' position in renderTagSeparator:
-// one gap before the PR control, truncated at the separator prefix.
+// one gap before the preset controls, truncated at the separator prefix.
 func (m tuiModel) filterTagsBounds() (int, int) {
 	prStart, prEnd := m.presetTagBounds()
 	tags := m.filterOptionTags()
 	if prStart == prEnd || len(tags) == 0 {
 		return 0, 0
 	}
-	end := prStart - lg.Width(timePresetSeparator)
+	controlsStart := prStart
+	if timeStart, timeEnd := m.timeTagBounds(); timeStart < timeEnd {
+		controlsStart = timeStart
+	}
+	end := controlsStart - lg.Width(timePresetSeparator)
 	start := max(
 		end-lg.Width(strings.Join(tags, dotSeparator)),
 		lg.Width(presetIndicatorPrefix),

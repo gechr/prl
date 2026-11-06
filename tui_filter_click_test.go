@@ -149,7 +149,7 @@ func TestOptionTagsUseDotDividers(t *testing.T) {
 	m := filterClickTestModel()
 	m.cli.NoBot = false
 	m.cli.CI, m.cli.Review = ciStatusFailure, valueReviewFilterRequired
-	text := "┤ ci:fail · review:required │ All PRs ▾ │ All Time ▾ ├─"
+	text := "┤ ci:fail · review:required │ All Time ▾ │ All PRs ▾ ├─"
 	expected := strings.Repeat("─", m.width-ansi.StringWidth(text)) + text
 	require.Equal(t, expected, ansi.Strip(m.renderListSeparator()))
 }

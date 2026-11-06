@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,13 +110,53 @@ func (m tuiModel) timeTagLabel() string {
 	return name
 }
 
-// timeTagBounds anchors the time control after the PR preset.
+// timeControlLabel shortens duration labels before the PR control loses space.
+// Custom preset names retain their configured wording.
+func (m tuiModel) timeControlLabel(width int) string {
+	name := m.timeTagLabel()
+	width -= lg.Width(presetControlSuffix)
+	if lg.Width(name) <= width {
+		return name
+	}
+	amount, unit, ok := strings.Cut(name, " ")
+	if !ok {
+		return name
+	}
+	if _, err := strconv.ParseUint(amount, 10, 64); err != nil {
+		return name
+	}
+	var compact string
+	switch strings.TrimSuffix(unit, "s") {
+	case unitSecond:
+		compact = "s"
+	case unitMinute:
+		compact = "m"
+	case unitHour:
+		compact = "h"
+	case unitDay:
+		compact = "d"
+	case unitWeek:
+		compact = "w"
+	case unitMonth:
+		compact = "mo"
+	case unitYear:
+		compact = "y"
+	default:
+		return name
+	}
+	return amount + compact
+}
+
+// timeTagBounds anchors the time control before the PR preset.
 func (m tuiModel) timeTagBounds() (int, int) {
-	_, width := m.presetControlWidths()
+	prWidth, width := m.presetControlWidths()
 	if width == 0 {
 		return 0, 0
 	}
 	end := m.width - lg.Width(presetIndicatorSuffix)
+	if prWidth > 0 {
+		end -= prWidth + lg.Width(timePresetSeparator)
+	}
 	return end - width, end
 }
 
@@ -154,7 +195,7 @@ func (m tuiModel) renderTimeTag() string {
 	if preset, ok := timePresetByName(m.cfg, m.cli.timePreset); ok {
 		style = m.timePresetStyle(preset)
 	}
-	return m.renderPresetControl(m.timeTagLabel(), style, m.hover.time, end-start)
+	return m.renderPresetControl(m.timeControlLabel(end-start), style, m.hover.time, end-start)
 }
 
 func (m tuiModel) selectTimePreset(name string) (tea.Model, tea.Cmd) {

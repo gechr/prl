@@ -266,6 +266,8 @@ func TestPresetMenusCenterOverTheirControls(t *testing.T) {
 		m.cfg = &Config{}
 		if timeFilter {
 			m.cli.timePreset = "10 minutes"
+		} else {
+			m.cli.preset = "Needs your review"
 		}
 		m.openFilterPresetMenu(timeFilter)
 		start, end := m.presetTagBounds()
@@ -282,18 +284,18 @@ func TestPresetMenusCenterOverTheirControls(t *testing.T) {
 func TestPresetMenuCenteringClampsToTerminal(t *testing.T) {
 	m := approvalTestModel("", approvalTestPR(1))
 	m.cfg = &Config{}
-	// A long time label moves the PR control near the left edge.
+	// A long time control places its menu against the left edge.
 	name := strings.Repeat("t", 61)
 	m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{{Name: name, MaxAge: "1h"}}
 	m.cli.timePreset = name
-	m.openPresetMenu()
+	m.openFilterPresetMenu(true)
 	require.Equal(t, 0, m.presetMenuGeometry().x)
-	// A long menu entry extends past the right edge of a short time control.
-	m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{
-		{Name: strings.Repeat("t", 30), MaxAge: "1h"},
+	// A long menu entry extends past the right edge of the PR control.
+	m.cfg.TUI.Presets.Filters = []TUIPresetConfig{
+		{Name: strings.Repeat("p", 30), Filter: "ci:pending"},
 	}
 	m.cli.timePreset = ""
-	m.openFilterPresetMenu(true)
+	m.openPresetMenu()
 	menu := m.presetMenuGeometry()
 	require.Equal(t, m.width, menu.x+menu.width)
 }

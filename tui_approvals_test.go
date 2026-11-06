@@ -876,8 +876,8 @@ func TestTagSeparatorSetsPresetApart(t *testing.T) {
 
 	require.Equal(
 		t,
-		"┤ bots:hide │ Needs your review ▾ │ All Time ▾ ├─",
-		line[len(line)-len("┤ bots:hide │ Needs your review ▾ │ All Time ▾ ├─"):],
+		"┤ bots:hide │ All Time ▾ │ Needs your review ▾ ├─",
+		line[len(line)-len("┤ bots:hide │ All Time ▾ │ Needs your review ▾ ├─"):],
 	)
 
 	// Narrow: the option filters are shortened, the preset stays whole.
