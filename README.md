@@ -54,6 +54,9 @@ prl -R github.com/owner/repo -a any
 # PRs with "fix" in the title/body/comments
 prl fix
 
+# Specific PRs by URL or owner/repo#N (search filters such as --state are ignored)
+prl https://github.com/owner/repo/pull/1 https://github.com/owner/repo/pull/2 owner/other#3
+
 # PRs created in the last 2 weeks
 prl -c 2weeks
 

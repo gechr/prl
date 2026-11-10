@@ -20,6 +20,9 @@ type SearchParams struct {
 	Order      string
 	PerPage    int
 	TotalLimit int
+	// PRRefs lists pull requests named directly on the command line. When set,
+	// they are fetched as-is and Query only describes them.
+	PRRefs     []prRef
 	queryTerms []searchQueryTerm
 }
 
@@ -85,6 +88,19 @@ func (p *SearchParams) groupSearchQueryScoped(
 
 // buildSearchQuery constructs a GitHub search query and parameters.
 func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
+	refs, err := parsePRRefs(cli.Query)
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) > 0 {
+		return &SearchParams{
+			Query:      strings.Join(xslices.Map(refs, prRef.String), " "),
+			PerPage:    len(refs),
+			TotalLimit: len(refs),
+			PRRefs:     refs,
+		}, nil
+	}
+
 	var terms []searchQueryTerm
 	add := func(queries ...string) {
 		for _, query := range queries {
@@ -582,6 +598,13 @@ func executeListSearch(
 	params *SearchParams,
 	preferGraphQL bool,
 ) ([]PullRequest, error) {
+	if len(params.PRRefs) > 0 {
+		gql, err := getGQL()
+		if err != nil {
+			return nil, err
+		}
+		return fetchPRsByRef(gql, params.PRRefs)
+	}
 	if preferGraphQL {
 		if prs, ok := tryExecuteListSearchGraphQL(getGQL, params); ok {
 			return prs, nil
@@ -803,6 +826,9 @@ func toPullRequestGraphQL(node graphQLSearchPRNode) PullRequest {
 // executeCount queries the GitHub Search Issues API and returns the total result count.
 // It fetches a single item to minimise data transfer.
 func executeCount(rest *api.RESTClient, params *SearchParams) (int, error) {
+	if len(params.PRRefs) > 0 {
+		return len(params.PRRefs), nil
+	}
 	path := fmt.Sprintf(
 		"search/issues?advanced_search=true&q=%s&per_page=1&page=1",
 		url.QueryEscape(params.Query),
@@ -821,6 +847,9 @@ func executeCount(rest *api.RESTClient, params *SearchParams) (int, error) {
 
 // executeWebSearch opens the GitHub search in the browser.
 func executeWebSearch(params *SearchParams) error {
+	if len(params.PRRefs) > 0 {
+		return openBrowser(xslices.Map(params.PRRefs, prRef.URL)...)
+	}
 	return openBrowser(githubSearchURL(params.Query))
 }
 

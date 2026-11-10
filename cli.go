@@ -52,7 +52,7 @@ type CLI struct {
 	cli.SelfUpdateFlag
 
 	// Positional
-	Query []string `help:"Search term(s) to filter pull requests" arg:"" optional:""`
+	Query []string `help:"Search term(s) to filter pull requests, or pull request URL(s) to load" arg:"" optional:""`
 
 	// Filter flags
 	Owner           CSVFlag  `help:"Limit to GitHub owner"                                        short:"O" clib:"terse='Owner',group='Filters/1'"`
