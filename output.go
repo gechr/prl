@@ -28,26 +28,31 @@ func newTimelineActors() timelineActors {
 	}
 }
 
+const listMetadataCacheMaxAge = 30 * time.Second
+
 type listMetadataCacheKey struct {
 	nodeID    string
 	updatedAt time.Time
 }
 
 type listMetadataCacheEntry struct {
-	headSHA              string
-	mergeStatus          MergeStatus
-	mergeStatusLoaded    bool
-	behind               bool
-	automerge            bool
-	automergeLoaded      bool
-	reviewDecision       string
-	reviewLoaded         bool
-	viewerApproved       bool
-	viewerApprovalLoaded bool
-	closedActor          string
-	closedActorLoaded    bool
-	mergedActor          string
-	mergedActorLoaded    bool
+	headSHA                 string
+	mergeStatus             MergeStatus
+	mergeStatusLoaded       bool
+	mergeStatusFetchedAt    time.Time
+	behind                  bool
+	automerge               bool
+	automergeLoaded         bool
+	automergeFetchedAt      time.Time
+	reviewDecision          string
+	reviewLoaded            bool
+	viewerApproved          bool
+	viewerApprovalLoaded    bool
+	viewerApprovalFetchedAt time.Time
+	closedActor             string
+	closedActorLoaded       bool
+	mergedActor             string
+	mergedActorLoaded       bool
 }
 
 type listMetadataCache struct {
@@ -86,6 +91,9 @@ func (c *listMetadataCache) apply(
 	if !ok {
 		return false
 	}
+	if pr.HeadSHA != "" && entry.headSHA != "" && pr.HeadSHA != entry.headSHA {
+		return false
+	}
 
 	if req.timelineClosed {
 		if !entry.closedActorLoaded {
@@ -100,7 +108,10 @@ func (c *listMetadataCache) apply(
 		actors.merged[pr.NodeID] = entry.mergedActor
 	}
 	if req.mergeStatus && pr.State == valueOpen {
-		if !entry.mergeStatusLoaded || !entry.reviewLoaded {
+		if !entry.mergeStatusLoaded || !entry.reviewLoaded ||
+			time.Since(entry.mergeStatusFetchedAt) >= listMetadataCacheMaxAge {
+			// CI can change without updating the PR timestamp or head SHA.
+			// Expire every status, including success, since checks can be rerun.
 			return false
 		}
 		pr.MergeStatus = entry.mergeStatus
@@ -108,7 +119,8 @@ func (c *listMetadataCache) apply(
 		pr.ReviewDecision = entry.reviewDecision
 		pr.reviewDecisionLoaded = true
 		if req.automerge {
-			if !entry.automergeLoaded {
+			if !entry.automergeLoaded ||
+				time.Since(entry.automergeFetchedAt) >= listMetadataCacheMaxAge {
 				return false
 			}
 			pr.Automerge = entry.automerge
@@ -116,14 +128,16 @@ func (c *listMetadataCache) apply(
 		}
 	}
 	if req.viewerApproval {
-		if !entry.viewerApprovalLoaded {
+		if !entry.viewerApprovalLoaded ||
+			time.Since(entry.viewerApprovalFetchedAt) >= listMetadataCacheMaxAge {
 			return false
 		}
 		pr.viewerApproved = entry.viewerApproved
 		pr.viewerApprovalLoaded = true
 	}
 	if req.automerge && (!req.mergeStatus || pr.State != valueOpen) {
-		if !entry.automergeLoaded {
+		if !entry.automergeLoaded ||
+			time.Since(entry.automergeFetchedAt) >= listMetadataCacheMaxAge {
 			return false
 		}
 		pr.Automerge = entry.automerge
@@ -210,6 +224,12 @@ func (c *listMetadataCache) store(
 	}
 
 	entry := c.entries[key]
+	if pr.HeadSHA != "" && entry.headSHA != "" && pr.HeadSHA != entry.headSHA {
+		entry = listMetadataCacheEntry{}
+	}
+	if pr.HeadSHA != "" {
+		entry.headSHA = pr.HeadSHA
+	}
 	if req.timelineClosed {
 		entry.closedActor = actors.closed[pr.NodeID]
 		entry.closedActorLoaded = true
@@ -223,20 +243,24 @@ func (c *listMetadataCache) store(
 		entry.mergeStatus = pr.MergeStatus
 		entry.behind = pr.behind
 		entry.mergeStatusLoaded = true
+		entry.mergeStatusFetchedAt = time.Now()
 		entry.reviewDecision = pr.ReviewDecision
 		entry.reviewLoaded = pr.reviewDecisionLoaded
 	}
 	if req.viewerApproval {
 		entry.viewerApproved = pr.viewerApproved
 		entry.viewerApprovalLoaded = pr.viewerApprovalLoaded
+		entry.viewerApprovalFetchedAt = time.Now()
 	}
 	if req.automerge && (pr.State != valueOpen || !req.mergeStatus) {
 		entry.automerge = pr.Automerge
 		entry.automergeLoaded = pr.automergeLoaded
+		entry.automergeFetchedAt = time.Now()
 	}
 	if req.automerge && req.mergeStatus && pr.State == valueOpen && pr.automergeLoaded {
 		entry.automerge = pr.Automerge
 		entry.automergeLoaded = true
+		entry.automergeFetchedAt = time.Now()
 	}
 
 	c.entries[key] = entry

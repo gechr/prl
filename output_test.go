@@ -823,6 +823,146 @@ func TestHydrateListMetadataCachedReusesUnchangedPRMetadata(t *testing.T) {
 	require.True(t, prs[0].reviewDecisionLoaded)
 }
 
+func TestHydrateListMetadataCachedRefreshesCIOnUnchangedCommit(t *testing.T) {
+	states := []struct {
+		ciState string
+		want    MergeStatus
+	}{
+		{valueCIFailure, MergeStatusCIFailed},
+		{valueCIPending, MergeStatusCIPending},
+		{valueCISuccess, MergeStatusReady},
+		{valueCIFailure, MergeStatusCIFailed},
+	}
+	var calls int
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Less(t, calls, len(states))
+		state := states[calls].ciState
+		calls++
+		return jsonResponse(req, http.StatusOK, fmt.Sprintf(`{"data":{"mergeNodes":[{
+			"id":"PR_1","headRefOid":"sha-1","reviewDecision":"APPROVED",
+			"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":%q}}}]}
+		}]}}`, state)), nil
+	})
+	gql, err := api.NewGraphQLClient(api.ClientOptions{
+		AuthToken: "test",
+		Host:      "github.com",
+		Transport: transport,
+	})
+	require.NoError(t, err)
+
+	pr := PullRequest{
+		NodeID:    "PR_1",
+		State:     valueOpen,
+		HeadSHA:   "sha-1",
+		UpdatedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+	}
+	req := listMetadataRequest{mergeStatus: true}
+	cache := newListMetadataCache()
+	key, ok := listMetadataKey(pr)
+	require.True(t, ok)
+
+	for i, state := range states {
+		prs := []PullRequest{pr}
+		_, err = hydrateListMetadataCached(gql, prs, req, cache)
+		require.NoError(t, err)
+		require.Equal(t, i+1, calls)
+		require.Equal(t, state.want, prs[0].MergeStatus)
+
+		// Fresh entries still avoid duplicate requests.
+		prs = []PullRequest{pr}
+		_, err = hydrateListMetadataCached(gql, prs, req, cache)
+		require.NoError(t, err)
+		require.Equal(t, i+1, calls)
+		require.Equal(t, state.want, prs[0].MergeStatus)
+
+		// A retry can change CI without changing either cache identity field.
+		entry := cache.entries[key]
+		entry.mergeStatusFetchedAt = time.Now().Add(-listMetadataCacheMaxAge - time.Second)
+		cache.entries[key] = entry
+	}
+}
+
+func TestListMetadataCacheExpiresFieldsIndependently(t *testing.T) {
+	pr := PullRequest{
+		NodeID:               "PR_1",
+		State:                valueOpen,
+		HeadSHA:              "sha-1",
+		MergeStatus:          MergeStatusReady,
+		ReviewDecision:       valueReviewApproved,
+		reviewDecisionLoaded: true,
+		Automerge:            true,
+		automergeLoaded:      true,
+		viewerApproved:       true,
+		viewerApprovalLoaded: true,
+	}
+	all := listMetadataRequest{mergeStatus: true, automerge: true, viewerApproval: true}
+	for _, tt := range []struct {
+		name string
+		req  listMetadataRequest
+	}{
+		{"merge status", listMetadataRequest{mergeStatus: true}},
+		{"auto-merge", listMetadataRequest{automerge: true}},
+		{"viewer approval", listMetadataRequest{viewerApproval: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := newListMetadataCache()
+			actors := newTimelineActors()
+			cache.store(pr, all, actors)
+			key, ok := listMetadataKey(pr)
+			require.True(t, ok)
+			entry := cache.entries[key]
+			expired := time.Now().Add(-listMetadataCacheMaxAge - time.Second)
+			entry.mergeStatusFetchedAt = expired
+			entry.automergeFetchedAt = expired
+			entry.viewerApprovalFetchedAt = expired
+			cache.entries[key] = entry
+
+			// Refreshing one field must not extend the lifetime of the others.
+			cache.store(pr, tt.req, actors)
+			for _, req := range []listMetadataRequest{
+				{mergeStatus: true}, {automerge: true}, {viewerApproval: true},
+			} {
+				fresh := PullRequest{NodeID: pr.NodeID, State: pr.State, HeadSHA: pr.HeadSHA}
+				require.Equal(t, req == tt.req, cache.apply(&fresh, req, &actors))
+				if req == tt.req {
+					switch {
+					case req.mergeStatus:
+						require.Equal(t, MergeStatusReady, fresh.MergeStatus)
+					case req.automerge:
+						require.True(t, fresh.Automerge)
+					case req.viewerApproval:
+						require.True(t, fresh.viewerApproved)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestListMetadataCacheRejectsChangedHead(t *testing.T) {
+	cache := newListMetadataCache()
+	actors := newTimelineActors()
+	req := listMetadataRequest{mergeStatus: true}
+	pr := PullRequest{
+		NodeID:               "PR_1",
+		State:                valueOpen,
+		HeadSHA:              "sha-1",
+		MergeStatus:          MergeStatusReady,
+		ReviewDecision:       valueReviewApproved,
+		reviewDecisionLoaded: true,
+	}
+	pr.viewerApproved = true
+	pr.viewerApprovalLoaded = true
+	cache.store(pr, listMetadataRequest{mergeStatus: true, viewerApproval: true}, actors)
+	pr.HeadSHA = "sha-2"
+	require.False(t, cache.apply(&pr, req, &actors))
+
+	// Updating status for the new head must discard approval from the old one.
+	cache.store(pr, req, actors)
+	require.True(t, cache.apply(&pr, req, &actors))
+	require.False(t, cache.apply(&pr, listMetadataRequest{viewerApproval: true}, &actors))
+}
+
 func TestHydrateListMetadataCachedRefetchesWhenPRUpdatedAtChanges(t *testing.T) {
 	t.Helper()
 
