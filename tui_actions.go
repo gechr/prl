@@ -19,6 +19,77 @@ type targetPR struct {
 	pr    PullRequest
 }
 
+type pendingAction struct {
+	action tuiAction
+	at     time.Time
+}
+
+// applyPendingActions preserves confirmed writes until the search index catches up.
+// Expiration allows subsequent external changes to become authoritative.
+func (m *tuiModel) applyPendingActions() {
+	for key, pending := range m.pendingActions {
+		item := m.itemForKey(key)
+		if item == nil || time.Since(pending.at) >= 2*time.Minute {
+			delete(m.pendingActions, key)
+			continue
+		}
+		before := item.PR
+		applyKnownActionState(item, pending.action)
+		if before.State == item.PR.State && before.IsDraft == item.PR.IsDraft &&
+			before.Automerge == item.PR.Automerge {
+			delete(m.pendingActions, key)
+		}
+		m.reconcileVisibility(key)
+	}
+}
+
+// applyActionState updates known PR state before evaluating the active filters.
+func (m *tuiModel) applyActionState(key prKey, action tuiAction) {
+	pr := m.prForKey(key)
+	if pr == nil {
+		return
+	}
+	item := PRRowModel{PR: *pr}
+	if applyKnownActionState(&item, action) {
+		if m.pendingActions == nil {
+			m.pendingActions = make(map[prKey]pendingAction)
+		}
+		m.pendingActions[key] = pendingAction{action: action, at: time.Now()}
+		m.updatePR(key, func(item *PRRowModel) { applyKnownActionState(item, action) })
+		if len(m.items) > 0 {
+			header, rows, widths := m.rerender()
+			*m = m.reindexRows(m.rows, rows)
+			m.header, m.colWidths = header, widths
+		}
+	}
+	m.reconcileVisibility(key)
+}
+
+func applyKnownActionState(item *PRRowModel, action tuiAction) bool {
+	switch action {
+	case tuiActionMerged, tuiActionForceMerged:
+		item.PR.State = valueMerged
+	case tuiActionClosed:
+		item.PR.State = valueClosed
+	case tuiActionReopened:
+		item.PR.State = valueOpen
+	case tuiActionMarkedDraft:
+		item.PR.IsDraft = true
+	case tuiActionMarkedReady:
+		item.PR.IsDraft = false
+	case tuiActionAutomerged:
+		item.PR.Automerge = true
+		item.PR.automergeLoaded = true
+	case tuiActionApproved, tuiActionBranchUpdated, tuiActionCommented, tuiActionEnqueued,
+		tuiActionOpened, tuiActionReviewRequested, tuiActionUnsubscribed:
+		return false
+	}
+	item.State = item.PR.State
+	item.MergeReason = deriveMergeReason(item.PR)
+	item.Review = deriveReviewStatus(item.PR)
+	return true
+}
+
 func batchResultsForTargets(targets []targetPR, err error) []batchResult {
 	failures := make([]batchResult, 0, len(targets))
 	for _, t := range targets {
@@ -256,6 +327,35 @@ func runBatchAction(
 	}
 }
 
+// runMergeBatch retains each PR's actual merge or automerge outcome.
+func runMergeBatch(actions *ActionRunner, targets []targetPR, approve bool) batchActionMsg {
+	var mu sync.Mutex
+	results := make(map[prKey]tuiAction, len(targets))
+	var approvals []approvalResult
+	msg := runBatchAction(actions, targets, tuiActionMerged,
+		func(a *ActionRunner, pr PullRequest) error {
+			var result string
+			var err error
+			var approval approvalResult
+			if approve {
+				result, approval, err = approveAndMerge(a, pr)
+			} else {
+				owner, repo := prOwnerRepo(pr)
+				result, err = a.mergeOrAutomerge(owner, repo, pr)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			results[makePRKey(pr)] = parseMergeResult(result)
+			if approve {
+				approvals = append(approvals, approval)
+			}
+			return err
+		})
+	msg.actions = results
+	msg.approvals = approvals
+	return msg
+}
+
 // flashPending sets a persistent in-progress status (e.g. "Merging foo/bar#421...")
 // that remains visible until replaced by the action result.
 func flashPending(m *tuiModel, verb string, pr *PullRequest) {
@@ -384,16 +484,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			m.confirmSubject = fmt.Sprintf("%d PRs", len(targets))
 			m.confirmPrompt = fmt.Sprintf("%s %d PRs?", batchMergeVerb(batch), len(targets))
 			m.confirmCmd = func() tea.Msg {
-				return runBatchAction(
-					actions,
-					batch,
-					tuiActionMerged,
-					func(a *ActionRunner, pr PullRequest) error {
-						owner, repo := prOwnerRepo(pr)
-						_, err := a.mergeOrAutomerge(owner, repo, pr)
-						return err
-					},
-				)
+				return runMergeBatch(actions, batch, false)
 			}
 		}
 		return m, nil, true

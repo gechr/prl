@@ -79,7 +79,6 @@ func newStackTestModel(t *testing.T) tuiModel {
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
 		selected:    make(prKeys),
-		removed:     make(prKeys),
 		sortColumn:  colNumber,
 		sortAsc:     true,
 	}

@@ -255,25 +255,6 @@ func (a tuiAction) Verb() string {
 	}
 }
 
-// removes returns true if this action removes a PR from the list.
-func (a tuiAction) removes() bool {
-	switch a {
-	case tuiActionClosed, tuiActionMerged, tuiActionAutomerged, tuiActionEnqueued,
-		tuiActionForceMerged, tuiActionUnsubscribed:
-		return true
-	case tuiActionApproved,
-		tuiActionBranchUpdated,
-		tuiActionCommented,
-		tuiActionMarkedDraft,
-		tuiActionMarkedReady,
-		tuiActionOpened,
-		tuiActionReopened,
-		tuiActionReviewRequested:
-		return false
-	}
-	return false
-}
-
 // parseMergeResult converts a mergeOrAutomerge result string to a tuiAction.
 func parseMergeResult(result string) tuiAction {
 	switch result {
@@ -373,6 +354,7 @@ type batchActionMsg struct {
 	failed    int
 	keys      []prKey
 	failures  []batchResult
+	actions   map[prKey]tuiAction      // individual merge results
 	outcomes  map[prKey]approveOutcome // set for approvals
 	approvals []approvalResult         // approval legs of approve-and-merge
 }
@@ -466,7 +448,6 @@ type tuiModel struct {
 	width             int
 	height            int
 	styles            tuiStyles
-	removed           prKeys
 	selected          prKeys
 
 	// Filter options overlay.
@@ -481,6 +462,9 @@ type tuiModel struct {
 	// authoritative refresh runs, and is rebuilt once it lands. The CI filter
 	// and presets are separate: they always apply when rows are shown.
 	filterHidden prKeys
+
+	// Confirmed actions retained while the search index catches up.
+	pendingActions map[prKey]pendingAction
 
 	// Optimistic approvals: sent but not yet confirmed. approvalGen bumps on
 	// every begin and settlement so stale status responses are ignored.
@@ -1194,13 +1178,14 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			settleCmd = m.settleApprovals(results)
 		}
-		if msg.action.removes() {
-			for _, key := range msg.keys {
-				m.removed[key] = true
-				delete(m.selected, key)
+		for _, key := range msg.keys {
+			action := msg.action
+			if result, ok := msg.actions[key]; ok {
+				action = result
 			}
-			m.resyncCursorAndOffset()
+			m.applyActionState(key, action)
 		}
+		m.resyncCursorAndOffset()
 		m.selected = make(prKeys)
 		status := fmt.Sprintf("%d/%d", msg.count-msg.failed, msg.count)
 		if msg.failed > 0 {
@@ -1386,6 +1371,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// captured settings from before the options menu was applied.
 		m.items = msg.items
 		m.applyPendingApprovals()
+		m.applyPendingActions()
 		header, rows, widths := m.rerender()
 		m = m.mergeRefresh(rows, m.items)
 		m.header, m.colWidths = header, widths
@@ -1454,10 +1440,8 @@ func (m tuiModel) handleActionResult(msg actionMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, flashCmd
 	}
-	if msg.action.removes() {
-		m.removed[msg.key] = true
-		m.resyncCursorAndOffset()
-	}
+	m.applyActionState(msg.key, msg.action)
+	m.resyncCursorAndOffset()
 	flashCmd := m.actionFlash(msg)
 	if hint != nil {
 		cmd := styleAccent.Bold(true).Render(hint.Hint)
@@ -2603,15 +2587,14 @@ func (m tuiModel) plainBodyLines(body string) []string {
 }
 
 // isRowHidden reports whether the row at idx is excluded from the list:
-// acted on (removed), hidden while a refresh catches up, or outside the CI
-// filter, active preset or time range.
+// hidden while a refresh catches up, or outside the active filters.
 func (m tuiModel) isRowHidden(idx int) bool {
 	return m.rowHiddenBy(m.displayFilter(), idx)
 }
 
 func (m tuiModel) rowHiddenBy(df displayFilter, idx int) bool {
 	key := m.rowKeyAt(idx)
-	return m.removed[key] || m.filterHidden[key] || !m.shows(df, m.rows[idx].Item)
+	return m.filterHidden[key] || !m.shows(df, m.rows[idx].Item)
 }
 
 func (m tuiModel) visibleIndices() []int {
@@ -3235,15 +3218,9 @@ func (m tuiModel) listHelpBar() helpbar.Model {
 	return bar
 }
 
-// hasFilteredRows reports whether the query returned PRs that are still
-// open to action but all hidden by filters.
+// hasFilteredRows reports whether the query returned any loaded PRs.
 func (m tuiModel) hasFilteredRows() bool {
-	for i := range m.rows {
-		if !m.removed[m.rowKeyAt(i)] {
-			return true
-		}
-	}
-	return false
+	return len(m.rows) > 0
 }
 
 func (m tuiModel) renderEmptyOverlay() string {
@@ -3272,8 +3249,6 @@ func (m tuiModel) renderEmptyOverlay() string {
 	switch {
 	case m.hasFilteredRows():
 		line1 = dim.Render("No pull requests match the current filter")
-	case len(m.removed) > 0:
-		line1 = dim.Render("All pull requests have been processed")
 	default:
 		line1 = dim.Render("No pull requests found for the current query")
 	}
@@ -3359,7 +3334,7 @@ func (m tuiModel) rowKeyAt(idx int) prKey {
 }
 
 // mergeRefresh replaces the model's data with fresh results while preserving
-// cursor position, selections, and removed state by matching on PR identity.
+// cursor position and selections by matching on PR identity.
 func (m tuiModel) mergeRefresh(newRows []TableRow, newItems []PRRowModel) tuiModel {
 	oldRows := m.rows
 
@@ -3657,7 +3632,6 @@ func runTui(
 		lastRefreshAt:   time.Now(),
 		spinner:         buildSpinner(cfg.Spinner),
 		styles:          newTuiStyles(),
-		removed:         make(prKeys),
 		selected:        make(prKeys),
 		collapsedStacks: foldedStackKeys(cfg.TUI.FoldedStacks),
 		filterInput:     fi,

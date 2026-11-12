@@ -94,6 +94,7 @@ func exitCode(err error) int {
 // it via App.ConfigureLog.
 func configureClog() {
 	clog.ApplyPreset(clog.TersePreset())
+	clog.SetOmitEmpty(true)
 }
 
 // Run implements the kong entry point: conductor dispatches here after

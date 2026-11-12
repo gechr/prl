@@ -110,18 +110,7 @@ func approveMergeTargetsCmd(actions *ActionRunner, targets []targetPR) tea.Cmd {
 	}
 	batch := append([]targetPR(nil), targets...)
 	return func() tea.Msg {
-		var mu sync.Mutex
-		approvals := make([]approvalResult, 0, len(batch))
-		msg := runBatchAction(actions, batch, tuiActionMerged,
-			func(a *ActionRunner, pr PullRequest) error {
-				_, approval, err := approveAndMerge(a, pr)
-				mu.Lock()
-				approvals = append(approvals, approval)
-				mu.Unlock()
-				return err
-			})
-		msg.approvals = approvals
-		return msg
+		return runMergeBatch(actions, batch, true)
 	}
 }
 

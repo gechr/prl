@@ -45,7 +45,6 @@ func approvalTestModel(review string, prs ...PullRequest) tuiModel {
 		cli:           cli,
 		items:         items,
 		rows:          rows,
-		removed:       make(prKeys),
 		selected:      make(prKeys),
 		styles:        newTuiStyles(),
 		login:         "viewer",
@@ -927,10 +926,7 @@ func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {
 	m.cli.preset = "Needs your review"
 	require.Equal(t, "No pull requests match the current filter", emptyOverlayHeadline(m))
 
-	m.removed[makePRKey(failing)] = true
-	require.Equal(t, "All pull requests have been processed", emptyOverlayHeadline(m))
-
-	m.rows, m.items, m.removed = nil, nil, make(prKeys)
+	m.rows, m.items = nil, nil
 	require.Equal(t, "No pull requests found for the current query", emptyOverlayHeadline(m))
 }
 

@@ -591,6 +591,9 @@ func (m tuiModel) searchesSelf() bool {
 // shows reports whether a row passes the display filters.
 func (m tuiModel) shows(df displayFilter, item PRRowModel) bool {
 	pr := item.PR
+	if m.cli != nil && !m.matchesLocalFilters(item) {
+		return false
+	}
 	if !df.cutoff.IsZero() {
 		stamp := pr.UpdatedAt
 		if df.timeField == valueCreated {
@@ -678,12 +681,13 @@ func (m tuiModel) matchesLocalFilters(item PRRowModel) bool {
 			return false
 		}
 	case StateReady:
-		if pr.MergeStatus != MergeStatusReady {
+		if !strings.EqualFold(pr.State, valueOpen) || pr.IsDraft ||
+			pr.MergeStatus != MergeStatusReady {
 			return false
 		}
 	case StateAll:
 	}
-	if m.cli.Draft != nil && !*m.cli.Draft && pr.IsDraft {
+	if m.cli.Draft != nil && pr.IsDraft != *m.cli.Draft {
 		return false
 	}
 	if m.cli.NoBot && item.Author.IsBot {

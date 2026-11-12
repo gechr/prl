@@ -1,7 +1,7 @@
 module github.com/gechr/prl
 
 // @clover
-go 1.27.3
+go 1.27.4
 
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
@@ -9,7 +9,7 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/huh/v2 v2.0.3
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.0
 	github.com/alecthomas/kong v1.17.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/colorprofile v0.4.3

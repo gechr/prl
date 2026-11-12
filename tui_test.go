@@ -44,7 +44,6 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	m := tuiModel{
 		items:    []PRRowModel{{PR: pr}},
 		rows:     []TableRow{{Item: PRRowModel{PR: pr}}},
-		removed:  make(prKeys),
 		selected: make(prKeys),
 	}
 
@@ -69,7 +68,6 @@ func TestUpdateListViewCtrlRSinglePRBypassesConfirm(t *testing.T) {
 	m := tuiModel{
 		items:    []PRRowModel{{PR: pr}},
 		rows:     []TableRow{{Item: PRRowModel{PR: pr}}},
-		removed:  make(prKeys),
 		selected: make(prKeys),
 	}
 
@@ -94,7 +92,6 @@ func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
 			{Item: PRRowModel{PR: prA}},
 			{Item: PRRowModel{PR: prB}},
 		},
-		removed:  make(prKeys),
 		selected: prKeys{makePRKey(prA): true, makePRKey(prB): true},
 		styles:   newTuiStyles(),
 	}
@@ -410,7 +407,6 @@ func TestRefreshResultClearsRowsButKeepsHeader(t *testing.T) {
 		width:       120,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 		cli:         testCLI(),
@@ -437,7 +433,6 @@ func TestViewListShowsRefreshingHeaderWithoutRows(t *testing.T) {
 		height:      12,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 		cli:         testCLI(),
@@ -471,7 +466,6 @@ func TestViewListNumbersVisibleRows(t *testing.T) {
 		width:       80,
 		styles:      newTuiStyles(),
 		filterInput: fi,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 	}
@@ -494,7 +488,6 @@ func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
 		width:       80,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 		cli:         &CLI{State: valueClosed},
@@ -520,7 +513,6 @@ func TestUpdateListViewShiftDownSelectsAndMovesNext(t *testing.T) {
 			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
 		},
 		cursor:      0,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterInput: textinput.New(),
 	}
@@ -543,7 +535,6 @@ func TestUpdateListViewShiftUpSelectsAndMovesPrevious(t *testing.T) {
 			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
 		},
 		cursor:      2,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterInput: textinput.New(),
 	}
@@ -565,7 +556,6 @@ func TestUpdateListViewShiftUpAtTopIsNoOp(t *testing.T) {
 			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
 		},
 		cursor:      0,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterInput: textinput.New(),
 	}
@@ -586,7 +576,6 @@ func TestUpdateListViewShiftDownAtBottomIsNoOp(t *testing.T) {
 			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
 		},
 		cursor:      1,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterInput: textinput.New(),
 	}
@@ -607,7 +596,6 @@ func TestUpdateListViewShiftDownAtBottomAfterRangeDoesNotFlicker(t *testing.T) {
 			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
 		},
 		cursor:      0,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterInput: textinput.New(),
 	}
@@ -637,7 +625,6 @@ func TestUpdateListViewShiftDirectionChangeDoesNotDeselect(t *testing.T) {
 			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
 		},
 		cursor:      0,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterInput: textinput.New(),
 	}
@@ -696,7 +683,6 @@ func TestUpdateListViewSpaceOnlySelectsCurrent(t *testing.T) {
 			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
 		},
 		cursor:      0,
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterInput: textinput.New(),
 	}
@@ -1400,7 +1386,6 @@ func TestViewListDiffingStatusDoesNotAddFooterLines(t *testing.T) {
 				width:       width,
 				styles:      newTuiStyles(),
 				filterInput: textinput.New(),
-				removed:     make(prKeys),
 				selected:    make(prKeys),
 				p:           testPRL,
 				cli:         testCLI(),
@@ -1680,9 +1665,11 @@ func TestActionMsgRemovalRecomputesOffset(t *testing.T) {
 	}
 	rows := make([]TableRow, len(prs))
 	for i, pr := range prs {
+		pr.State = valueOpen
 		rows[i] = TableRow{Item: PRRowModel{PR: pr}}
 	}
 	m := tuiModel{
+		cli:         testCLI(),
 		rows:        rows,
 		cursor:      len(rows) - 1,
 		offset:      len(rows) - 1,
@@ -1690,7 +1677,6 @@ func TestActionMsgRemovalRecomputesOffset(t *testing.T) {
 		width:       80,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 	}
 
@@ -1703,6 +1689,7 @@ func TestActionMsgRemovalRecomputesOffset(t *testing.T) {
 	require.NotNil(t, cmd)
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
+	require.False(t, isShown(bm, makePRKey(prs[len(prs)-1])))
 	require.Less(t, bm.offset, m.offset)
 	require.Equal(t, bm.scrolledOffset(), bm.offset)
 }
@@ -1722,7 +1709,6 @@ func TestBatchActionFailuresSurfaceDetails(t *testing.T) {
 	}
 	m := tuiModel{
 		styles:   newTuiStyles(),
-		removed:  make(prKeys),
 		selected: make(prKeys),
 	}
 
@@ -1764,9 +1750,6 @@ func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {
 		width:       80,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed: prKeys{
-			makePRKey(prA): true,
-		},
 		selected: prKeys{
 			makePRKey(prB): true,
 		},
@@ -1775,10 +1758,9 @@ func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {
 
 	bm := m.mergeRefresh(newRows, []PRRowModel{{PR: prB}, {PR: prA}})
 
-	require.True(t, bm.removed[makePRKey(prA)])
 	require.True(t, bm.selected[makePRKey(prB)])
 	require.Equal(t, 0, bm.cursor)
-	require.Equal(t, []int{0}, bm.visibleIndices())
+	require.Equal(t, []int{0, 1}, bm.visibleIndices())
 	require.Equal(t, []prKey{makePRKey(prB)}, bm.diffQueue)
 }
 
@@ -1804,7 +1786,6 @@ func testDigitJumpModel(total int) tuiModel {
 		width:       120,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 	}
 }
@@ -2392,7 +2373,6 @@ func TestStaleRefreshResultWithOldQueryGenDiscarded(t *testing.T) {
 		width:       120,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 		cli:         testCLI(),
@@ -2439,7 +2419,6 @@ func TestRefreshResultCompletesSilently(t *testing.T) {
 		height:      12,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 		cli:         testCLI(),
@@ -2465,7 +2444,6 @@ func TestHeadValidationMsgStartsRefreshWhenChanged(t *testing.T) {
 		view:        tuiViewList,
 		styles:      newTuiStyles(),
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 		cli:         testCLI(),
@@ -2620,7 +2598,6 @@ func TestApplyFilterOptionsHidesNonMatchingRowsImmediately(t *testing.T) {
 		height:      20,
 		width:       120,
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		p:           testPRL,
 	}
@@ -2641,9 +2618,7 @@ func TestApplyFilterOptionsHidesNonMatchingRowsImmediately(t *testing.T) {
 }
 
 func TestRefreshResultClearsLocalFilterHiding(t *testing.T) {
-	row := testFilterRow(1, func(item *PRRowModel) {
-		item.Author.IsBot = true
-	})
+	row := testFilterRow(1, nil)
 
 	m := tuiModel{
 		cli:         testCLI(),
@@ -2654,7 +2629,6 @@ func TestRefreshResultClearsLocalFilterHiding(t *testing.T) {
 		height:      20,
 		width:       120,
 		filterInput: textinput.New(),
-		removed:     make(prKeys),
 		selected:    make(prKeys),
 		filterHidden: prKeys{
 			makePRKey(row.Item.PR): true,
@@ -2724,7 +2698,6 @@ func TestApplyFilterOptionsResetClearsOverridesAndRestoresDefaults(t *testing.T)
 		cli:      cli,
 		cfg:      cfg,
 		styles:   newTuiStyles(),
-		removed:  make(prKeys),
 		selected: make(prKeys),
 		p:        testPRL,
 	}
