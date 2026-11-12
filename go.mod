@@ -15,14 +15,14 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/cli/go-gh/v2 v2.17.0
-	github.com/gechr/clib v0.8.5
-	github.com/gechr/clive v0.4.14
-	github.com/gechr/clog v0.17.6
-	github.com/gechr/conductor v0.1.21
-	github.com/gechr/forge v0.0.8
+	github.com/gechr/clib v0.8.6
+	github.com/gechr/clive v0.4.15
+	github.com/gechr/clog v0.17.7
+	github.com/gechr/conductor v0.1.22
+	github.com/gechr/forge v0.0.9
 	github.com/gechr/gorules v0.0.4
-	github.com/gechr/primer v0.2.12
-	github.com/gechr/x v0.6.5
+	github.com/gechr/primer v0.2.13
+	github.com/gechr/x v0.6.6
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/confmap v1.0.1
@@ -222,7 +222,7 @@ require (
 	github.com/spf13/cast v1.7.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/spf13/pflag v1.1.0 // indirect
 	github.com/spf13/viper v1.12.0 // indirect
 	github.com/ssgreg/nlreturn/v2 v2.2.1 // indirect
 	github.com/stbenjam/no-sprintf-host-port v0.3.1 // indirect
@@ -258,8 +258,8 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
