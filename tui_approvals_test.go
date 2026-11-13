@@ -737,6 +737,81 @@ func TestRenderPRStatusLine(t *testing.T) {
 	)
 }
 
+func TestRenderPRStatusLineReviewStates(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		prepare func(*PullRequest)
+		want    string
+	}{
+		{
+			name: "approved by another reviewer",
+			prepare: func(pr *PullRequest) {
+				pr.MergeStatus = MergeStatusReady
+				pr.ReviewDecision = valueReviewApproved
+			},
+			want: "Ready to merge",
+		},
+		{
+			name: "approved with failing CI",
+			prepare: func(pr *PullRequest) {
+				pr.MergeStatus = MergeStatusCIFailed
+				pr.ReviewDecision = valueReviewApproved
+			},
+			want: "CI failed · Approved",
+		},
+		{
+			name: "ready without required reviews",
+			prepare: func(pr *PullRequest) {
+				pr.MergeStatus = MergeStatusReady
+				pr.ReviewDecision = ""
+			},
+			want: "Ready to merge",
+		},
+		{
+			name: "ready with review decision unavailable",
+			prepare: func(pr *PullRequest) {
+				pr.MergeStatus = MergeStatusReady
+				pr.reviewDecisionLoaded = false
+			},
+			want: "Ready to merge",
+		},
+		{
+			name:    "draft",
+			prepare: func(pr *PullRequest) { pr.IsDraft = true },
+			want:    "Draft · Review required",
+		},
+		{
+			name:    "changes requested",
+			prepare: func(pr *PullRequest) { pr.ReviewDecision = valueReviewChanges },
+			want:    "Changes requested",
+		},
+		{
+			name: "changes requested after viewer approval",
+			prepare: func(pr *PullRequest) {
+				pr.ReviewDecision = valueReviewChanges
+				pr.viewerApproved = true
+			},
+			want: "Changes requested · " + activeIcons.Check + " Approved by you",
+		},
+		{
+			name: "changes requested with failing CI",
+			prepare: func(pr *PullRequest) {
+				pr.ReviewDecision = valueReviewChanges
+				pr.MergeStatus = MergeStatusCIFailed
+			},
+			want: "CI failed · Changes requested",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			pr := approvalTestPR(1)
+			tt.prepare(&pr)
+			m := approvalTestModel("", pr)
+
+			require.Equal(t, tt.want, ansi.Strip(m.renderPRStatusLine(pr)))
+		})
+	}
+}
+
 func TestRenderPRStatusLineSpacesPills(t *testing.T) {
 	useIcons(iconsNerd)
 	t.Cleanup(func() { useIcons(iconsUnicode) })

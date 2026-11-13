@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+// needsReview reports whether a PR is awaiting review rather than ready to
+// merge, still a draft, or waiting for requested changes.
+func needsReview(pr PullRequest) bool {
+	if !strings.EqualFold(pr.State, valueOpen) || pr.IsDraft || pr.MergeStatus == MergeStatusReady {
+		return false
+	}
+	return !pr.reviewDecisionLoaded ||
+		(pr.ReviewDecision != valueReviewApproved && pr.ReviewDecision != valueReviewChanges)
+}
+
 // Bot author constants.
 const (
 	BotName   = "Bot"   // Display name indicating a bot in config authors.

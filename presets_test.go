@@ -23,6 +23,12 @@ func TestPresetFilterMatches(t *testing.T) {
 	ready.MergeStatus = MergeStatusReady
 	ready.ReviewDecision = valueReviewApproved
 
+	readyWithoutReviews := ready
+	readyWithoutReviews.ReviewDecision = ""
+
+	readyWithoutReviewMetadata := readyWithoutReviews
+	readyWithoutReviewMetadata.reviewDecisionLoaded = false
+
 	readyDraft := ready
 	readyDraft.IsDraft = true
 
@@ -60,6 +66,9 @@ func TestPresetFilterMatches(t *testing.T) {
 		{"approvable", draft, false, false},
 		{"approvable", failing, false, false},
 		{"approvable", ready, false, false},
+		{"approvable", readyWithoutReviews, false, false},
+		{"approvable", readyWithoutReviewMetadata, false, false},
+		{"approvable", changesRequested, false, false},
 		{"mergeable", ready, false, true},
 		{"mergeable", readyDraft, false, false},
 		{"mergeable", open, false, false},

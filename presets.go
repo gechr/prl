@@ -252,12 +252,10 @@ func presetTermMatcher(name string) (presetFilter, error) {
 	case presetTermApproved:
 		return func(pr PullRequest, _ presetContext) bool { return isViewerApproved(pr) }, nil
 	case presetTermApprovable:
-		// Open, not yours, not a draft, CI passing, and still awaiting
-		// approval: neither you nor the PR as a whole has approved it.
+		// Awaiting review from someone else, not already approved by you,
+		// and CI passing.
 		return func(pr PullRequest, c presetContext) bool {
-			return !c.own && !pr.IsDraft && !isViewerApproved(pr) &&
-				(!pr.reviewDecisionLoaded || pr.ReviewDecision != valueReviewApproved) &&
-				strings.EqualFold(pr.State, valueOpen) && matchesCI(pr, CISuccess)
+			return !c.own && !isViewerApproved(pr) && needsReview(pr) && matchesCI(pr, CISuccess)
 		}, nil
 	case presetTermMergeable:
 		// Open, not a draft, approved, CI passing and no conflicts.

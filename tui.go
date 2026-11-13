@@ -2056,7 +2056,7 @@ func (m tuiModel) renderPRStatusLine(pr PullRequest) string {
 	open := strings.EqualFold(pr.State, valueOpen)
 	// "Needs your review" already implies both "Needs review" and a required
 	// review, so those pills are dropped alongside it.
-	needsViewer := open && !m.isCurrentUserPR(pr) &&
+	needsViewer := needsReview(pr) && !m.isCurrentUserPR(pr) &&
 		pr.viewerApprovalLoaded && !pr.viewerApproved
 	var parts []string
 	if !needsViewer || resolvePRStatus(pr) != resolvedBlocked {
@@ -2110,6 +2110,9 @@ func renderReviewBadge(pr PullRequest, needsViewer bool) string {
 		}
 		return statusBadge("Approved", "", colorGitHubOpen, styleGreen)
 	case valueReviewChanges:
+		if status == resolvedBlocked {
+			return ""
+		}
 		return statusBadge("Changes requested", "", colorGitHubClosed, styleClosed)
 	}
 	return ""
@@ -2511,6 +2514,9 @@ func (m tuiModel) renderDetailStatus(pr PullRequest) string {
 	case resolvedCIError:
 		return statusBadge("CI error", activeIcons.StatusCIFailed, colorGitHubClosed, styleClosed)
 	case resolvedBlocked:
+		if pr.reviewDecisionLoaded && pr.ReviewDecision == valueReviewChanges {
+			return statusBadge("Changes requested", "", colorGitHubClosed, styleClosed)
+		}
 		return statusBadge(
 			"Needs review",
 			activeIcons.StatusNeedsReview,

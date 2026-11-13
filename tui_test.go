@@ -1042,6 +1042,16 @@ func TestRenderDetailStatusUsesGitHubPillsInNerdMode(t *testing.T) {
 			colorGitHubAttention,
 		},
 		{
+			"changes requested",
+			PullRequest{
+				State: valueOpen, MergeStatus: MergeStatusBlocked,
+				ReviewDecision: valueReviewChanges, reviewDecisionLoaded: true,
+			},
+			"Changes requested",
+			"",
+			colorGitHubClosed,
+		},
+		{
 			"conflict",
 			PullRequest{State: valueOpen, MergeStatus: MergeStatusConflict},
 			"Merge conflicts",
