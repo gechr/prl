@@ -388,7 +388,10 @@ func TestBackgroundApprovalCompletionPreservesNewDiffQueue(t *testing.T) {
 			m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModAlt})
 			require.NotNil(t, cmd)
 			completion := cmd()
-			result, ok := completion.(actionMsg)
+			done, ok := completion.(actionDoneMsg)
+			require.True(t, ok)
+			require.Equal(t, 1, m.actionsInFlight)
+			result, ok := done.msg.(actionMsg)
 			require.True(t, ok)
 			require.NoError(t, result.err)
 			require.EqualValues(t, 1, posts.Load())
@@ -396,6 +399,7 @@ func TestBackgroundApprovalCompletionPreservesNewDiffQueue(t *testing.T) {
 			m.diffQueue = []prKey{k3}
 
 			m, _ = updateModel(t, m, completion)
+			require.Zero(t, m.actionsInFlight)
 
 			require.Equal(t, k2, m.diffKey)
 			require.Equal(t, []prKey{k3}, m.diffQueue)

@@ -21,7 +21,7 @@ func (m *tuiModel) fetchDiffCmd(key prKey) tea.Cmd {
 	pr := m.rows[idx].Item.PR
 	actions := m.actions
 	gen := m.diffGen
-	return func() tea.Msg {
+	return m.trackRead(func() tea.Msg {
 		owner, repo := prOwnerRepo(pr)
 		diff, headSHA, err := actions.fetchDiff(owner, repo, pr.Number)
 		return diffFetchedMsg{
@@ -33,7 +33,7 @@ func (m *tuiModel) fetchDiffCmd(key prKey) tea.Cmd {
 			requestedHeadSHA: pr.HeadSHA,
 			err:              err,
 		}
-	}
+	})
 }
 
 // openDiff shows key's diff: straight away from the prefetch cache when it is

@@ -35,7 +35,7 @@ var (
 
 func main() {
 	app := conductor.New(conductor.App{
-		Name:        "prl",
+		Name:        programName,
 		Description: "Search, filter, display, and act on GitHub pull requests",
 		Module:      "github.com/gechr/prl",
 		HelpShort:   "Short help",
@@ -73,14 +73,18 @@ func main() {
 	if err != nil {
 		clog.Fatal().Err(err).Msg("Failed to build CLI")
 	}
-	os.Exit(prog.Run(os.Args[1:]))
+	code := prog.Run(os.Args[1:])
+	if code != 0 {
+		reportProgramStatus(clog.ProgramStateError, "")
+	}
+	os.Exit(code)
 }
 
 // exitCode maps prl's sentinel errors to process exit codes; the Fatal branch
 // prints and exits directly, preserving the pre-conductor output.
 func exitCode(err error) int {
 	switch {
-	case errors.Is(err, errOK):
+	case errors.Is(err, errOK), errors.Is(err, errCanceled):
 		return 0
 	case errors.Is(err, errFatal):
 		return 1
@@ -101,6 +105,20 @@ func configureClog() {
 // completion preflight, parsing, standard-flag application and the passive
 // update check.
 func (c *CLI) Run(app *conductor.Runtime) error {
+	if c.Version {
+		return c.run(app)
+	}
+	reportProgramStatus(clog.ProgramStateWorking, "")
+	err := c.run(app)
+	state := completedProgramState(err)
+	reportProgramStatus(state, "")
+	if state == clog.ProgramStateIdle {
+		return errCanceled
+	}
+	return err
+}
+
+func (c *CLI) run(app *conductor.Runtime) error {
 	prl, cfg, cli := c.prl, c.cfg, c
 
 	if cli.Version {
@@ -194,6 +212,10 @@ func (c *CLI) Run(app *conductor.Runtime) error {
 		clog.SetLevel(clog.LevelFatal) // TUI manages its own notifications
 		return runTui(prl, rest, cli, cfg, tty, params, s)
 	}
+
+	// Watch mode and the TUI handle interrupts themselves.
+	stopInterrupt := idleOnInterrupt()
+	defer stopInterrupt()
 
 	var output string
 	if err := withSpinner(tty && !cli.Debug, s, func(stopSpinner func()) error {
@@ -420,6 +442,7 @@ func runWatch(
 	go func() {
 		<-sig
 		cleanup()
+		reportProgramStatus(clog.ProgramStateIdle, "")
 		os.Exit(0)
 	}()
 
@@ -430,7 +453,10 @@ func runWatch(
 
 	results := make(chan fetchResult, 1)
 	validations := make(chan validationResult, 1)
+	validating := 0
+	refreshFailed := false
 	fetch := func() {
+		refreshFailed = false
 		go func() {
 			out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params, cache)
 			if fErr == nil {
@@ -442,6 +468,7 @@ func runWatch(
 		}()
 	}
 	validate := func(prs []PullRequest) {
+		validating++
 		go func(prs []PullRequest) {
 			g, err := getGQL()
 			if err != nil {
@@ -477,6 +504,8 @@ func runWatch(
 		fetch()
 	}
 
+	lastStatus := watchProgramStatus(fetching, validating, refreshFailed)
+	reportProgramStatus(lastStatus, "")
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
@@ -485,6 +514,7 @@ func runWatch(
 		select {
 		case r := <-results:
 			fetching = false
+			refreshFailed = r.err != nil
 			switch {
 			case r.err != nil:
 				clog.Error().Err(withGitHubErrorDetail(r.err)).Msg("Refresh failed")
@@ -503,6 +533,7 @@ func runWatch(
 				validate(lastPRs)
 			}
 		case v := <-validations:
+			validating--
 			if v.err != nil {
 				clog.Debug().Err(v.err).Msg("Head validation failed")
 				break
@@ -542,6 +573,11 @@ func runWatch(
 			fetching = true
 			spinnerTick = 0
 			fetch()
+		}
+		state := watchProgramStatus(fetching, validating, refreshFailed)
+		if state != lastStatus {
+			reportProgramStatus(state, "")
+			lastStatus = state
 		}
 	}
 
@@ -1013,13 +1049,13 @@ func runOnce(
 func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow) error {
 	selected, err := interactiveSelect(rows, buildActionHeader(cli))
 	if errors.Is(err, pick.ErrCanceled) {
-		return nil
+		return errCanceled
 	}
 	if err != nil {
 		return err
 	}
 	if len(selected) == 0 {
-		return nil
+		return errCanceled
 	}
 
 	selectedPRs := make([]PullRequest, len(selected))

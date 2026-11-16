@@ -428,6 +428,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		keys := targetKeys(targets)
 		if msg.String() == tuiKeybindApproveNoConfirm {
 			m.beginApproval(keys)
+			cmd = m.trackAction(cmd)
 			return m, cmd, true
 		}
 		setupConfirmPrompt(&m, targets, tuiActionApprove, "Approve")
@@ -550,11 +551,12 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			if len(targets) == 0 {
 				return m, nil, true
 			}
-			return m, batchCmd(m.actions, targets, tuiActionReopened,
+			actionCmd := m.trackAction(batchCmd(m.actions, targets, tuiActionReopened,
 				func(a *ActionRunner, pr PullRequest) error {
 					owner, repo := prOwnerRepo(pr)
 					return a.reopenPR(owner, repo, pr.Number)
-				}), true
+				}))
+			return m, actionCmd, true
 		}
 		targets := m.targetActionablePRs()
 		if len(targets) == 0 {
@@ -618,7 +620,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		prCopy := *pr
 		if pr.IsDraft {
 			flashPending(&m, statusMarkingReady, pr)
-			return m, func() tea.Msg {
+			actionCmd := m.trackAction(func() tea.Msg {
 				err := actions.markReady(prCopy.NodeID)
 				return actionMsg{
 					index:  idx,
@@ -626,10 +628,11 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 					action: tuiActionMarkedReady,
 					err:    err,
 				}
-			}, true
+			})
+			return m, actionCmd, true
 		}
 		flashPending(&m, statusMarkingDraft, pr)
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			err := actions.markDraft(prCopy.NodeID)
 			return actionMsg{
 				index:  idx,
@@ -637,7 +640,8 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				action: tuiActionMarkedDraft,
 				err:    err,
 			}
-		}, true
+		})
+		return m, actionCmd, true
 
 	case tuiKeybindComment:
 		pr := m.currentPR()
@@ -712,10 +716,11 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		prompt := reviewPrompt(prCopy, m.cfg, provider)
 		// No dialog = no yolo opt-in. Provider defaults stand.
 		launch := reviewLaunch{provider: provider, model: model, effort: effort}
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			err := launchAIReview(prCopy, prompt, m.cfg, launch)
 			return aiReviewMsg{index: idx, key: makePRKey(prCopy), err: err}
-		}, true
+		})
+		return m, actionCmd, true
 
 	case tuiKeybindSlack:
 		targets := m.targetActionablePRs()
@@ -764,10 +769,11 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		cfg := m.cfg
 		cli := m.cli
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			err := pluginSlackSend(cfg, cli.SendTo, prs)
 			return slackSentMsg{count: count, err: err}
-		}, true
+		})
+		return m, actionCmd, true
 
 	case tuiKeybindOpen:
 		targets := m.targetPRs()
@@ -888,7 +894,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		rest := m.rest
 		if len(targets) == 1 {
 			t := targets[0]
-			return m, func() tea.Msg {
+			actionCmd := m.trackAction(func() tea.Msg {
 				login, err := getCurrentLogin(rest)
 				if err != nil {
 					return actionMsg{
@@ -906,11 +912,12 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 					action: tuiActionUnsubscribed,
 					err:    err,
 				}
-			}, true
+			})
+			return m, actionCmd, true
 		}
 		batch := make([]targetPR, len(targets))
 		copy(batch, targets)
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			login, err := getCurrentLogin(rest)
 			if err != nil {
 				return batchActionMsg{
@@ -925,7 +932,8 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 					owner, repo := prOwnerRepo(pr)
 					return a.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID)
 				})
-		}, true
+		})
+		return m, actionCmd, true
 
 	case tuiKeybindCopilotReview:
 		targets := m.targetPRs()
@@ -936,7 +944,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		if len(targets) == 1 {
 			t := targets[0]
 			flashPending(&m, statusCopilotReview, &t.pr)
-			return m, func() tea.Msg {
+			actionCmd := m.trackAction(func() tea.Msg {
 				owner, repo := prOwnerRepo(t.pr)
 				err := actions.requestReview(
 					owner,
@@ -950,7 +958,8 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 					action: tuiActionReviewRequested,
 					err:    err,
 				}
-			}, true
+			})
+			return m, actionCmd, true
 		}
 		setupConfirmBatch(
 			&m,
@@ -1019,10 +1028,11 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		flashPending(&m, statusSlacking, &pr)
 		cfg := m.cfg
 		cli := m.cli
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			err := pluginSlackSend(cfg, cli.SendTo, []PullRequest{pr})
 			return slackSentMsg{count: 1, err: err}
-		}, true
+		})
+		return m, actionCmd, true
 	case tuiKeybindUpdateBranch:
 		if !ctx.actionable {
 			return m, nil, true
@@ -1056,7 +1066,7 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		if pr.IsDraft {
 			flashPending(&m, statusMarkingReady, &pr)
-			return m, tea.Batch(exitCmd, func() tea.Msg {
+			actionCmd := m.trackAction(func() tea.Msg {
 				err := actions.markReady(pr.NodeID)
 				return actionMsg{
 					index:  ctx.idx,
@@ -1064,13 +1074,15 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 					action: tuiActionMarkedReady,
 					err:    err,
 				}
-			}), true
+			})
+			return m, tea.Batch(exitCmd, actionCmd), true
 		}
 		flashPending(&m, statusMarkingDraft, &pr)
-		return m, tea.Batch(exitCmd, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			err := actions.markDraft(pr.NodeID)
 			return actionMsg{index: ctx.idx, key: ctx.key, action: tuiActionMarkedDraft, err: err}
-		}), true
+		})
+		return m, tea.Batch(exitCmd, actionCmd), true
 	case tuiKeybindComment:
 		pr := ctx.pr
 		actions := m.actions
@@ -1123,7 +1135,7 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		pr := ctx.pr
 		flashPending(&m, statusCopilotReview, &pr)
 		actions := m.actions
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.requestReview(owner, repo, pr.Number, copilotReviewer)
 			return actionMsg{
@@ -1132,7 +1144,8 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 				action: tuiActionReviewRequested,
 				err:    err,
 			}
-		}, true
+		})
+		return m, actionCmd, true
 	case tuiKeybindSlack:
 		if !ctx.actionable {
 			return m, nil, true
@@ -1221,7 +1234,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var approve tea.Cmd
 		reason := m.approvalBlockReason(ctx.key, ctx.pr)
 		if reason == "" {
-			approve = approveCmd(m.actions, targetPR{ctx.idx, ctx.pr})
+			approve = m.trackAction(approveCmd(m.actions, targetPR{ctx.idx, ctx.pr}))
 			m.beginApproval([]prKey{ctx.key})
 		}
 		navCmd := m.advanceOrExitDiff()
@@ -1243,7 +1256,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if state == valueClosed {
 			actions := m.actions
 			flashPending(&m, statusReopening, &pr)
-			return m, func() tea.Msg {
+			actionCmd := m.trackAction(func() tea.Msg {
 				owner, repo := prOwnerRepo(pr)
 				err := actions.reopenPR(owner, repo, pr.Number)
 				return actionMsg{
@@ -1252,7 +1265,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					action: tuiActionReopened,
 					err:    err,
 				}
-			}
+			})
+			return m, actionCmd
 		}
 		actions := m.actions
 		m.confirmAction = tuiActionClose
@@ -1284,7 +1298,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		flashPending(&m, statusUnsubscribing, &pr)
 		actions := m.actions
 		login := m.login
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			err := actions.removeReviewRequest(owner, repo, pr.Number, login, pr.NodeID)
 			return actionMsg{
@@ -1293,7 +1307,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				action: tuiActionUnsubscribed,
 				err:    err,
 			}
-		}
+		})
+		return m, actionCmd
 	case tuiKeybindMerge:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -1310,7 +1325,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		flashPending(&m, flash, &pr)
 		actions := m.actions
-		return m, func() tea.Msg {
+		actionCmd := m.trackAction(func() tea.Msg {
 			owner, repo := prOwnerRepo(pr)
 			result, err := actions.mergeOrAutomerge(owner, repo, pr)
 			return actionMsg{
@@ -1319,7 +1334,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				action: parseMergeResult(result),
 				err:    err,
 			}
-		}
+		})
+		return m, actionCmd
 	case tuiKeybindApproveMerge:
 		idx := m.resolveIndex(m.diffKey, -1)
 		if idx < 0 {
@@ -1334,7 +1350,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, flashResult(&m, resultApprovalPending, pr.Ref(), pr.URL, false)
 		}
 		flashPending(&m, statusApproveMerging, &pr)
-		cmd := approveMergeTargetsCmd(m.actions, []targetPR{{index: idx, pr: pr}})
+		cmd := m.trackAction(approveMergeTargetsCmd(m.actions, []targetPR{{index: idx, pr: pr}}))
 		m.beginApproval([]prKey{makePRKey(pr)})
 		return m, cmd
 	}
@@ -1391,6 +1407,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		refreshCmd := m.exitDetailView()
 		if msg.String() == tuiKeybindApproveNoConfirm {
 			m.beginApproval(keys)
+			cmd = m.trackAction(cmd)
 			return m, tea.Batch(refreshCmd, cmd)
 		}
 		setupConfirmPrompt(&m, []targetPR{target}, tuiActionApprove, "Approve")

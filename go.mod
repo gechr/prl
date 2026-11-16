@@ -9,7 +9,7 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/huh/v2 v2.0.3
-	charm.land/lipgloss/v2 v2.1.0
+	charm.land/lipgloss/v2 v2.1.1
 	github.com/alecthomas/kong v1.17.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/colorprofile v0.4.3
@@ -17,12 +17,12 @@ require (
 	github.com/cli/go-gh/v2 v2.17.0
 	github.com/gechr/clib v0.8.6
 	github.com/gechr/clive v0.4.15
-	github.com/gechr/clog v0.17.7
+	github.com/gechr/clog v0.18.0
 	github.com/gechr/conductor v0.1.22
 	github.com/gechr/forge v0.0.9
 	github.com/gechr/gorules v0.0.4
 	github.com/gechr/primer v0.2.13
-	github.com/gechr/x v0.7.0
+	github.com/gechr/x v0.7.1
 	github.com/goccy/go-yaml v1.19.2
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/confmap v1.0.1

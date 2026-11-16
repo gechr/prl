@@ -938,3 +938,32 @@ func TestApprovePRFallsBackToAggregateWhenViewerUnknown(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, approveSkippedAggregate, outcome)
 }
+
+func TestExecuteForceMergeFailureReturnsError(t *testing.T) {
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := readBody(t, req.Body)
+		if req.URL.Path != "/graphql" || !strings.Contains(body, "query CheckStates") {
+			t.Fatalf("unexpected request: %s %s", req.URL.Path, body)
+		}
+		return jsonResponse(
+			req,
+			http.StatusOK,
+			`{"data":{"nodes":[
+				{"id":"PR_1","state":"OPEN","mergeStateStatus":"BLOCKED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}}
+			]}}`,
+		), nil
+	})
+	opts := api.ClientOptions{AuthToken: "test", Host: "github.com", Transport: transport}
+	rest, err := api.NewRESTClient(opts)
+	require.NoError(t, err)
+	gql, err := api.NewGraphQLClient(opts)
+	require.NoError(t, err)
+
+	err = NewActionRunner(rest, gql).Execute(&CLI{ForceMerge: true}, []PullRequest{{
+		NodeID:     "PR_1",
+		Number:     1,
+		URL:        "https://github.com/example/repo/pull/1",
+		Repository: Repository{NameWithOwner: "example/repo", Name: "repo"},
+	}})
+	require.ErrorIs(t, err, errFatal)
+}

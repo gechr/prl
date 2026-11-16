@@ -271,7 +271,7 @@ func (m *tuiModel) approvalFlash(msg actionMsg) tea.Cmd {
 }
 
 // statusCmd re-fetches the status of the PR shown in the diff view.
-func (m tuiModel) statusCmd(key prKey) tea.Cmd {
+func (m *tuiModel) statusCmd(key prKey) tea.Cmd {
 	pr := m.prForKey(key)
 	if pr == nil || m.actions == nil || m.actions.gql == nil {
 		return nil
@@ -279,10 +279,10 @@ func (m tuiModel) statusCmd(key prKey) tea.Cmd {
 	actions := m.actions
 	prCopy := *pr
 	gen := m.approvalGen[key]
-	return func() tea.Msg {
+	return m.trackRead(func() tea.Msg {
 		fresh, err := actions.fetchPRStatus(prCopy)
 		return prStatusMsg{key: key, gen: gen, pr: fresh, err: err}
-	}
+	})
 }
 
 // applyPRStatus merges a fetched status into the row. Viewer approval is only

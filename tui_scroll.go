@@ -371,6 +371,7 @@ func (m tuiModel) confirmAcceptWithSubmission(submission confirmSubmission) (tea
 	} else {
 		cmd = m.confirmCmd
 	}
+	cmd = m.trackAction(cmd)
 	if m.confirmOnAccept != nil {
 		m.confirmOnAccept(&m)
 	}

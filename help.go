@@ -44,7 +44,7 @@ func buildExamplesSection() help.Section {
 			help.Examples{
 				{
 					Comment: "List your open PRs",
-					Command: "prl",
+					Command: programName,
 				},
 				{
 					Comment: "List all your PRs (open + closed + merged)",

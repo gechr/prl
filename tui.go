@@ -471,6 +471,12 @@ type tuiModel struct {
 	pendingApprovals map[prKey]pendingApproval
 	approvalGen      map[prKey]int
 
+	// Tracked actions sent but not yet returned (see trackAction).
+	actionsInFlight int
+
+	// Background reads tracked independently of mutations and refresh scheduling.
+	readsInFlight int
+
 	// Diff queue for sequential multi-PR review.
 	diffQueue      []prKey // remaining PR keys to diff through
 	diffHistory    []prKey // previously viewed PR keys (for going back)
@@ -753,6 +759,7 @@ func (m tuiModel) selectedConfirmOptionValue(row int) string {
 }
 
 func (m tuiModel) Init() tea.Cmd {
+	reportProgramStatus(m.programStatus())
 	var cmds []tea.Cmd
 	if m.initCmd != nil {
 		cmds = append(cmds, m.initCmd)
@@ -871,7 +878,7 @@ func (m tuiModel) scheduleDetailRefresh() tea.Cmd {
 
 // refetchDetail re-fetches the currently displayed detail view (e.g. after
 // an action like update-branch changes PR state).
-func (m tuiModel) refetchDetail() tea.Cmd {
+func (m *tuiModel) refetchDetail() tea.Cmd {
 	pr := m.prForKey(m.detailKey)
 	if pr == nil {
 		return nil
@@ -880,11 +887,11 @@ func (m tuiModel) refetchDetail() tea.Cmd {
 	key := m.detailKey
 	idx := m.resolveIndex(key, -1)
 	prCopy := *pr
-	return func() tea.Msg {
+	return m.trackRead(func() tea.Msg {
 		owner, repo := prOwnerRepo(prCopy)
 		detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number, prCopy.NodeID)
 		return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
-	}
+	})
 }
 
 func (m tuiModel) isStaleDetailRefresh(id int, key prKey) bool {
@@ -942,10 +949,10 @@ func (m *tuiModel) startHeadValidation(items []PRRowModel) tea.Cmd {
 	queryGen := m.queryGen
 	gql := m.actions.gql
 	cache := m.metadataCache
-	return func() tea.Msg {
+	return m.trackRead(func() tea.Msg {
 		changed, err := validateCachedHeads(gql, prs, cache)
 		return headValidationMsg{changed: changed, err: err, queryGen: queryGen}
-	}
+	})
 }
 
 func (m *tuiModel) invalidateRefresh() { m.refreshID++ }
@@ -999,6 +1006,7 @@ func (m *tuiModel) exitDiffView() tea.Cmd {
 // Update runs the real update, then reconciles the dialog stack so a dialog
 // set up (or cleared) anywhere opens or closes before the next View.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	previousState, previousKind := m.programStatus()
 	model, cmd := m.update(msg)
 	tm, ok := model.(tuiModel)
 	if !ok {
@@ -1015,10 +1023,28 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !tm.canOpenPresetMenu() || tm.presetMenu.open {
 		tm.hover = hoverState{}
 	}
+	state, kind := tm.programStatus()
+	if state != previousState || kind != previousKind {
+		reportProgramStatus(state, kind)
+	}
 	return tm, cmd
 }
 
 func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if done, ok := msg.(readDoneMsg); ok {
+		m.readsInFlight = max(m.readsInFlight-1, 0)
+		if done.msg == nil {
+			return m, nil
+		}
+		return m.update(done.msg)
+	}
+	if done, ok := msg.(actionDoneMsg); ok {
+		m.actionsInFlight = max(m.actionsInFlight-1, 0)
+		if done.msg == nil {
+			return m, nil
+		}
+		return m.update(done.msg)
+	}
 	switch msg.(type) {
 	case tea.KeyMsg, tea.WindowSizeMsg:
 		m.hover = hoverState{}
@@ -1248,10 +1274,11 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := msg.key
 		id := msg.id
 		nodeID := pr.NodeID
-		return m, func() tea.Msg {
+		cmd := m.trackRead(func() tea.Msg {
 			checks, err := actions.fetchChecksGraphQL(nodeID)
 			return detailChecksRefreshedMsg{id: id, key: key, checks: checks, err: err}
-		}
+		})
+		return m, cmd
 
 	case detailChecksRefreshedMsg:
 		if m.isStaleDetailRefresh(msg.id, msg.key) {
@@ -3688,5 +3715,5 @@ func runTui(
 	if err != nil {
 		return fmt.Errorf("interactive TUI: %w", err)
 	}
-	return nil
+	return errCanceled
 }

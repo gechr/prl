@@ -56,6 +56,8 @@ func interactiveSelect(rows []TableRow, header string) ([]TableRow, error) {
 		}
 	})
 
+	reportProgramStatus(clog.ProgramStateBlocked, clog.ProgramStatusKindQuestion)
+	defer reportProgramStatus(clog.ProgramStateWorking, "")
 	return pick.MultiSelect(header, items, prlHuhTheme{}, maxSelectHeight, true)
 }
 
@@ -67,6 +69,7 @@ func interactiveEdit(actions *ActionRunner, prs []PullRequest) error {
 		entries[i] = input.EditorEntry{Label: pr.Ref(), Title: pr.Title}
 	}
 
+	reportProgramStatus(clog.ProgramStateBlocked, clog.ProgramStatusKindQuestion)
 	results, submitted, err := input.Run(entries,
 		input.WithEditorStyles(prlEditorStyles()),
 		input.WithBodyFetch(func(index int) (string, error) {
@@ -79,9 +82,10 @@ func interactiveEdit(actions *ActionRunner, prs []PullRequest) error {
 		return err
 	}
 	if !submitted {
-		return nil
+		return errCanceled
 	}
 
+	reportProgramStatus(clog.ProgramStateWorking, "")
 	for i, result := range results {
 		pr := prs[i]
 		if !result.Changed {

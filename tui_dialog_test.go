@@ -57,10 +57,11 @@ func TestPlainConfirmDialogYAccepts(t *testing.T) {
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.NotNil(t, cmd)
-	require.Equal(t, confirmDoneMsg{}, cmd())
+	require.Equal(t, actionDoneMsg{msg: confirmDoneMsg{}}, cmd())
 	require.Empty(t, bm.confirmAction)
 	require.False(t, bm.dialogs.Active())
 	require.Equal(t, 1, strings.Count(ansi.Strip(bm.flash.Msg), "Approving"))
+	require.Equal(t, 1, bm.actionsInFlight)
 }
 
 func TestPlainConfirmDialogEscDismisses(t *testing.T) {
@@ -95,7 +96,7 @@ func TestPlainConfirmDialogClickButtons(t *testing.T) {
 	bm, ok := model.(tuiModel)
 	require.True(t, ok)
 	require.NotNil(t, cmd)
-	require.Equal(t, confirmDoneMsg{}, cmd())
+	require.Equal(t, actionDoneMsg{msg: confirmDoneMsg{}}, cmd())
 	require.Empty(t, bm.confirmAction)
 
 	bm = openPlainConfirm(t, plainConfirmModel())

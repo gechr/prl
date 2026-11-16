@@ -91,8 +91,9 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 	}
 
 	// Phase 3: Force-merge (parallel per-PR so multiple selections wait concurrently)
+	var forceMergeErr error
 	if cli.ForceMerge {
-		a.forceMergeAll(prs)
+		forceMergeErr = a.forceMergeAll(prs)
 	}
 
 	// Phase 4: Open in browser (if --open)
@@ -106,7 +107,7 @@ func (a *ActionRunner) Execute(cli *CLI, prs []PullRequest) error {
 		}
 	}
 
-	return nil
+	return forceMergeErr
 }
 
 func (a *ActionRunner) cachedCurrentLogin() (string, error) {
@@ -128,9 +129,10 @@ func (a *ActionRunner) diffRESTClient() (*api.RESTClient, error) {
 	return a.diffClient, a.diffClientErr
 }
 
-func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
+// forceMergeAll logs each failure and returns errFatal if any PR failed.
+func (a *ActionRunner) forceMergeAll(prs []PullRequest) error {
 	if len(prs) == 0 {
-		return
+		return nil
 	}
 
 	pollerCtx, cancelPoller := context.WithCancel(context.Background())
@@ -188,11 +190,13 @@ func (a *ActionRunner) forceMergeAll(prs []PullRequest) {
 		}
 	}
 
-	if len(failed) == 0 {
-		clog.Success().
-			Int("count", len(prs)).
-			Msg("All PRs force-merged")
+	if len(failed) > 0 {
+		return errFatal
 	}
+	clog.Success().
+		Int("count", len(prs)).
+		Msg("All PRs force-merged")
+	return nil
 }
 
 func (a *ActionRunner) executeForPR(cli *CLI, pr PullRequest) error {
