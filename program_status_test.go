@@ -47,6 +47,10 @@ func TestTUIProgramStatus(t *testing.T) {
 	}{
 		{name: "browsing", state: clog.ProgramStateIdle},
 		{name: "refresh", model: tuiModel{refreshing: true}, state: clog.ProgramStateWorking},
+		{name: "changed PR refresh", model: tuiModel{changedRefreshInFlight: true}, state: clog.ProgramStateWorking},
+		{name: "queued changes", model: tuiModel{changedPRs: prKeys{"example/repo#1": true}}, state: clog.ProgramStateIdle},
+		{name: "error during changed PR refresh", model: tuiModel{flash: flash.State{Err: true}, changedRefreshInFlight: true}, state: clog.ProgramStateError},
+		{name: "prompt during changed PR refresh", model: tuiModel{confirmAction: tuiActionInfo, changedRefreshInFlight: true}, state: clog.ProgramStateBlocked, kind: clog.ProgramStatusKindQuestion},
 		{name: "diff", model: tuiModel{diffLoading: true}, state: clog.ProgramStateWorking},
 		{name: "detail", model: tuiModel{detailLoading: true}, state: clog.ProgramStateWorking},
 		{name: "approval", model: tuiModel{pendingApprovals: map[prKey]pendingApproval{"example/repo#1": {}}}, state: clog.ProgramStateWorking},

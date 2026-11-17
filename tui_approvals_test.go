@@ -228,11 +228,12 @@ func TestApprovalSuccessAfterRowLeftListSettles(t *testing.T) {
 	require.Equal(t, "Approved owner/repo#1", ansi.Strip(m.flash.Msg))
 }
 
-func TestApprovalSuccessSwapsCacheAndRestartsInFlightRefresh(t *testing.T) {
+func TestApprovalSuccessInvalidatesInFlightRefresh(t *testing.T) {
 	m := approvalTestModel(valueReviewFilterSelfRequired, approvalTestPR(1), approvalTestPR(2))
 	key := makePRKey(m.rows[0].Item.PR)
 	oldCache := m.metadataCache
 	m.refreshing = true
+	m.refreshCancellable = true
 	m.queryGen = 5
 	m.beginApproval([]prKey{key})
 
@@ -241,6 +242,7 @@ func TestApprovalSuccessSwapsCacheAndRestartsInFlightRefresh(t *testing.T) {
 	require.NotNil(t, cmd)
 	require.NotSame(t, oldCache, m.metadataCache)
 	require.Equal(t, 6, m.queryGen)
+	require.False(t, m.refreshing)
 	require.True(t, m.filterHidden[key])
 
 	// The superseded refresh still carries the PR as unapproved; it's dropped.
@@ -324,7 +326,16 @@ func TestPRStatusRespectsApprovalGeneration(t *testing.T) {
 	require.True(t, isViewerApproved(m.rows[0].Item.PR))
 
 	// Requested after settlement: authoritative.
-	m, _ = updateModel(t, m, prStatusMsg{key: key, gen: m.approvalGen[key], pr: unapproved})
+	m, _ = updateModel(
+		t,
+		m,
+		prStatusMsg{
+			key:       key,
+			gen:       m.approvalGen[key],
+			changeGen: m.prChangeGen[key],
+			pr:        unapproved,
+		},
+	)
 	require.False(t, m.rows[0].Item.PR.viewerApproved)
 }
 
@@ -423,6 +434,7 @@ func TestAlreadyApprovedResultSwapsStaleCache(t *testing.T) {
 	require.NotNil(t, cmd)
 	require.NotSame(t, oldCache, m.metadataCache)
 	require.Equal(t, 6, m.queryGen)
+	require.True(t, m.refreshing)
 	require.True(t, isViewerApproved(m.rows[0].Item.PR))
 }
 

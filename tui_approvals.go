@@ -24,10 +24,11 @@ type approvalResult struct {
 // prStatusMsg carries a single PR's freshly fetched status. gen is the key's
 // approval generation when the request was sent.
 type prStatusMsg struct {
-	key prKey
-	gen int
-	pr  PullRequest
-	err error
+	key       prKey
+	gen       int
+	changeGen int
+	pr        PullRequest
+	err       error
 }
 
 // isViewerApproved reports whether the viewer is known to have approved pr.
@@ -279,15 +280,19 @@ func (m *tuiModel) statusCmd(key prKey) tea.Cmd {
 	actions := m.actions
 	prCopy := *pr
 	gen := m.approvalGen[key]
+	changeGen := m.prChangeGen[key]
 	return m.trackRead(func() tea.Msg {
 		fresh, err := actions.fetchPRStatus(prCopy)
-		return prStatusMsg{key: key, gen: gen, pr: fresh, err: err}
+		return prStatusMsg{key: key, gen: gen, changeGen: changeGen, pr: fresh, err: err}
 	})
 }
 
 // applyPRStatus merges a fetched status into the row. Viewer approval is only
 // taken from responses requested after the key's last approval change.
 func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
+	if msg.changeGen != m.prChangeGen[msg.key] {
+		return
+	}
 	if msg.err != nil {
 		clog.Debug().Err(msg.err).Str("pr", string(msg.key)).Msg("PR status refresh failed")
 		return
@@ -309,6 +314,7 @@ func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
 			}
 			item.MergeStatus = fresh.MergeStatus
 			item.MergeReason = deriveMergeReason(item.PR)
+			item.Review = deriveReviewStatus(item.PR)
 		}
 		if fresh.viewerApprovalLoaded && viewerCurrent {
 			item.PR.viewerApproved = fresh.viewerApproved
@@ -317,6 +323,7 @@ func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
 		}
 	})
 	m.reconcileVisibility(msg.key)
+	m.rerenderList()
 	m.resyncCursorAndOffset()
 }
 

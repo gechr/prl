@@ -466,6 +466,11 @@ type tuiModel struct {
 	// Confirmed actions retained while the search index catches up.
 	pendingActions map[prKey]pendingAction
 
+	// Successful mutations awaiting a targeted read when review ends.
+	changedPRs             prKeys
+	prChangeGen            map[prKey]int
+	changedRefreshInFlight bool
+
 	// Optimistic approvals: sent but not yet confirmed. approvalGen bumps on
 	// every begin and settlement so stale status responses are ignored.
 	pendingApprovals map[prKey]pendingApproval
@@ -525,13 +530,14 @@ type tuiModel struct {
 	lastRefreshAt   time.Time // last successful list refresh
 	// showRefreshStatus is true when the in-flight refresh was triggered by
 	// applying options and should show a temporary "Refreshing..." status.
-	showRefreshStatus bool
-	refreshID         int     // generation counter to discard stale refresh ticks
-	spinner           spinner // spinner animation frames
-	spinnerTick       int     // current spinner frame index
-	queryGen          int     // generation counter to discard stale ticks and results
-	repaintTick       bool    // toggled each heartbeat to invalidate the renderer cache
-	showHelp          bool
+	showRefreshStatus  bool
+	refreshCancellable bool    // only periodic reads may yield to targeted refreshes
+	refreshID          int     // generation counter to discard stale refresh ticks
+	spinner            spinner // spinner animation frames
+	spinnerTick        int     // current spinner frame index
+	queryGen           int     // generation counter to discard stale ticks and results
+	repaintTick        bool    // toggled each heartbeat to invalidate the renderer cache
+	showHelp           bool
 
 	// Cached GitHub login of the authenticated user (resolved lazily).
 	login string
@@ -920,6 +926,7 @@ func (m *tuiModel) clearDiffState() {
 }
 
 func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
+	m.refreshCancellable = false
 	m.refreshing = true
 	m.showRefreshStatus = showStatus
 	m.spinnerTick = 0
@@ -972,6 +979,9 @@ func (m *tuiModel) rescheduleRefresh() tea.Cmd {
 }
 
 func (m *tuiModel) refreshOrReschedule() tea.Cmd {
+	if len(m.changedPRs) > 0 || m.changedRefreshInFlight || m.actionsInFlight > 0 {
+		return m.rescheduleRefresh()
+	}
 	if !m.autoRefresh {
 		return nil
 	}
@@ -986,7 +996,7 @@ func (m *tuiModel) refreshOrReschedule() tea.Cmd {
 		m.refreshIntervalOverride(),
 	) {
 		m.invalidateRefresh()
-		return m.startRefresh(false)
+		return m.startPeriodicRefresh()
 	}
 	return m.rescheduleRefresh()
 }
@@ -1007,11 +1017,13 @@ func (m *tuiModel) exitDiffView() tea.Cmd {
 // set up (or cleared) anywhere opens or closes before the next View.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousState, previousKind := m.programStatus()
+	m.recordChangedPRs(msg)
 	model, cmd := m.update(msg)
 	tm, ok := model.(tuiModel)
 	if !ok {
 		return model, cmd
 	}
+	cmd = tea.Batch(cmd, tm.refreshChangedPRs())
 	tm.syncConfirmDialog()
 	if tm.presetMenu.open {
 		if tm.canKeepPresetMenuOpen() {
@@ -1355,11 +1367,17 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case changedPRsMsg:
+		return m, m.applyChangedPRs(msg)
+
 	case refreshTickMsg:
 		if !m.autoRefresh || m.view != tuiViewList || msg.id != m.refreshID || m.refreshing {
 			return m, nil
 		}
-		return m, m.startRefresh(false)
+		if len(m.changedPRs) > 0 || m.changedRefreshInFlight {
+			return m, m.rescheduleRefresh()
+		}
+		return m, m.startPeriodicRefresh()
 
 	case spinnerTickMsg:
 		if !m.refreshing || msg.id != m.queryGen {
@@ -1517,6 +1535,7 @@ func (m *tuiModel) applyDetailMergeStatus(key prKey, status *MergeStatus) {
 		item.MergeStatus = *status
 		item.MergeReason = deriveMergeReason(item.PR)
 	})
+	m.rerenderList()
 }
 
 func (m tuiModel) doPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {

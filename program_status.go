@@ -111,7 +111,7 @@ func (m tuiModel) programStatus() (clog.ProgramState, clog.ProgramStatusKind) {
 		return clog.ProgramStateBlocked, clog.ProgramStatusKindPermission
 	case m.flash.Err:
 		return clog.ProgramStateError, ""
-	case m.refreshing || m.diffLoading || m.detailLoading ||
+	case m.refreshing || m.changedRefreshInFlight || m.diffLoading || m.detailLoading ||
 		len(m.pendingApprovals) > 0 || m.actionsInFlight > 0 || m.readsInFlight > 0:
 		return clog.ProgramStateWorking, ""
 	default:
