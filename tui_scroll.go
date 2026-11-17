@@ -349,6 +349,7 @@ func pillButtonStyle(body lg.Style, capColor color.Color, dim bool) lg.Style {
 // confirmActionVerb maps confirm action names to in-progress verbs.
 var confirmActionVerb = map[string]string{
 	tuiActionApprove:       "Approving",
+	tuiActionUnapprove:     "Unapproving",
 	tuiActionApproveMerge:  "Approving & merging",
 	tuiActionClose:         "Closing",
 	tuiActionComment:       "Commenting",

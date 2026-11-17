@@ -9,14 +9,16 @@ import (
 	"github.com/gechr/clog"
 )
 
-// pendingApproval records an approval that has been sent but not confirmed.
+// pendingApproval records an approval change that has been sent but not confirmed.
 type pendingApproval struct {
-	prev PullRequest // the PR before the optimistic update, for rollback
+	prev   PullRequest // the PR before the optimistic update, for rollback
+	remove bool
 }
 
-// approvalResult is the outcome of one approval request.
+// approvalResult is the outcome of one approval change.
 type approvalResult struct {
 	key     prKey
+	remove  bool
 	outcome approveOutcome
 	err     error
 }
@@ -171,6 +173,10 @@ func (m *tuiModel) reconcileVisibility(key prKey) {
 // rows that no longer match the filters. Callers capture the PRs for the
 // approve command before calling this.
 func (m *tuiModel) beginApproval(keys []prKey) {
+	m.beginApprovalChange(keys, false)
+}
+
+func (m *tuiModel) beginApprovalChange(keys []prKey, remove bool) {
 	if m.pendingApprovals == nil {
 		m.pendingApprovals = make(map[prKey]pendingApproval)
 	}
@@ -182,9 +188,9 @@ func (m *tuiModel) beginApproval(keys []prKey) {
 		if pr == nil {
 			continue
 		}
-		m.pendingApprovals[key] = pendingApproval{prev: *pr}
+		m.pendingApprovals[key] = pendingApproval{prev: *pr, remove: remove}
 		m.approvalGen[key]++
-		m.updatePR(key, setViewerApproval(true, true))
+		m.updatePR(key, setViewerApproval(!remove, true))
 		m.reconcileVisibility(key)
 	}
 	m.resyncCursorAndOffset()
@@ -198,16 +204,16 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 	if m.approvalGen == nil {
 		m.approvalGen = make(map[prKey]int)
 	}
-	approved, missing := false, false
+	updated, missing := false, false
 	changed := make(prKeys)
 	for _, r := range results {
 		pending, wasPending := m.pendingApprovals[r.key]
 		delete(m.pendingApprovals, r.key)
 		m.approvalGen[r.key]++
 		if r.err == nil && r.outcome != approveSkippedAggregate {
-			approved = true
+			updated = true
 			changed[r.key] = true
-			m.updatePR(r.key, setViewerApproval(true, true))
+			m.updatePR(r.key, setViewerApproval(!r.remove, true))
 			m.reconcileVisibility(r.key)
 			continue
 		}
@@ -224,10 +230,10 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 	}
 	m.resyncCursorAndOffset()
 
-	// Invalidate confirmed approvals while retaining unrelated cached rows.
+	// Invalidate confirmed approval changes while retaining unrelated cached rows.
 	// In-flight hydrations keep writing to the old cache. Restart any refresh
 	// that started before the approval landed.
-	if approved {
+	if updated {
 		m.invalidatePRMetadata(changed)
 		if m.refreshing {
 			m.invalidateRefresh()
@@ -246,12 +252,12 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 // an approval is in flight doesn't flash the row back.
 func (m *tuiModel) applyPendingApprovals() {
 	m.filterHidden = nil
-	for key := range m.pendingApprovals {
+	for key, pending := range m.pendingApprovals {
 		item := m.itemForKey(key)
 		if item == nil {
 			continue
 		}
-		item.PR.viewerApproved = true
+		item.PR.viewerApproved = !pending.remove
 		item.PR.viewerApprovalLoaded = true
 		m.reconcileVisibility(key)
 	}
@@ -263,11 +269,11 @@ func (m *tuiModel) approvalFlash(msg actionMsg) tea.Cmd {
 		msg.ref = string(msg.key)
 	}
 	if msg.err != nil {
-		return flashResult(m, tuiActionApproved.Verb()+" failed:",
+		return flashResult(m, msg.action.Verb()+" failed:",
 			fmt.Sprintf("%s: %v", msg.ref, withGitHubErrorDetail(msg.err)), "", true)
 	}
-	action := tuiActionApproved.String()
-	if msg.outcome != approvePosted {
+	action := msg.action.String()
+	if msg.action == tuiActionApproved && msg.outcome != approvePosted {
 		action = resultAlreadyApproved
 	}
 	return flashResult(m, action, msg.ref, msg.url, false)

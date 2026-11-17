@@ -172,27 +172,27 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	if xos.IsDarwin() {
 		require.Equal(
 			t,
-			"│          D  Toggle draft                      r  Launch AI review                 │",
+			"│          D  Toggle draft                          r  Launch AI review                 │",
 			lines[15],
 		)
 		require.Equal(
 			t,
-			"│          m  Merge/Automerge PRs           alt+r  Launch AI review (no confirm)    │",
+			"│          m  Merge/Automerge PRs               alt+r  Launch AI review (no confirm)    │",
 			lines[16],
 		)
 		require.Equal(
 			t,
-			"│    shift+↕  Extend selection                  s  Send to Slack                    │",
+			"│    shift+↕  Extend selection                      s  Send to Slack                    │",
 			lines[7],
 		)
 		require.Equal(
 			t,
-			"│          A  Approve/Merge PRs               t/T  Cycle time presets               │",
+			"│          A  Approve/Merge PRs                   t/T  Cycle time presets               │",
 			lines[12],
 		)
 		require.Equal(
 			t,
-			"│      alt+a  Approve PRs (no confirm)     ctrl+x  Clear all presets                │",
+			"│      alt+a  Toggle approval (no confirm)     ctrl+x  Clear all presets                │",
 			lines[13],
 		)
 	} else {

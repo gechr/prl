@@ -203,7 +203,8 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 - `Shift+O`: filters and stack visibility.
 - `f/F`: status presets. `t/T`: time ranges. `Ctrl+X`: clear both.
 - Left/Right or click a stack header: collapse/expand stacks.
-- `a` in diff view: approve and advance.
+- `a`: approve, or unapprove your own approval. Unapprove opens a reason editor prefilled with "Approval withdrawn by reviewer." In diff view, approving advances to the next PR.
+- `Alt+a`: approve or unapprove without confirmation, using the default reason.
 - `--interval 30s`: slow auto-refresh.
 - Auto-refresh keeps its idle backoff. Pending CI is checked each refresh. Settled status is reused for up to a minute on screen and three minutes off screen, subject to the refresh interval and rate limits.
 - Returning focus catches up when a refresh is due. Refreshes preserve the selected PR and its screen position when possible.

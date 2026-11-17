@@ -84,8 +84,14 @@ func applyKnownActionState(item *PRRowModel, action tuiAction) bool {
 	case tuiActionAutomerged:
 		item.PR.Automerge = true
 		item.PR.automergeLoaded = true
-	case tuiActionApproved, tuiActionBranchUpdated, tuiActionCommented, tuiActionEnqueued,
-		tuiActionOpened, tuiActionReviewRequested, tuiActionUnsubscribed:
+	case tuiActionApproved,
+		tuiActionUnapproved,
+		tuiActionBranchUpdated,
+		tuiActionCommented,
+		tuiActionEnqueued,
+		tuiActionOpened,
+		tuiActionReviewRequested,
+		tuiActionUnsubscribed:
 		return false
 	}
 	item.State = item.PR.State
@@ -420,7 +426,7 @@ func renderBatchFailurePrompt(msg batchActionMsg) string {
 func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	switch msg.String() {
 	case tuiKeybindApprove, tuiKeybindApproveNoConfirm:
-		targets, skipped := m.approvableTargets()
+		targets, skipped, remove := m.approvalToggleTargets()
 		if len(targets) == 0 {
 			if len(skipped) > 0 {
 				return m, flashApprovalBlocked(&m, m.approvalSkipReason(skipped), skipped), true
@@ -428,16 +434,14 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		// The command captures the PRs before the optimistic update.
-		cmd := approveTargetsCmd(m.actions, targets)
+		cmd := approvalChangeCmd(m.actions, targets, remove)
 		keys := targetKeys(targets)
 		if msg.String() == tuiKeybindApproveNoConfirm {
-			m.beginApproval(keys)
+			m.beginApprovalChange(keys, remove)
 			cmd = m.trackAction(cmd)
 			return m, cmd, true
 		}
-		setupConfirmPrompt(&m, targets, tuiActionApprove, "Approve")
-		m.confirmCmd = cmd
-		m.confirmOnAccept = func(m *tuiModel) { m.beginApproval(keys) }
+		m.confirmApprovalChange(targets, remove, cmd)
 		return m, nil, true
 
 	case tuiKeybindDiff:
@@ -1233,17 +1237,25 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok || !m.isApprovable(ctx.pr) {
 			return m, nil
 		}
-		// Approve in the background and move on straight away; an already
-		// approved (or pending) PR just moves on.
+		if isViewerApproved(ctx.pr) &&
+			m.approvalBlockReason(ctx.key, ctx.pr) != resultApprovalPending &&
+			msg.String() != tuiKeybindApproveNoConfirm {
+			m.confirmApprovalChange([]targetPR{{ctx.idx, ctx.pr}}, true, nil)
+			return m, nil
+		}
+		// Toggle approval in the background and move on straight away.
 		var approve tea.Cmd
 		reason := m.approvalBlockReason(ctx.key, ctx.pr)
-		if reason == "" {
-			approve = m.trackAction(approveCmd(m.actions, targetPR{ctx.idx, ctx.pr}))
-			m.beginApproval([]prKey{ctx.key})
+		if reason != resultApprovalPending {
+			remove := isViewerApproved(ctx.pr)
+			approve = m.trackAction(
+				approvalChangeCmd(m.actions, []targetPR{{ctx.idx, ctx.pr}}, remove),
+			)
+			m.beginApprovalChange([]prKey{ctx.key}, remove)
 		}
 		navCmd := m.advanceOrExitDiff()
 		var flashCmd tea.Cmd
-		if reason != "" {
+		if reason == resultApprovalPending {
 			flashCmd = flashResult(&m, reason, ctx.pr.Ref(), ctx.pr.URL, false)
 		}
 		return m, tea.Batch(approve, navCmd, flashCmd)
@@ -1402,21 +1414,20 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok || !m.isApprovable(ctx.pr) {
 			return m, nil
 		}
-		if reason := m.approvalBlockReason(ctx.key, ctx.pr); reason != "" {
+		if reason := m.approvalBlockReason(ctx.key, ctx.pr); reason == resultApprovalPending {
 			return m, flashResult(&m, reason, ctx.pr.Ref(), ctx.pr.URL, false)
 		}
 		target := targetPR{ctx.idx, ctx.pr}
-		cmd := approveCmd(m.actions, target)
+		remove := isViewerApproved(ctx.pr)
+		cmd := approvalChangeCmd(m.actions, []targetPR{target}, remove)
 		keys := []prKey{ctx.key}
 		refreshCmd := m.exitDetailView()
 		if msg.String() == tuiKeybindApproveNoConfirm {
-			m.beginApproval(keys)
+			m.beginApprovalChange(keys, remove)
 			cmd = m.trackAction(cmd)
 			return m, tea.Batch(refreshCmd, cmd)
 		}
-		setupConfirmPrompt(&m, []targetPR{target}, tuiActionApprove, "Approve")
-		m.confirmCmd = cmd
-		m.confirmOnAccept = func(m *tuiModel) { m.beginApproval(keys) }
+		m.confirmApprovalChange([]targetPR{target}, remove, cmd)
 		return m, refreshCmd
 	case tuiKeybindMerge:
 		idx := m.resolveIndex(m.detailKey, -1)

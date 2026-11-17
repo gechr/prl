@@ -199,6 +199,7 @@ const (
 	resultAlreadyApproved = "Already approved"
 	resultApprovalPending = "Approval pending"
 	resultApproved        = "Approved"
+	resultUnapproved      = "Unapproved"
 	resultAutomerged      = "Automerge enabled"
 	resultBranchUpdated   = "Branch updated"
 	resultClosed          = "Closed"
@@ -261,6 +262,7 @@ const (
 	tuiCursorPrefix = "❯ "
 
 	tuiActionApprove       = "approve-pr"
+	tuiActionUnapprove     = "unapprove-pr"
 	tuiActionApproveMerge  = "approve/merge"
 	tuiActionClose         = "close"
 	tuiActionComment       = "comment"
@@ -341,6 +343,7 @@ const (
 // tuiHelp* - terse lowercase labels for bottom help bars.
 const (
 	tuiHelpApprove      = "approve"
+	tuiHelpUnapprove    = "unapprove"
 	tuiHelpApproveMerge = "approve/merge"
 	tuiHelpAutomerge    = "automerge"
 	tuiHelpClose        = "close"
@@ -371,9 +374,9 @@ const (
 
 // tuiDesc* - Title Case descriptions for the ? help overlay.
 const (
-	tuiDescApprove          = "Approve PRs"
+	tuiDescApprove          = "Toggle approval"
 	tuiDescApproveMerge     = "Approve/Merge PRs"
-	tuiDescApproveNoConfirm = "Approve PRs (no confirm)"
+	tuiDescApproveNoConfirm = "Toggle approval (no confirm)"
 	tuiDescClose            = "Close/Reopen PRs"
 	tuiDescCopilotReview    = "Request Copilot review"
 	tuiDescCopy             = "Copy URL(s)"

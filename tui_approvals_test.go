@@ -86,7 +86,7 @@ func TestApprovalHelpMatchesViewerState(t *testing.T) {
 		want    bool
 	}{
 		{name: "unapproved", want: true},
-		{name: "approved by viewer", prepare: func(pr *PullRequest) { pr.viewerApproved = true }},
+		{name: "approved by viewer", prepare: func(pr *PullRequest) { pr.viewerApproved = true }, want: true},
 		{name: "pending", pending: true},
 		{name: "approved by others", prepare: func(pr *PullRequest) { pr.ReviewDecision = valueReviewApproved }, want: true},
 		{name: "unknown viewer approval", prepare: func(pr *PullRequest) { pr.viewerApprovalLoaded = false }, want: true},
@@ -126,7 +126,7 @@ func TestApprovalHelpMatchesViewerState(t *testing.T) {
 func TestListApprovalHelpUsesSelectedTargets(t *testing.T) {
 	hasApprove := func(m tuiModel) bool {
 		return slices.ContainsFunc(m.listHelpPairs(), func(h key.Hint) bool {
-			return h.Key == tuiKeybindApprove
+			return h.Key == tuiKeybindApprove && h.Desc == tuiHelpApprove
 		})
 	}
 	approved := approvalTestPR(1)
@@ -339,16 +339,17 @@ func TestPRStatusRespectsApprovalGeneration(t *testing.T) {
 	require.False(t, m.rows[0].Item.PR.viewerApproved)
 }
 
-func TestListApproveSkipsAlreadyApproved(t *testing.T) {
+func TestListApprovePromptsToUnapprove(t *testing.T) {
 	pr := approvalTestPR(1)
 	pr.viewerApproved = true
 	m := approvalTestModel("", pr)
 
 	m, _ = pressKey(t, m, tuiKeybindApprove)
 
-	require.Empty(t, m.confirmAction)
+	require.Equal(t, tuiActionUnapprove, m.confirmAction)
+	require.True(t, m.confirmHasInput)
+	require.Equal(t, defaultUnapproveMessage, m.confirmInputValue)
 	require.Empty(t, m.pendingApprovals)
-	require.Equal(t, "Already approved owner/repo#1", ansi.Strip(m.flash.Msg))
 }
 
 func TestListApproveSkipsPending(t *testing.T) {
@@ -560,7 +561,7 @@ func TestDiffApproveAdvancesInstantlyToPrefetchedDiff(t *testing.T) {
 	require.Empty(t, m.diffPrefetch)
 }
 
-func TestDiffApproveOnApprovedPRAdvancesWithoutSending(t *testing.T) {
+func TestDiffApproveOnApprovedPRPromptsWithoutAdvancing(t *testing.T) {
 	pr := approvalTestPR(1)
 	pr.viewerApproved = true
 	m := diffTestModel(pr, approvalTestPR(2))
@@ -570,8 +571,10 @@ func TestDiffApproveOnApprovedPRAdvancesWithoutSending(t *testing.T) {
 	m, _ = pressKey(t, m, tuiKeybindApprove)
 
 	require.Empty(t, m.pendingApprovals)
-	require.Equal(t, k2, m.diffKey)
-	require.Equal(t, "Already approved owner/repo#1", ansi.Strip(m.flash.Msg))
+	require.Equal(t, makePRKey(pr), m.diffKey)
+	require.Equal(t, tuiActionUnapprove, m.confirmAction)
+	require.True(t, m.confirmHasInput)
+	require.Equal(t, defaultUnapproveMessage, m.confirmInputValue)
 }
 
 func TestDiffApproveOnLastPRReturnsToList(t *testing.T) {

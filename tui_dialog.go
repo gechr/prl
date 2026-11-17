@@ -166,7 +166,7 @@ func (m *tuiModel) newConfirmFormModel(
 		Placeholder: m.confirmInputPlaceholder,
 		Initial:     inputValue,
 		Multiline:   true,
-		Optional:    true,
+		Optional:    m.confirmAction != tuiActionUnapprove,
 	})
 	return form.New(form.Config{
 		Title:  m.confirmPrompt + nl,

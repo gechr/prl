@@ -169,6 +169,7 @@ type tuiAction int
 
 const (
 	tuiActionApproved tuiAction = iota
+	tuiActionUnapproved
 	tuiActionAutomerged
 	tuiActionBranchUpdated
 	tuiActionClosed
@@ -186,6 +187,8 @@ const (
 
 func (a tuiAction) String() string {
 	switch a {
+	case tuiActionUnapproved:
+		return resultUnapproved
 	case tuiActionApproved:
 		return resultApproved
 	case tuiActionAutomerged:
@@ -222,6 +225,8 @@ func (a tuiAction) String() string {
 // Verb returns the imperative form of the action (e.g. "Force-merge").
 func (a tuiAction) Verb() string {
 	switch a {
+	case tuiActionUnapproved:
+		return "Unapprove"
 	case tuiActionApproved:
 		return "Approve"
 	case tuiActionAutomerged:
@@ -1201,7 +1206,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				{key: msg.key, outcome: msg.outcome, err: msg.err},
 			})
 		}
-		if msg.action == tuiActionApproved {
+		if msg.action == tuiActionApproved || msg.action == tuiActionUnapproved {
 			if msg.navigated || m.resolveIndex(msg.key, msg.index) < 0 {
 				return m, tea.Batch(m.approvalFlash(msg), settleCmd)
 			}
@@ -1521,7 +1526,7 @@ func (m tuiModel) handleActionResult(msg actionMsg) (tea.Model, tea.Cmd) {
 
 // actionFlash renders an action's result for the status line.
 func (m *tuiModel) actionFlash(msg actionMsg) tea.Cmd {
-	if msg.action == tuiActionApproved {
+	if msg.action == tuiActionApproved || msg.action == tuiActionUnapproved {
 		return m.approvalFlash(msg)
 	}
 	if msg.err != nil {
@@ -2895,8 +2900,8 @@ func (m tuiModel) listHelpPairs() []key.Hint {
 	}
 	ctx, ok := m.actionContextForCursor()
 	actionable := ok && ctx.actionable
-	if targets, _ := m.approvableTargets(); len(targets) > 0 {
-		pairs = append(pairs, key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove})
+	if targets, _, remove := m.approvalToggleTargets(); len(targets) > 0 {
+		pairs = append(pairs, key.Hint{Key: tuiKeybindApprove, Desc: approvalHelp(remove)})
 	}
 	pairs = append(pairs, key.Hint{Key: tuiKeybindDiff, Desc: tuiHelpDiff})
 	if actionable && !ctx.draft {
@@ -2990,10 +2995,11 @@ func (m tuiModel) diffHelpPairs() []key.Hint {
 	}
 	if actionable && !ctx.ownPR && !ctx.draft {
 		reason := m.approvalBlockReason(ctx.key, ctx.pr)
-		if reason == "" {
-			pairs = append(pairs, key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove})
-		}
 		if reason != resultApprovalPending {
+			pairs = append(
+				pairs,
+				key.Hint{Key: tuiKeybindApprove, Desc: approvalHelp(isViewerApproved(ctx.pr))},
+			)
 			pairs = append(pairs, key.Hint{Key: tuiKeybindApproveMerge, Desc: tuiHelpApproveMerge})
 		}
 	}
@@ -3044,10 +3050,11 @@ func (m tuiModel) detailHelpPairs() []key.Hint {
 			key.Hint{Key: tuiKeybindDraftToggle, Desc: draftToggleHelp(&ctx.pr)},
 		)
 	}
-	if actionable && !ctx.draft && !ctx.ownPR && m.approvalBlockReason(ctx.key, ctx.pr) == "" {
+	if actionable && !ctx.draft && !ctx.ownPR &&
+		m.approvalBlockReason(ctx.key, ctx.pr) != resultApprovalPending {
 		pairs = append(
 			pairs,
-			key.Hint{Key: tuiKeybindApprove, Desc: tuiHelpApprove},
+			key.Hint{Key: tuiKeybindApprove, Desc: approvalHelp(isViewerApproved(ctx.pr))},
 		)
 	}
 	pairs = append(pairs, key.Hint{Key: tuiKeybindComment, Desc: tuiHelpComment})
