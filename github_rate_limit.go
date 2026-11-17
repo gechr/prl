@@ -84,10 +84,11 @@ func (l *githubRateLimiter) noteRetryAfter(wait time.Duration) {
 }
 
 func (l *githubRateLimiter) noteSuccess(req *http.Request) {
-	l.mu.Lock()
-	if isMutatingMethod(req.Method) {
-		clear(l.conditional)
+	if !isMutatingMethod(req.Method) || readOnlyGraphQL(req) {
+		return
 	}
+	l.mu.Lock()
+	clear(l.conditional)
 	l.mu.Unlock()
 }
 

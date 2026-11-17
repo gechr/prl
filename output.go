@@ -47,6 +47,7 @@ type listMetadataCacheEntry struct {
 	reviewDecision          string
 	reviewLoaded            bool
 	viewerApproved          bool
+	viewerIsAuthor          bool
 	viewerApprovalLoaded    bool
 	viewerApprovalFetchedAt time.Time
 	closedActor             string
@@ -76,6 +77,15 @@ func (c *listMetadataCache) apply(
 	req listMetadataRequest,
 	actors *timelineActors,
 ) bool {
+	return c.applyWithPolicy(pr, req, actors, nil)
+}
+
+func (c *listMetadataCache) applyWithPolicy(
+	pr *PullRequest,
+	req listMetadataRequest,
+	actors *timelineActors,
+	policy *listRefreshPolicy,
+) bool {
 	if c == nil || pr == nil {
 		return false
 	}
@@ -95,6 +105,11 @@ func (c *listMetadataCache) apply(
 		return false
 	}
 
+	now, maxAge := time.Now(), listMetadataCacheMaxAge
+	if policy != nil {
+		now, maxAge = policy.now, policy.maxAge(*pr, entry.mergeStatus)
+	}
+
 	if req.timelineClosed {
 		if !entry.closedActorLoaded {
 			return false
@@ -109,18 +124,19 @@ func (c *listMetadataCache) apply(
 	}
 	if req.mergeStatus && pr.State == valueOpen {
 		if !entry.mergeStatusLoaded || !entry.reviewLoaded ||
-			time.Since(entry.mergeStatusFetchedAt) >= listMetadataCacheMaxAge {
+			now.Sub(entry.mergeStatusFetchedAt) >= maxAge {
 			// CI can change without updating the PR timestamp or head SHA.
 			// Expire every status, including success, since checks can be rerun.
 			return false
 		}
+		pr.statusFetchedAt = entry.mergeStatusFetchedAt
 		pr.MergeStatus = entry.mergeStatus
 		pr.behind = entry.behind
 		pr.ReviewDecision = entry.reviewDecision
 		pr.reviewDecisionLoaded = true
 		if req.automerge {
 			if !entry.automergeLoaded ||
-				time.Since(entry.automergeFetchedAt) >= listMetadataCacheMaxAge {
+				now.Sub(entry.automergeFetchedAt) >= maxAge {
 				return false
 			}
 			pr.Automerge = entry.automerge
@@ -129,15 +145,16 @@ func (c *listMetadataCache) apply(
 	}
 	if req.viewerApproval {
 		if !entry.viewerApprovalLoaded ||
-			time.Since(entry.viewerApprovalFetchedAt) >= listMetadataCacheMaxAge {
+			now.Sub(entry.viewerApprovalFetchedAt) >= maxAge {
 			return false
 		}
 		pr.viewerApproved = entry.viewerApproved
+		pr.viewerIsAuthor = entry.viewerIsAuthor
 		pr.viewerApprovalLoaded = true
 	}
 	if req.automerge && (!req.mergeStatus || pr.State != valueOpen) {
 		if !entry.automergeLoaded ||
-			time.Since(entry.automergeFetchedAt) >= listMetadataCacheMaxAge {
+			now.Sub(entry.automergeFetchedAt) >= maxAge {
 			return false
 		}
 		pr.Automerge = entry.automerge
@@ -156,7 +173,7 @@ func (c *listMetadataCache) pendingHeadChecks(prs []PullRequest) []string {
 
 	ids := make([]string, 0, len(prs))
 	for _, pr := range prs {
-		if pr.State != valueOpen || pr.NodeID == "" {
+		if pr.State != valueOpen || pr.NodeID == "" || pr.headValidated {
 			continue
 		}
 		key, ok := listMetadataKey(pr)
@@ -185,7 +202,7 @@ func (c *listMetadataCache) invalidateHeadMismatches(
 
 	changed := false
 	for _, pr := range prs {
-		if pr.State != valueOpen || pr.NodeID == "" {
+		if pr.State != valueOpen || pr.NodeID == "" || pr.headValidated {
 			continue
 		}
 		key, ok := listMetadataKey(pr)
@@ -242,13 +259,17 @@ func (c *listMetadataCache) store(
 		entry.headSHA = pr.HeadSHA
 		entry.mergeStatus = pr.MergeStatus
 		entry.behind = pr.behind
-		entry.mergeStatusLoaded = true
-		entry.mergeStatusFetchedAt = time.Now()
+		entry.mergeStatusLoaded = pr.reviewDecisionLoaded
+		entry.mergeStatusFetchedAt = pr.statusFetchedAt
+		if entry.mergeStatusFetchedAt.IsZero() {
+			entry.mergeStatusFetchedAt = time.Now()
+		}
 		entry.reviewDecision = pr.ReviewDecision
 		entry.reviewLoaded = pr.reviewDecisionLoaded
 	}
 	if req.viewerApproval {
 		entry.viewerApproved = pr.viewerApproved
+		entry.viewerIsAuthor = pr.viewerIsAuthor
 		entry.viewerApprovalLoaded = pr.viewerApprovalLoaded
 		entry.viewerApprovalFetchedAt = time.Now()
 	}
@@ -890,6 +911,10 @@ func applyListMergeStatusNodes(
 	}
 
 	for _, node := range nodes {
+		for _, idx := range openIdx[node.ID] {
+			prs[idx].statusFetchedAt = time.Now()
+			prs[idx].headValidated = node.HeadRefOID != ""
+		}
 		if node.MergeStateStatus == valueMergeStateDirty {
 			applyConflictNode(prs, openIdx[node.ID], node, includeAutomerge)
 			continue
@@ -1305,6 +1330,16 @@ func hydrateListMetadataCached(
 	req listMetadataRequest,
 	cache *listMetadataCache,
 ) (timelineActors, error) {
+	return hydrateListMetadataForRefresh(gql, prs, req, cache, nil)
+}
+
+func hydrateListMetadataForRefresh(
+	gql *api.GraphQLClient,
+	prs []PullRequest,
+	req listMetadataRequest,
+	cache *listMetadataCache,
+	policy *listRefreshPolicy,
+) (timelineActors, error) {
 	if cache == nil || len(prs) == 0 {
 		return hydrateListMetadata(gql, prs, req)
 	}
@@ -1314,13 +1349,29 @@ func hydrateListMetadataCached(
 	missingIdx := make([]int, 0, len(prs))
 
 	for i := range prs {
-		if cache.apply(&prs[i], req, &actors) {
+		prs[i].headValidated = false
+		if cache.applyWithPolicy(&prs[i], req, &actors, policy) {
 			continue
 		}
-		missingPRs = append(missingPRs, prs[i])
+		missing := prs[i]
+		if req.mergeStatus {
+			missing.reviewDecisionLoaded = false
+		}
+		if req.viewerApproval {
+			missing.viewerApprovalLoaded = false
+		}
+		if req.automerge {
+			missing.automergeLoaded = false
+		}
+		missingPRs = append(missingPRs, missing)
 		missingIdx = append(missingIdx, i)
 	}
 
+	if policy != nil {
+		clog.Debug().Int("reused", len(prs)-len(missingPRs)).
+			Int("status_due", len(collectMergeStatusNodeIDs(missingPRs))).
+			Msg("Periodic list metadata")
+	}
 	if len(missingPRs) == 0 {
 		return actors, nil
 	}

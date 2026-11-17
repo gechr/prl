@@ -199,12 +199,14 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 		m.approvalGen = make(map[prKey]int)
 	}
 	approved, missing := false, false
+	changed := make(prKeys)
 	for _, r := range results {
 		pending, wasPending := m.pendingApprovals[r.key]
 		delete(m.pendingApprovals, r.key)
 		m.approvalGen[r.key]++
 		if r.err == nil && r.outcome != approveSkippedAggregate {
 			approved = true
+			changed[r.key] = true
 			m.updatePR(r.key, setViewerApproval(true, true))
 			m.reconcileVisibility(r.key)
 			continue
@@ -222,11 +224,11 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 	}
 	m.resyncCursorAndOffset()
 
-	// A confirmed approval makes cached review metadata stale. Swap in a fresh cache
-	// (in-flight hydrations keep writing to the old one) and restart any
-	// refresh that started before the approval landed.
+	// Invalidate confirmed approvals while retaining unrelated cached rows.
+	// In-flight hydrations keep writing to the old cache. Restart any refresh
+	// that started before the approval landed.
 	if approved {
-		m.metadataCache = newListMetadataCache()
+		m.invalidatePRMetadata(changed)
 		if m.refreshing {
 			m.invalidateRefresh()
 			return m.startRefresh(m.showRefreshStatus)
@@ -305,6 +307,7 @@ func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
 	fresh := msg.pr
 	m.updatePR(msg.key, func(item *PRRowModel) {
 		if fresh.reviewDecisionLoaded {
+			item.PR.statusFetchedAt = fresh.statusFetchedAt
 			item.PR.MergeStatus = fresh.MergeStatus
 			item.PR.behind = fresh.behind
 			item.PR.ReviewDecision = fresh.ReviewDecision

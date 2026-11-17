@@ -153,6 +153,8 @@ type PullRequest struct {
 	UpdatedAt      time.Time   `json:"updatedAt"`
 	URL            string      `json:"url"`
 
+	statusFetchedAt time.Time // last successful merge/review status read
+	headValidated   bool      // direct head read in this fetch, never persisted
 	automergeLoaded bool
 	// behind is whether the base branch requires the head to be brought up
 	// to date before merging.

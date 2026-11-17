@@ -27,6 +27,10 @@ type pendingAction struct {
 // applyPendingActions preserves confirmed writes until the search index catches up.
 // Expiration allows subsequent external changes to become authoritative.
 func (m *tuiModel) applyPendingActions() {
+	m.reconcilePendingActions(true)
+}
+
+func (m *tuiModel) reconcilePendingActions(settle bool) {
 	for key, pending := range m.pendingActions {
 		item := m.itemForKey(key)
 		if item == nil || time.Since(pending.at) >= 2*time.Minute {
@@ -35,7 +39,7 @@ func (m *tuiModel) applyPendingActions() {
 		}
 		before := item.PR
 		applyKnownActionState(item, pending.action)
-		if before.State == item.PR.State && before.IsDraft == item.PR.IsDraft &&
+		if settle && before.State == item.PR.State && before.IsDraft == item.PR.IsDraft &&
 			before.Automerge == item.PR.Automerge {
 			delete(m.pendingActions, key)
 		}

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	listResultCacheVersion   = 4
+	listResultCacheVersion   = 5
 	listResultCacheDirPerm   = 0o755
 	listResultCacheFilePerm  = 0o600
 	tuiListResultCacheMaxAge = 15 * time.Minute
@@ -52,6 +52,7 @@ type cachedPullRequest struct {
 	Title                string     `json:"title"`
 	TitleRaw             string     `json:"titleRaw"`
 	UpdatedAt            time.Time  `json:"updatedAt"`
+	StatusFetchedAt      time.Time  `json:"statusFetchedAt"`
 	URL                  string     `json:"url"`
 	ViewerApprovalLoaded bool       `json:"viewerApprovalLoaded"`
 	ViewerApproved       bool       `json:"viewerApproved"`
@@ -113,6 +114,7 @@ func cachedPR(pr PullRequest) cachedPullRequest {
 		Title:                pr.Title,
 		TitleRaw:             pr.TitleRaw,
 		UpdatedAt:            pr.UpdatedAt,
+		StatusFetchedAt:      pr.statusFetchedAt,
 		URL:                  pr.URL,
 		ViewerApprovalLoaded: pr.viewerApprovalLoaded,
 		ViewerApproved:       pr.viewerApproved,
@@ -142,6 +144,7 @@ func (pr cachedPullRequest) pullRequest() PullRequest {
 		Title:                pr.Title,
 		TitleRaw:             pr.TitleRaw,
 		UpdatedAt:            pr.UpdatedAt,
+		statusFetchedAt:      pr.StatusFetchedAt,
 		URL:                  pr.URL,
 		automergeLoaded:      pr.AutomergeLoaded,
 		behind:               pr.Behind,
@@ -153,6 +156,15 @@ func (pr cachedPullRequest) pullRequest() PullRequest {
 }
 
 func saveListResultCache(cli *CLI, params *SearchParams, prs []PullRequest) error {
+	return saveListResultCacheAt(cli, params, prs, time.Now())
+}
+
+func saveListResultCacheAt(
+	cli *CLI,
+	params *SearchParams,
+	prs []PullRequest,
+	membershipAt time.Time,
+) error {
 	path, key, err := listResultCachePath(cli, params)
 	if err != nil {
 		return err
@@ -167,7 +179,7 @@ func saveListResultCache(cli *CLI, params *SearchParams, prs []PullRequest) erro
 	data, err := json.Marshal(listResultCacheFile{
 		Version: listResultCacheVersion,
 		Key:     key,
-		SavedAt: time.Now(),
+		SavedAt: membershipAt,
 		PRs:     cached,
 	})
 	if err != nil {
@@ -181,32 +193,41 @@ func loadListResultCache(
 	params *SearchParams,
 	maxAge time.Duration,
 ) ([]PullRequest, bool, error) {
+	prs, checkedAt, err := loadListResultSnapshot(cli, params, maxAge)
+	return prs, !checkedAt.IsZero(), err
+}
+
+func loadListResultSnapshot(
+	cli *CLI,
+	params *SearchParams,
+	maxAge time.Duration,
+) ([]PullRequest, time.Time, error) {
 	path, key, err := listResultCachePath(cli, params)
 	if err != nil {
-		return nil, false, err
+		return nil, time.Time{}, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, false, nil
+			return nil, time.Time{}, nil
 		}
-		return nil, false, fmt.Errorf("reading list cache: %w", err)
+		return nil, time.Time{}, fmt.Errorf("reading list cache: %w", err)
 	}
 	var cache listResultCacheFile
 	if err = json.Unmarshal(data, &cache); err != nil {
-		return nil, false, fmt.Errorf("parsing list cache: %w", err)
+		return nil, time.Time{}, fmt.Errorf("parsing list cache: %w", err)
 	}
 	if cache.Version != listResultCacheVersion || cache.Key != key {
-		return nil, false, nil
+		return nil, time.Time{}, nil
 	}
 	if maxAge > 0 && (cache.SavedAt.IsZero() || time.Since(cache.SavedAt) > maxAge) {
-		return nil, false, nil
+		return nil, time.Time{}, nil
 	}
 	prs := make([]PullRequest, len(cache.PRs))
 	for i, pr := range cache.PRs {
 		prs[i] = pr.pullRequest()
 	}
-	return prs, true, nil
+	return prs, cache.SavedAt, nil
 }
 
 func listResultCachePath(cli *CLI, params *SearchParams) (string, string, error) {

@@ -525,9 +525,10 @@ type tuiModel struct {
 
 	// Background auto-refresh.
 	autoRefresh     bool
-	refreshing      bool      // true while a background refresh is in-flight
-	lastInteraction time.Time // tracks last user keypress for idle-based refresh decay
-	lastRefreshAt   time.Time // last successful list refresh
+	refreshing      bool          // true while a background refresh is in-flight
+	lastInteraction time.Time     // tracks last user keypress for idle-based refresh decay
+	lastRefreshAt   time.Time     // last accepted membership check
+	snapshotPRs     []PullRequest // confirmed rows for disk write-through
 	// showRefreshStatus is true when the in-flight refresh was triggered by
 	// applying options and should show a temporary "Refreshing..." status.
 	showRefreshStatus  bool
@@ -631,6 +632,7 @@ type refreshSnapshot struct {
 	params   *SearchParams
 	width    int
 	cache    *listMetadataCache
+	policy   *listRefreshPolicy
 }
 
 func newRefreshSnapshot(m tuiModel) refreshSnapshot {
@@ -698,12 +700,12 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 	needMetadata := needMergeStatus || needTimeline || needViewerApproval
 
 	if needMetadata && r.gql != nil {
-		actors, hydrateErr := hydrateListMetadataCached(r.gql, prs, listMetadataRequest{
+		actors, hydrateErr := hydrateListMetadataForRefresh(r.gql, prs, listMetadataRequest{
 			mergeStatus:    needMergeStatus,
 			timelineClosed: len(closedAllowed) > 0,
 			timelineMerged: len(mergedAllowed) > 0,
 			viewerApproval: needViewerApproval,
-		}, r.cache)
+		}, r.cache, r.policy)
 		if hydrateErr != nil {
 			clog.Debug().Err(hydrateErr).Msg("list metadata hydration failed")
 		}
@@ -926,6 +928,10 @@ func (m *tuiModel) clearDiffState() {
 }
 
 func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
+	return m.startRefreshWithPolicy(showStatus, nil)
+}
+
+func (m *tuiModel) startRefreshWithPolicy(showStatus bool, policy *listRefreshPolicy) tea.Cmd {
 	m.refreshCancellable = false
 	m.refreshing = true
 	m.showRefreshStatus = showStatus
@@ -936,6 +942,7 @@ func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
 		m.flash.Err = false
 	}
 	snapshot := newRefreshSnapshot(*m)
+	snapshot.policy = policy
 	queryGen := m.queryGen
 	return tea.Batch(
 		m.scheduleSpinnerTick(),
@@ -1370,6 +1377,13 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case changedPRsMsg:
 		return m, m.applyChangedPRs(msg)
 
+	case tea.FocusMsg:
+		m.touchInteraction()
+		if m.view == tuiViewList {
+			return m, m.refreshOrReschedule()
+		}
+		return m, nil
+
 	case refreshTickMsg:
 		if !m.autoRefresh || m.view != tuiViewList || msg.id != m.refreshID || m.refreshing {
 			return m, nil
@@ -1406,17 +1420,16 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dismissedEmpty = false
 		// Saved here, once the result is accepted as current, so writes stay
 		// in order and a superseded refresh never overwrites a newer one.
-		if err := saveListResultCache(m.cli, m.params, prItems(msg.items)); err != nil {
-			clog.Debug().Err(err).Msg("list cache save failed")
-		}
 		// Fresh results are authoritative; drop the optimistic client-side
 		// filtering, except for approvals still in flight, before recomputing
 		// cursor/offset against the new rows.
 		// Render with the current stack/sort settings; a refresh may have
 		// captured settings from before the options menu was applied.
 		m.items = msg.items
-		m.applyPendingApprovals()
 		m.applyPendingActions()
+		m.snapshotPRs = prItems(m.items)
+		m.saveSnapshot()
+		m.applyPendingApprovals()
 		header, rows, widths := m.rerender()
 		m = m.mergeRefresh(rows, m.items)
 		m.header, m.colWidths = header, widths
@@ -1861,6 +1874,12 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) View() tea.View {
+	v := m.renderView()
+	v.ReportFocus = true
+	return v
+}
+
+func (m tuiModel) renderView() tea.View {
 	switch m.view {
 	case tuiViewDiff:
 		return m.viewDiff()
@@ -3395,7 +3414,8 @@ func (m tuiModel) mergeRefresh(newRows []TableRow, newItems []PRRowModel) tuiMod
 	if m.cursor >= 0 && m.cursor < len(oldRows) {
 		cursorKey = makePRKey(oldRows[m.cursor].Item.PR)
 	}
-	newCursor := 0
+	screenLine := m.cursorLinePosition() - m.offset
+	newCursor := min(m.cursor, max(0, len(newRows)-1))
 	for i, row := range newRows {
 		if makePRKey(row.Item.PR) == cursorKey {
 			newCursor = i
@@ -3407,12 +3427,17 @@ func (m tuiModel) mergeRefresh(newRows []TableRow, newItems []PRRowModel) tuiMod
 	m.rows = newRows
 	m.cursor = newCursor
 	m.restoreFoldedCursor()
-	m.resyncCursorAndOffset()
+	m.cursor = m.adjustedCursor()
+	if m.offset > 0 {
+		m.offset = max(0, m.cursorLinePosition()-screenLine)
+	}
+	m.offset = m.scrolledOffset()
 	return m
 }
 
 // reindexRows remaps the cursor from oldRows order to newRows order using PR identity.
 func (m tuiModel) reindexRows(oldRows, newRows []TableRow) tuiModel {
+	screenLine := m.cursorLinePosition() - m.offset
 	if m.cursor >= 0 && m.cursor < len(oldRows) {
 		key := makePRKey(oldRows[m.cursor].Item.PR)
 		for i, row := range newRows {
@@ -3422,9 +3447,14 @@ func (m tuiModel) reindexRows(oldRows, newRows []TableRow) tuiModel {
 			}
 		}
 	}
+	m.cursor = min(m.cursor, max(0, len(newRows)-1))
 	m.rows = newRows
 	m.restoreFoldedCursor()
-	m.resyncCursorAndOffset()
+	m.cursor = m.adjustedCursor()
+	if m.offset > 0 {
+		m.offset = max(0, m.cursorLinePosition()-screenLine)
+	}
+	m.offset = m.scrolledOffset()
 	return m
 }
 
@@ -3613,11 +3643,12 @@ func runTui(
 	// Old results are misleading during the background refresh (for example,
 	// already-closed PRs remain visible), so only seed the TUI from a recent
 	// snapshot.
-	cachedPRs, cachedOK, cachedErr := loadListResultCache(
+	cachedPRs, cachedAt, cachedErr := loadListResultSnapshot(
 		cli,
 		params,
 		tuiListResultCacheMaxAge,
 	)
+	cachedOK := !cachedAt.IsZero()
 	if cachedErr != nil {
 		clog.Debug().Err(cachedErr).Msg("list cache load failed")
 	}
@@ -3682,6 +3713,7 @@ func runTui(
 		autoRefresh:     cfg.TUI.AutoRefresh.Enabled,
 		lastInteraction: time.Now(),
 		lastRefreshAt:   time.Now(),
+		snapshotPRs:     prItems(r.items),
 		spinner:         buildSpinner(cfg.Spinner),
 		styles:          newTuiStyles(),
 		selected:        make(prKeys),
@@ -3707,6 +3739,7 @@ func runTui(
 		model.cursor = visible[0]
 	}
 	if cachedOK {
+		model.lastRefreshAt = cachedAt
 		model.initCmd = model.startRefresh(false)
 	}
 

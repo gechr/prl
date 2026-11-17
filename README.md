@@ -205,6 +205,9 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 - Left/Right or click a stack header: collapse/expand stacks.
 - `a` in diff view: approve and advance.
 - `--interval 30s`: slow auto-refresh.
+- Auto-refresh keeps its idle backoff. Pending CI is checked each refresh. Settled status is reused for up to a minute on screen and three minutes off screen, subject to the refresh interval and rate limits.
+- Returning focus catches up when a refresh is due. Refreshes preserve the selected PR and its screen position when possible.
+- Cached startup results retain their original age, and successful review actions update only the affected PRs on return to the list.
 - View preferences are saved between sessions.
 - `tui.presets` and `tui.review`: configure presets and AI reviews.
 - Reviews open in Herdr, Ghostty, iTerm2, Kitty, or Windows Terminal (WSL).

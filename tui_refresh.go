@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -17,7 +18,7 @@ type changedPRsMsg struct {
 // Required loads (initial data, options and recovery) must finish even when
 // automatic refresh is disabled. Only periodic reads may be superseded.
 func (m *tuiModel) startPeriodicRefresh() tea.Cmd {
-	cmd := m.startRefresh(false)
+	cmd := m.startRefreshWithPolicy(false, m.refreshPolicy())
 	m.refreshCancellable = true
 	return cmd
 }
@@ -68,7 +69,7 @@ func (m *tuiModel) markPRChanged(key prKey) {
 	m.changedPRs[key] = true
 	m.prChangeGen[key]++
 	// In-flight list reads and cache writes predate this mutation.
-	m.metadataCache = newListMetadataCache()
+	m.invalidatePRMetadata(prKeys{key: true})
 	if m.refreshing && m.refreshCancellable {
 		m.queryGen++
 		m.refreshing = false
@@ -141,10 +142,24 @@ func (m *tuiModel) applyChangedPRs(msg changedPRsMsg) tea.Cmd {
 			continue // a later action already queued another read
 		}
 		m.updatePR(key, func(row *PRRowModel) { *row = item })
+		for i := range m.snapshotPRs {
+			if makePRKey(m.snapshotPRs[i]) == key {
+				confirmed := item
+				if pending, ok := m.pendingActions[key]; ok &&
+					time.Since(pending.at) < 2*time.Minute {
+					applyKnownActionState(&confirmed, pending.action)
+				}
+				m.snapshotPRs[i] = confirmed.PR
+			}
+		}
+		m.metadataCache.store(item.PR, listMetadataRequest{
+			mergeStatus: true, viewerApproval: true,
+		}, newTimelineActors())
 	}
 	m.applyPendingApprovals()
-	m.applyPendingActions()
+	m.reconcilePendingActions(false)
 	m.rerenderList()
+	m.saveSnapshot()
 	return m.rescheduleRefresh()
 }
 
