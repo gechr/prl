@@ -22,8 +22,9 @@ type SearchParams struct {
 	TotalLimit int
 	// PRRefs lists pull requests named directly on the command line. When set,
 	// they are fetched as-is and Query only describes them.
-	PRRefs     []prRef
-	queryTerms []searchQueryTerm
+	PRRefs           []prRef
+	queryTerms       []searchQueryTerm
+	createdQualifier string
 }
 
 // searchQueryTerm retains the dimension that produced a generated qualifier so
@@ -187,12 +188,14 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 	// Ignored owners (config-only, always applied)
 	add(buildExcludedOwnerQualifiers(cfg.IgnoredOwners)...)
 
+	var createdQualifier string
 	// Date filters
 	if cli.Created != "" {
 		d, dErr := parseDate(cli.Created)
 		if dErr != nil {
 			return nil, fmt.Errorf("invalid --created value: %w", dErr)
 		}
+		createdQualifier = d
 		add("created:" + d)
 	}
 	if cli.Updated != "" {
@@ -404,11 +407,12 @@ func buildSearchQuery(cli *CLI, cfg *Config) (*SearchParams, error) {
 		Query: strings.Join(xslices.Map(terms, func(term searchQueryTerm) string {
 			return term.query
 		}), " "),
-		Sort:       sortField,
-		Order:      order,
-		PerPage:    perPage,
-		TotalLimit: limit,
-		queryTerms: slices.Clone(terms),
+		Sort:             sortField,
+		Order:            order,
+		PerPage:          perPage,
+		TotalLimit:       limit,
+		queryTerms:       slices.Clone(terms),
+		createdQualifier: createdQualifier,
 	}, nil
 }
 
@@ -483,6 +487,7 @@ func shouldShowAuthor(cli *CLI) bool {
 type searchResponse struct {
 	Items      []searchItem `json:"items"`
 	TotalCount int          `json:"total_count"`
+	Incomplete bool         `json:"incomplete_results"`
 }
 
 type searchItem struct {
@@ -610,7 +615,11 @@ func executeListSearch(
 			return prs, nil
 		}
 	}
-	return executeSearch(rest, params)
+	prs, err := executeSearch(rest, params)
+	if err != nil {
+		return fallbackAuthorSearch(rest, getGQL, params, params.TotalLimit, err)
+	}
+	return prs, nil
 }
 
 func tryExecuteListSearchGraphQL(
@@ -839,7 +848,13 @@ func executeCount(rest *api.RESTClient, params *SearchParams) (int, error) {
 
 	var resp searchResponse
 	if err := rest.Get(path, &resp); err != nil {
-		return 0, fmt.Errorf("search failed: %w", err)
+		prs, fallbackErr := fallbackAuthorSearch(
+			rest, nil,
+			params,
+			0,
+			fmt.Errorf("search failed: %w", err),
+		)
+		return len(prs), fallbackErr
 	}
 
 	return resp.TotalCount, nil
