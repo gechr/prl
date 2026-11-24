@@ -611,7 +611,7 @@ func buildAutomergeRoot() string {
 	return `automergeNodes:nodes(ids:$automergeIDs){... on PullRequest{id autoMergeRequest{enabledAt}}}`
 }
 
-func buildMergeStatusRoot(includeAutomerge bool) string {
+func buildMergeStatusRoot(req listMetadataRequest, includeState bool) string {
 	fields := []string{
 		"id",
 		"headRefOid",
@@ -619,7 +619,13 @@ func buildMergeStatusRoot(includeAutomerge bool) string {
 		"reviewDecision",
 		"commits(last:1){nodes{commit{statusCheckRollup{state} checkSuites(first:50){totalCount nodes{conclusion checkRuns(first:1){totalCount}}}}}}",
 	}
-	if includeAutomerge {
+	if !req.mergeStatus {
+		fields = []string{"id", "headRefOid", "reviewDecision"}
+	}
+	if includeState {
+		fields = append(fields, "state isDraft updatedAt")
+	}
+	if req.automerge {
 		fields = append(fields, "autoMergeRequest{enabledAt}")
 	}
 	return `mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{` + strings.Join(fields, " ") + `}}`
@@ -655,10 +661,13 @@ type listAutomergeNode struct {
 }
 
 type listMergeStatusNode struct {
-	ID               string  `json:"id"`
-	HeadRefOID       string  `json:"headRefOid"`
-	MergeStateStatus string  `json:"mergeStateStatus"`
-	ReviewDecision   *string `json:"reviewDecision"`
+	State            string    `json:"state"`
+	IsDraft          bool      `json:"isDraft"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+	ID               string    `json:"id"`
+	HeadRefOID       string    `json:"headRefOid"`
+	MergeStateStatus string    `json:"mergeStateStatus"`
+	ReviewDecision   *string   `json:"reviewDecision"`
 	AutomergeRequest *struct {
 		EnabledAt string `json:"enabledAt"`
 	} `json:"autoMergeRequest"`
@@ -1125,7 +1134,7 @@ func hydrateListMetadata(
 		return newTimelineActors(), nil
 	}
 	if len(prs) <= hydrateChunkSize {
-		return hydrateListMetadataChunk(gql, prs, req)
+		return hydrateListMetadataChunk(gql, prs, req, nil)
 	}
 
 	actors := newTimelineActors()
@@ -1145,7 +1154,7 @@ func hydrateListMetadata(
 			defer func() { <-sem }()
 			defer wg.Done()
 
-			chunkActors, err := hydrateListMetadataChunk(gql, chunk, req)
+			chunkActors, err := hydrateListMetadataChunk(gql, chunk, req, nil)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -1173,8 +1182,9 @@ func hydrateListMetadataChunk(
 	gql *api.GraphQLClient,
 	prs []PullRequest,
 	req listMetadataRequest,
+	events prEvents,
 ) (timelineActors, error) {
-	actors, err := hydrateListMetadataBatch(gql, prs, req)
+	actors, err := hydrateListMetadataBatch(gql, prs, req, events)
 	if err == nil || len(prs) < 2 || !isRetryableHydrateErr(err) {
 		return actors, err
 	}
@@ -1183,8 +1193,8 @@ func hydrateListMetadataChunk(
 
 	const halves = 2
 	mid := len(prs) / halves
-	left, leftErr := hydrateListMetadataChunk(gql, prs[:mid], req)
-	right, rightErr := hydrateListMetadataChunk(gql, prs[mid:], req)
+	left, leftErr := hydrateListMetadataChunk(gql, prs[:mid], req, events)
+	right, rightErr := hydrateListMetadataChunk(gql, prs[mid:], req, events)
 
 	merged := newTimelineActors()
 	for _, half := range []timelineActors{left, right} {
@@ -1217,6 +1227,7 @@ func hydrateListMetadataBatch(
 	gql *api.GraphQLClient,
 	prs []PullRequest,
 	req listMetadataRequest,
+	events prEvents,
 ) (timelineActors, error) {
 	if len(prs) == 0 {
 		return newTimelineActors(), nil
@@ -1228,7 +1239,9 @@ func hydrateListMetadataBatch(
 	}
 
 	mergeIDs := []string{}
-	if req.mergeStatus {
+	if len(events) > 0 {
+		mergeIDs = collectPRNodeIDs(prs) // a closed PR may have reopened
+	} else if req.mergeStatus {
 		mergeIDs = collectMergeStatusNodeIDs(prs)
 	}
 	mergeIDSet := make(map[string]bool, len(mergeIDs))
@@ -1247,7 +1260,13 @@ func hydrateListMetadataBatch(
 	}
 
 	viewerReviewIDs := []string{}
-	if req.viewerApproval {
+	if req.viewerApproval && len(events) > 0 {
+		for _, pr := range prs {
+			if events[makePRKey(pr)] == eventStatusAndReviews && pr.NodeID != "" {
+				viewerReviewIDs = append(viewerReviewIDs, pr.NodeID)
+			}
+		}
+	} else if req.viewerApproval {
 		viewerReviewIDs = collectMergeStatusNodeIDs(prs)
 	}
 
@@ -1271,7 +1290,7 @@ func hydrateListMetadataBatch(
 
 	if len(mergeIDs) > 0 {
 		queryDefs = append(queryDefs, "$mergeIDs: [ID!]!")
-		queryRoots = append(queryRoots, buildMergeStatusRoot(req.automerge))
+		queryRoots = append(queryRoots, buildMergeStatusRoot(req, len(events) > 0))
 		variables["mergeIDs"] = mergeIDs
 	}
 
@@ -1317,8 +1336,15 @@ func hydrateListMetadataBatch(
 			Msg("Partial list metadata response")
 	}
 
+	if len(events) > 0 {
+		if err := applyEventState(prs, result.MergeNodes); err != nil {
+			return timelineActors{}, err
+		}
+	}
 	applyListAutomergeNodes(prs, automergeIDs, result.AutomergeNodes)
-	applyListMergeStatusNodes(prs, result.MergeNodes, req.automerge)
+	if req.mergeStatus {
+		applyListMergeStatusNodes(prs, result.MergeNodes, req.automerge)
+	}
 	applyListViewerReviewNodes(prs, result.Viewer.Login, result.ViewerReviewNodes)
 
 	return timelineActorsFromNodes(result.TimelineNodes), nil

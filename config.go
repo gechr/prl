@@ -45,6 +45,7 @@ const (
 	keyDefaultReverse        = "default.reverse"
 	keyDefaultSort           = "default.sort"
 	keyDefaultState          = "default.state"
+	keyEventStreams          = "features.event_streams"
 	keyIcons                 = "icons"
 	keyPlugin                = "plugin"
 	keyIgnoredOwners         = "ignored_owners"
@@ -85,6 +86,10 @@ type Defaults struct {
 	Reverse     bool     `koanf:"reverse"`
 	Sort        string   `koanf:"sort"`
 	State       string   `koanf:"state"`
+}
+
+type FeaturesConfig struct {
+	EventStreams bool `koanf:"event_streams"`
 }
 
 // SpinnerConfig holds spinner style configuration.
@@ -186,6 +191,8 @@ type Config struct {
 	// Defaults
 	Default Defaults `koanf:"default"`
 
+	Features FeaturesConfig `koanf:"features"`
+
 	// Icon settings
 	Icons string `koanf:"icons"`
 
@@ -235,6 +242,7 @@ func defaultConfig() map[string]any {
 		keyDefaultReverse:     false,
 		keyDefaultSort:        valueName,
 		keyDefaultState:       valueOpen,
+		keyEventStreams:       false,
 		keyPlugin:             "",
 		keyIgnoredOwners:      []string{},
 		keyTeamAliases:        map[string]string{},
@@ -730,6 +738,10 @@ default:
   # Filter by PR state.
   # Options: open, closed, merged, all
   state: %[5]s
+
+features:
+  # Refresh watched PRs on GitHub Event Streams notifications (requires gh 2.105.0+).
+  event_streams: false
 
 # TUI (interactive browse) settings.
 #

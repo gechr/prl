@@ -365,7 +365,7 @@ func watchRefreshBaseDelay(n int, override *time.Duration) time.Duration {
 	return d
 }
 
-// runWatch loops buildOutput every watchInterval, clearing the screen between refreshes.
+// runWatch refreshes search membership periodically and updates streamed PRs by reference.
 func runWatch(
 	p *prl,
 	rest *api.RESTClient,
@@ -377,25 +377,31 @@ func runWatch(
 ) error {
 	// First fetch with spinner before entering the alternate screen.
 	type fetchResult struct {
-		output string
-		prs    []PullRequest
-		err    error
+		output   string
+		prs      []PullRequest
+		targeted bool
+		err      error
 	}
 	type validationResult struct {
 		changed bool
 		err     error
 	}
 	cache := newListMetadataCache()
-	var gql *api.GraphQLClient
-	getGQL := func() (*api.GraphQLClient, error) {
-		if gql == nil {
-			var err error
-			gql, err = newGraphQLClient(withDebug(cli.Debug))
-			if err != nil {
-				return nil, fmt.Errorf("creating GraphQL client: %w", err)
-			}
+	read := func(readCLI *CLI, previous []PullRequest, changed prEvents) fetchResult {
+		if len(changed) == 0 {
+			out, prs, err := buildOutput(p, rest, readCLI, cfg, tty, params, cache)
+			return fetchResult{output: out, prs: prs, err: err}
 		}
-		return gql, nil
+		gql, err := newGraphQLClient(withDebug(readCLI.Debug))
+		if err != nil {
+			return fetchResult{targeted: true, err: err}
+		}
+		prs, err := refreshWatchEvents(gql, readCLI, params, previous, changed, cache)
+		var out string
+		if err == nil && len(prs) > 0 {
+			out, err = renderOutput(p, readCLI, cfg, tty, prs)
+		}
+		return fetchResult{output: out, prs: prs, targeted: true, err: err}
 	}
 	initialCLI := cli
 	initialFetchDeferred := shouldDeferInitialWatchEnrichment(cli, tty)
@@ -405,7 +411,8 @@ func runWatch(
 	}
 	// Watch mode keeps its previous startup behaviour and can render any saved
 	// result immediately while it refreshes in the background.
-	cachedPRs, cachedOK, cachedErr := loadListResultCache(cli, params, 0)
+	cachedPRs, membershipAt, cachedErr := loadListResultSnapshot(cli, params, 0)
+	cachedOK := !membershipAt.IsZero()
 	if cachedErr != nil {
 		clog.Debug().Err(cachedErr).Msg("list cache load failed")
 	}
@@ -416,8 +423,7 @@ func runWatch(
 		r = fetchResult{output: out, prs: cachedPRs, err: renderErr}
 	} else {
 		r = withSpinner(tty && !cli.Debug, s, func(func()) fetchResult {
-			out, prs, fErr := buildOutput(p, rest, initialCLI, cfg, tty, params, cache)
-			return fetchResult{out, prs, fErr}
+			return read(initialCLI, nil, nil)
 		})
 		if r.err == nil && !initialFetchDeferred {
 			if err := saveListResultCache(cli, params, r.prs); err != nil {
@@ -439,45 +445,37 @@ func runWatch(
 	// Restore terminal on interrupt.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sig
-		cleanup()
-		reportProgramStatus(clog.ProgramStateIdle, "")
-		os.Exit(0)
-	}()
+	defer signal.Stop(sig)
 
 	// Re-render cached PRs on terminal resize (SIGWINCH on Unix; a no-op on
 	// platforms without an equivalent, such as Windows).
 	winch := make(chan os.Signal, 1)
 	notifyResize(winch)
+	defer signal.Stop(winch)
 
 	results := make(chan fetchResult, 1)
 	validations := make(chan validationResult, 1)
 	validating := 0
 	refreshFailed := false
-	fetch := func() {
+	fetch := func(previous []PullRequest, changed prEvents) {
 		refreshFailed = false
-		go func() {
-			out, prs, fErr := buildOutput(p, rest, cli, cfg, tty, params, cache)
-			if fErr == nil {
-				if err := saveListResultCache(cli, params, prs); err != nil {
-					clog.Debug().Err(err).Msg("list cache save failed")
-				}
-			}
-			results <- fetchResult{out, prs, fErr}
-		}()
+		go func() { results <- read(cli, previous, changed) }()
 	}
+	var validationClient *api.GraphQLClient
 	validate := func(prs []PullRequest) {
-		validating++
-		go func(prs []PullRequest) {
-			g, err := getGQL()
+		if validationClient == nil {
+			var err error
+			validationClient, err = newGraphQLClient(withDebug(cli.Debug))
 			if err != nil {
-				validations <- validationResult{err: err}
+				clog.Debug().Err(err).Msg("Head validation unavailable")
 				return
 			}
-			changed, err := validateCachedHeads(g, prs, cache)
+		}
+		validating++
+		go func(prs []PullRequest, cache *listMetadataCache) {
+			changed, err := validateCachedHeads(validationClient, prs, cache)
 			validations <- validationResult{changed: changed, err: err}
-		}(append([]PullRequest(nil), prs...))
+		}(append([]PullRequest(nil), prs...), cache)
 	}
 
 	var (
@@ -489,6 +487,10 @@ func runWatch(
 		spinnerTick int
 	)
 
+	streams := newEventStreams(cfg.Features.EventStreams)
+	defer streams.close()
+	streams.sync(r.prs)
+
 	// Use the first fetch result.
 	lastPRs = r.prs
 	if r.output != "" {
@@ -498,10 +500,13 @@ func runWatch(
 	}
 	interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
 	nextFetchAt = time.Now().Add(interval)
+	if !cachedOK {
+		membershipAt = time.Now()
+	}
 	if initialFetchDeferred || cachedOK {
 		fetching = true
 		nextFetchAt = time.Time{}
-		fetch()
+		fetch(nil, nil)
 	}
 
 	lastStatus := watchProgramStatus(fetching, validating, refreshFailed)
@@ -509,7 +514,14 @@ func runWatch(
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-sig:
+			reportProgramStatus(clog.ProgramStateIdle, "")
+			return nil
+		case <-ticker.C:
+		}
+
 		// Check for fetch completion (non-blocking).
 		select {
 		case r := <-results:
@@ -521,16 +533,27 @@ func runWatch(
 			case r.output != "":
 				lastOutput = r.output
 				lastPRs = r.prs
-			case cli.ExitZero:
+			case cli.ExitZero && !r.targeted:
 				return errFatal
 			default:
 				lastOutput = noResults
 				lastPRs = nil
 			}
-			interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
-			nextFetchAt = time.Now().Add(interval)
-			if len(lastPRs) > 0 {
-				validate(lastPRs)
+			streams.sync(lastPRs)
+			if !r.targeted {
+				interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
+				nextFetchAt = time.Now().Add(interval)
+				if r.err == nil {
+					membershipAt = time.Now()
+				}
+				if len(lastPRs) > 0 {
+					validate(lastPRs)
+				}
+			}
+			if r.err == nil && !membershipAt.IsZero() {
+				if err := saveListResultCacheAt(cli, params, lastPRs, membershipAt); err != nil {
+					clog.Debug().Err(err).Msg("list cache save failed")
+				}
 			}
 		case v := <-validations:
 			validating--
@@ -538,10 +561,10 @@ func runWatch(
 				clog.Debug().Err(v.err).Msg("Head validation failed")
 				break
 			}
-			if v.changed && !fetching {
-				fetching = true
-				spinnerTick = 0
-				fetch()
+			if v.changed {
+				// A targeted read may already be in flight. Keep the membership
+				// check due until the loop can start it.
+				nextFetchAt = time.Now()
 			}
 		default:
 		}
@@ -568,11 +591,21 @@ func runWatch(
 			spinnerTick++
 		}
 
-		// Schedule next fetch when due.
-		if !fetching && !nextFetchAt.IsZero() && time.Now().After(nextFetchAt) {
-			fetching = true
-			spinnerTick = 0
-			fetch()
+		// A due membership check takes priority. Events stay queued through
+		// in-flight reads and never advance the polling deadline.
+		if !fetching {
+			switch {
+			case !nextFetchAt.IsZero() && !time.Now().Before(nextFetchAt):
+				fetching = true
+				spinnerTick = 0
+				fetch(nil, nil)
+			default:
+				if changed := streams.takeChanges(); len(changed) > 0 {
+					fetching = true
+					spinnerTick = 0
+					fetch(lastPRs, changed)
+				}
+			}
 		}
 		state := watchProgramStatus(fetching, validating, refreshFailed)
 		if state != lastStatus {
@@ -580,8 +613,6 @@ func runWatch(
 			lastStatus = state
 		}
 	}
-
-	return nil
 }
 
 func shouldDeferInitialWatchEnrichment(cli *CLI, tty bool) bool {
@@ -659,6 +690,12 @@ func applyListMetadata(
 	return prs, nil
 }
 
+// Grouped output uses search fields unless a readiness or CI filter needs enrichment.
+func needsListMergeStatus(cli *CLI) bool {
+	needsEnrich := cli.PRState() == StateReady || cli.CIFilter().Active()
+	return needsEnrich || !cli.Quick && cli.OutputFormat() == OutputTable && !cli.GroupActive()
+}
+
 // buildOutput runs the search+filter+enrich+render pipeline and returns the
 // rendered output string, the PRs (for re-rendering on resize), and any error.
 func buildOutput(
@@ -685,12 +722,7 @@ func buildOutput(
 
 	ready := cli.PRState() == StateReady
 	ciFilter := cli.CIFilter()
-	needsEnrich := ready || ciFilter.Active()
-	// A --group breakdown only needs fields already present in search
-	// results, so skip merge-status enrichment unless a filter (--ci,
-	// --state=ready) genuinely requires it.
-	needMergeStatus := (!cli.Quick || needsEnrich) &&
-		((cli.OutputFormat() == OutputTable && !cli.GroupActive()) || needsEnrich)
+	needMergeStatus := needsListMergeStatus(cli)
 	prs, err := executeListSearch(rest, getGQL, params, needMergeStatus)
 	if err != nil {
 		return "", nil, err
@@ -843,12 +875,7 @@ func runOnce(
 
 	ready := cli.PRState() == StateReady
 	ciFilter := cli.CIFilter()
-	needsEnrich := ready || ciFilter.Active()
-	// A --group breakdown only needs fields already present in search
-	// results, so skip merge-status enrichment unless a filter (--ci,
-	// --state=ready) genuinely requires it.
-	needMergeStatus := (!cli.Quick || needsEnrich) &&
-		((cli.OutputFormat() == OutputTable && !cli.GroupActive()) || needsEnrich)
+	needMergeStatus := needsListMergeStatus(cli)
 	prs, err := executeListSearch(rest, getGQL, params, needMergeStatus)
 	if err != nil {
 		return "", err

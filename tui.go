@@ -529,6 +529,8 @@ type tuiModel struct {
 	scrollDrag         scrollbarDragState
 
 	// Background auto-refresh.
+	eventStreams    *eventStreams
+	eventsPending   bool
 	autoRefresh     bool
 	refreshing      bool          // true while a background refresh is in-flight
 	lastInteraction time.Time     // tracks last user keypress for idle-based refresh decay
@@ -774,6 +776,9 @@ func (m tuiModel) selectedConfirmOptionValue(row int) string {
 func (m tuiModel) Init() tea.Cmd {
 	reportProgramStatus(m.programStatus())
 	var cmds []tea.Cmd
+	if m.eventStreams != nil {
+		cmds = append(cmds, m.eventStreams.wait)
+	}
 	if m.initCmd != nil {
 		cmds = append(cmds, m.initCmd)
 	}
@@ -1035,7 +1040,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return model, cmd
 	}
-	cmd = tea.Batch(cmd, tm.refreshChangedPRs())
+	cmd = tea.Batch(cmd, tm.refreshChangedPRs(), tm.refreshFromEvents())
 	tm.syncConfirmDialog()
 	if tm.presetMenu.open {
 		if tm.canKeepPresetMenuOpen() {
@@ -1379,6 +1384,10 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case prEventsMsg:
+		m.eventsPending = true
+		return m, m.eventStreams.wait
+
 	case changedPRsMsg:
 		return m, m.applyChangedPRs(msg)
 
@@ -1433,6 +1442,9 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.items = msg.items
 		m.applyPendingActions()
 		m.snapshotPRs = prItems(m.items)
+		if m.autoRefresh {
+			m.eventStreams.sync(m.snapshotPRs)
+		}
 		m.saveSnapshot()
 		m.applyPendingApprovals()
 		header, rows, widths := m.rerender()
@@ -1824,8 +1836,10 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			warnStateSaveErr(err, "auto-refresh setting")
 		}
 		if m.autoRefresh {
+			m.eventStreams.sync(m.snapshotPRs)
 			return m, m.rescheduleRefresh()
 		}
+		m.eventStreams.sync(nil)
 		m.invalidateRefresh()
 		return m, nil
 
@@ -3736,6 +3750,12 @@ func runTui(
 		rest:            rest,
 		params:          params,
 		metadataCache:   r.cache,
+	}
+
+	model.eventStreams = newEventStreams(cfg.Features.EventStreams)
+	defer model.eventStreams.close()
+	if model.autoRefresh {
+		model.eventStreams.sync(model.snapshotPRs)
 	}
 
 	// Apply persisted sort and stack settings before showing the first frame.

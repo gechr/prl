@@ -706,10 +706,14 @@ func (m tuiModel) matchesLocalReviewFilter(pr PullRequest) bool {
 		(m.isCurrentUserPR(pr) || pr.viewerIsAuthor || isViewerApproved(pr)) {
 		return false
 	}
-	if m.cli.Review == "" || !pr.reviewDecisionLoaded {
+	return matchesReviewDecision(pr, m.cli.Review)
+}
+
+func matchesReviewDecision(pr PullRequest, review string) bool {
+	if review == "" || !pr.reviewDecisionLoaded {
 		return true
 	}
-	switch m.cli.Review {
+	switch review {
 	case valueReviewFilterApproved:
 		return pr.ReviewDecision == valueReviewApproved
 	case valueReviewFilterChanges:
