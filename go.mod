@@ -15,10 +15,10 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.10
 	github.com/cli/go-gh/v2 v2.17.0
-	github.com/gechr/clib v0.8.7
+	github.com/gechr/clib v0.9.0
 	github.com/gechr/clive v0.4.16
 	github.com/gechr/clog v0.19.1
-	github.com/gechr/conductor v0.1.23
+	github.com/gechr/conductor v0.2.0
 	github.com/gechr/forge v0.0.10
 	github.com/gechr/gorules v0.0.5
 	github.com/gechr/primer v0.2.14

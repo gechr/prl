@@ -45,7 +45,7 @@ func main() {
 			brew.WithFormula("prl"),
 			brew.WithTap("gechr/tap"),
 		),
-		NotifyOptions: []notify.Option{notify.WithOutdatedHintCommand("prl --self-update")},
+		NotifyOptions: []notify.Option{notify.WithOutdatedHintCommand("prl +update")},
 		ConfigureLog:  configureClog,
 	})
 
