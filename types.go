@@ -154,6 +154,7 @@ type PullRequest struct {
 	URL            string      `json:"url"`
 
 	statusFetchedAt time.Time // last successful merge/review status read
+	awaitingChecks  bool      // latest status read found no CI state on this head
 	headValidated   bool      // direct head read in this fetch, never persisted
 	automergeLoaded bool
 	// behind is whether the base branch requires the head to be brought up

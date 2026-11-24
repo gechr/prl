@@ -86,7 +86,7 @@ func refreshWatchEvents(
 		byKey[key] = pr
 		cache.store(pr, listMetadataRequest{
 			automerge: true, mergeStatus: req.mergeStatus,
-			viewerApproval: req.viewerApproval && changed[key] == eventStatusAndReviews,
+			viewerApproval: req.viewerApproval && changed[key]&eventReviews != 0,
 		}, newTimelineActors())
 	}
 

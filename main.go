@@ -377,10 +377,10 @@ func runWatch(
 ) error {
 	// First fetch with spinner before entering the alternate screen.
 	type fetchResult struct {
-		output   string
-		prs      []PullRequest
-		targeted bool
-		err      error
+		output string
+		prs    []PullRequest
+		events prEvents
+		err    error
 	}
 	type validationResult struct {
 		changed bool
@@ -394,14 +394,14 @@ func runWatch(
 		}
 		gql, err := newGraphQLClient(withDebug(readCLI.Debug))
 		if err != nil {
-			return fetchResult{targeted: true, err: err}
+			return fetchResult{events: changed, err: err}
 		}
 		prs, err := refreshWatchEvents(gql, readCLI, params, previous, changed, cache)
 		var out string
 		if err == nil && len(prs) > 0 {
 			out, err = renderOutput(p, readCLI, cfg, tty, prs)
 		}
-		return fetchResult{output: out, prs: prs, targeted: true, err: err}
+		return fetchResult{output: out, prs: prs, events: changed, err: err}
 	}
 	initialCLI := cli
 	initialFetchDeferred := shouldDeferInitialWatchEnrichment(cli, tty)
@@ -533,14 +533,19 @@ func runWatch(
 			case r.output != "":
 				lastOutput = r.output
 				lastPRs = r.prs
-			case cli.ExitZero && !r.targeted:
+			case cli.ExitZero && r.events == nil:
 				return errFatal
 			default:
 				lastOutput = noResults
 				lastPRs = nil
 			}
 			streams.sync(lastPRs)
-			if !r.targeted {
+			if r.events != nil && r.err == nil && needsListMergeStatus(cli) {
+				for _, pr := range r.prs {
+					streams.followUpCI(pr, r.events[makePRKey(pr)])
+				}
+			}
+			if r.events == nil {
 				interval = watchRefreshBaseDelay(len(lastPRs), cli.Interval)
 				nextFetchAt = time.Now().Add(interval)
 				if r.err == nil {

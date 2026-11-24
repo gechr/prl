@@ -145,6 +145,69 @@ const eventStatusFields = "id headRefOid mergeStateStatus reviewDecision " +
 	"commits(last:1){nodes{commit{statusCheckRollup{state} checkSuites(first:50){totalCount nodes{conclusion checkRuns(first:1){totalCount}}}}}} " +
 	"state isDraft updatedAt"
 
+func TestHeadEventCIProbes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newEventStreams(true)
+		defer s.close()
+		pr := approvalTestPR(1)
+		pr.awaitingChecks = true
+		key := makePRKey(pr)
+		s.listeners[key] = func() {}
+		head := eventStatusAndReviews | eventNewHead
+		s.queue(t.Context(), key, head)
+		s.wait()
+		s.followUpCI(pr, s.takeChanges()[key])
+
+		start := time.Now()
+		for range 6 {
+			time.Sleep(time.Second)
+			s.queue(t.Context(), key, head)
+			require.Empty(t, s.takeChanges())
+		}
+		s.wait()
+		require.Equal(t, watchMinInterval, time.Since(start))
+		events := s.takeChanges()
+		require.Equal(t, head|eventFirstCIProbe, events[key])
+		s.followUpCI(pr, events[key])
+
+		for _, want := range []prEventScope{eventStatus | eventFirstCIProbe, eventStatus} {
+			s.wait()
+			events = s.takeChanges()
+			require.Equal(t, prEvents{key: want}, events)
+			s.followUpCI(pr, events[key])
+		}
+		require.Empty(t, s.pending)
+
+		pr.awaitingChecks = false
+		s.followUpCI(pr, head)
+		require.Empty(t, s.pending)
+	})
+}
+
+func TestDetachedCIProbeIsDiscarded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newEventStreams(true)
+		defer s.close()
+		pr := approvalTestPR(1)
+		pr.awaitingChecks = true
+		key := makePRKey(pr)
+		s.listeners[key] = func() {}
+		s.nextRead = time.Now().Add(watchMinInterval)
+		s.followUpCI(pr, eventNewHead)
+		timer := s.timer
+		s.sync(nil)
+
+		// The same PR returns before the pending timer fires.
+		s.listeners[key] = func() {}
+		s.queue(t.Context(), key, eventStatusAndReviews)
+		require.Same(t, timer, s.timer)
+		require.Empty(t, s.takeChanges())
+		s.wait()
+		require.True(t, time.Now().Equal(s.nextRead))
+		require.Equal(t, prEvents{key: eventStatusAndReviews}, s.takeChanges())
+	})
+}
+
 func eventTestClient(t *testing.T) *api.GraphQLClient {
 	t.Helper()
 	gql, err := api.NewGraphQLClient(api.ClientOptions{

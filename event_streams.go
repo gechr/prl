@@ -22,20 +22,25 @@ const (
 const (
 	eventCheckSuite = "com.github.pull_request.check_suite.status.changed.v1"
 	eventConflict   = "com.github.pull_request.merge_conflict.v1"
+	eventHead       = "com.github.pull_request.head.changed.v1"
 )
 
 type prEventScope uint8
 
 const (
-	eventStatus prEventScope = iota + 1
-	eventStatusAndReviews
+	eventStatus prEventScope = 1 << iota
+	eventReviews
+	eventNewHead
+	eventFirstCIProbe
+
+	eventStatusAndReviews = eventStatus | eventReviews
 )
 
 type prEvents map[prKey]prEventScope
 
 var pullRequestEvents = []string{
 	eventCheckSuite,
-	"com.github.pull_request.head.changed.v1",
+	eventHead,
 	eventConflict,
 	"com.github.pull_request.review.submitted.v1",
 	"com.github.pull_request.state.changed.v1",
@@ -96,6 +101,9 @@ func (s *eventStreams) sync(prs []PullRequest) {
 		if _, keep := wanted[key]; !keep {
 			cancel()
 			delete(s.listeners, key)
+			s.mu.Lock()
+			delete(s.pending, key)
+			s.mu.Unlock()
 		}
 	}
 	for key, url := range wanted {
@@ -125,7 +133,34 @@ func (s *eventStreams) queue(ctx context.Context, key prKey, scope prEventScope)
 	if ctx.Err() != nil {
 		return
 	}
-	if len(s.pending) == 0 {
+	s.enqueue(key, scope)
+}
+
+// After a push GitHub may take time to create checks. Reuse the stream batch
+// timer for at most two more status reads, stopping once checks are visible.
+func (s *eventStreams) followUpCI(pr PullRequest, scope prEventScope) {
+	if !pr.awaitingChecks || pr.State != valueOpen || pr.MergeStatus == MergeStatusConflict {
+		return
+	}
+	key := makePRKey(pr)
+	if _, active := s.listeners[key]; !active {
+		return
+	}
+	next := eventStatus
+	switch {
+	case scope&eventNewHead != 0:
+		next |= eventFirstCIProbe
+	case scope&eventFirstCIProbe == 0:
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enqueue(key, next)
+}
+
+// Caller holds mu. Combine scopes so pushes and CI probes share a single read.
+func (s *eventStreams) enqueue(key prKey, scope prEventScope) {
+	if len(s.pending) == 0 && s.timer == nil {
 		s.timer = time.AfterFunc(max(eventBatchDelay, time.Until(s.nextRead)), func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
@@ -136,7 +171,7 @@ func (s *eventStreams) queue(ctx context.Context, key prKey, scope prEventScope)
 			}
 		})
 	}
-	s.pending[key] = max(s.pending[key], scope)
+	s.pending[key] |= scope
 }
 
 // takeChanges coalesces bursts and ignores events from PRs that left the list.
@@ -192,6 +227,8 @@ func listenPREvents(ctx context.Context, url string, notify func(prEventScope)) 
 		switch {
 		case line == eventCheckSuite || line == eventConflict:
 			notify(eventStatus)
+		case line == eventHead:
+			notify(eventStatusAndReviews | eventNewHead)
 		case strings.HasPrefix(line, "Listening for events") || slices.Contains(pullRequestEvents, line):
 			notify(eventStatusAndReviews)
 		}

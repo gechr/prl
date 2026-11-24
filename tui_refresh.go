@@ -165,9 +165,12 @@ func (m *tuiModel) applyChangedPRs(msg changedPRsMsg) tea.Cmd {
 		}
 		m.metadataCache.store(item.PR, listMetadataRequest{
 			mergeStatus:    true,
-			viewerApproval: msg.events == nil || msg.events[key] == eventStatusAndReviews,
+			viewerApproval: msg.events == nil || msg.events[key]&eventReviews != 0,
 			automerge:      msg.events != nil,
 		}, newTimelineActors())
+		if msg.events != nil {
+			m.eventStreams.followUpCI(item.PR, msg.events[key])
+		}
 	}
 	m.applyPendingApprovals()
 	m.reconcilePendingActions(false)

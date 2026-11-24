@@ -870,6 +870,7 @@ func applyMergeStatusResult(
 	for _, idx := range indices {
 		prs[idx].HeadSHA = headSHA
 		prs[idx].MergeStatus = status
+		prs[idx].awaitingChecks = ciState == ""
 		prs[idx].behind = mergeStateStatus == valueMergeStateBehind
 		if automergeLoaded {
 			prs[idx].Automerge = automergeEnabled
@@ -1262,7 +1263,7 @@ func hydrateListMetadataBatch(
 	viewerReviewIDs := []string{}
 	if req.viewerApproval && len(events) > 0 {
 		for _, pr := range prs {
-			if events[makePRKey(pr)] == eventStatusAndReviews && pr.NodeID != "" {
+			if events[makePRKey(pr)]&eventReviews != 0 && pr.NodeID != "" {
 				viewerReviewIDs = append(viewerReviewIDs, pr.NodeID)
 			}
 		}
