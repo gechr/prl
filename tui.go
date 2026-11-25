@@ -558,6 +558,7 @@ type tuiModel struct {
 	cfg           *Config
 	tty           bool
 	resolver      *AuthorResolver
+	gql           *api.GraphQLClient
 	rest          *api.RESTClient
 	params        *SearchParams
 	metadataCache *listMetadataCache
@@ -645,16 +646,12 @@ type refreshSnapshot struct {
 }
 
 func newRefreshSnapshot(m tuiModel) refreshSnapshot {
-	var gql *api.GraphQLClient
-	if m.actions != nil {
-		gql = m.actions.gql
-	}
 	return refreshSnapshot{
 		cli:      cloneCLI(m.cli),
 		cfg:      m.cfg,
 		p:        m.p,
 		tty:      m.tty,
-		gql:      gql,
+		gql:      m.gql,
 		resolver: m.resolver,
 		rest:     m.rest,
 		params:   cloneSearchParams(m.params),
@@ -909,13 +906,13 @@ func (m *tuiModel) startRefreshWithPolicy(showStatus bool, policy *listRefreshPo
 }
 
 func (m *tuiModel) startHeadValidation(items []PRRowModel) tea.Cmd {
-	if m.actions == nil || m.actions.gql == nil || m.metadataCache == nil || len(items) == 0 {
+	if m.gql == nil || m.metadataCache == nil || len(items) == 0 {
 		return nil
 	}
 
 	prs := prItems(items)
 	queryGen := m.queryGen
-	gql := m.actions.gql
+	gql := m.gql
 	cache := m.metadataCache
 	return m.trackRead(func() tea.Msg {
 		changed, err := validateCachedHeads(gql, prs, cache)
@@ -3556,7 +3553,7 @@ func defaultSortAsc(column string) bool {
 // runTui launches the interactive TUI.
 func runTui(
 	p *prl,
-	rest *api.RESTClient,
+	clients *githubClients,
 	cli *CLI,
 	cfg *Config,
 	tty bool,
@@ -3581,9 +3578,9 @@ func runTui(
 	}
 
 	resolver := NewAuthorResolver(cfg)
-	gql, err := newGraphQLClient(withDebug(cli.Debug))
+	gql, err := clients.graphQL()
 	if err != nil {
-		return fmt.Errorf("creating GraphQL client: %w", err)
+		return err
 	}
 
 	type fetchResult struct {
@@ -3631,7 +3628,7 @@ func runTui(
 				tty:      tty,
 				gql:      gql,
 				resolver: resolver,
-				rest:     rest,
+				rest:     clients.rest,
 				params:   params,
 				width:    xterminal.Width(os.Stdout),
 				cache:    cache,
@@ -3656,7 +3653,7 @@ func runTui(
 		return r.err
 	}
 
-	actions := NewActionRunner(rest, gql)
+	actions := NewActionRunner(clients.rest, gql)
 
 	fi := textinput.New()
 	fi.Prompt = ""
@@ -3667,7 +3664,7 @@ func runTui(
 	fi.SetStyles(fiStyles)
 
 	// Resolve current user login eagerly so it's cached for View calls.
-	login, _ := getCurrentLogin(rest)
+	login, _ := getCurrentLogin(clients.rest)
 
 	model := tuiModel{
 		rows:            r.rows,
@@ -3690,13 +3687,14 @@ func runTui(
 		cfg:             cfg,
 		tty:             tty,
 		resolver:        resolver,
-		rest:            rest,
+		rest:            clients.rest,
+		gql:             gql,
 		params:          params,
 		metadataCache:   r.cache,
 	}
 
 	model.replaceListItems(r.items)
-	model.eventStreams = newEventStreams(cfg.Features.EventStreams)
+	model.eventStreams = newEventStreams(cfg.Features.EventStreams, clients.events)
 	defer model.eventStreams.close()
 
 	// Apply persisted sort and stack settings before showing the first frame.

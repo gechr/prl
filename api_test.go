@@ -967,3 +967,34 @@ func TestExecuteForceMergeFailureReturnsError(t *testing.T) {
 	}})
 	require.ErrorIs(t, err, errFatal)
 }
+
+func TestConcurrentDiffClientInitialization(t *testing.T) {
+	t.Setenv("GH_HOST", "github.com")
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_TOKEN", "test")
+	actions := NewActionRunner(nil, nil)
+	type result struct {
+		client *api.RESTClient
+		err    error
+	}
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan result, workers)
+	for range workers {
+		go func() {
+			<-start
+			c, err := actions.diffRESTClient()
+			results <- result{c, err}
+		}()
+	}
+	close(start)
+	var first *api.RESTClient
+	for range workers {
+		got := <-results
+		require.NoError(t, got.err)
+		if first == nil {
+			first = got.client
+		}
+		require.Same(t, first, got.client)
+	}
+}

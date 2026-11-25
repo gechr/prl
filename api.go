@@ -118,10 +118,10 @@ func (a *ActionRunner) cachedCurrentLogin() (string, error) {
 }
 
 func (a *ActionRunner) diffRESTClient() (*api.RESTClient, error) {
-	if a.diffClient != nil || a.diffClientErr != nil {
-		return a.diffClient, a.diffClientErr
-	}
 	a.diffClientOnce.Do(func() {
+		if a.diffClient != nil {
+			return
+		}
 		a.diffClient, a.diffClientErr = api.NewRESTClient(api.ClientOptions{
 			Headers: map[string]string{"Accept": mediaTypeGitHubDiff},
 		})
@@ -438,12 +438,12 @@ func (a *ActionRunner) aggregateApproved(pr PullRequest) bool {
 
 // fetchPRStatus re-reads a single PR's merge status, review decision and
 // viewer approval.
-func (a *ActionRunner) fetchPRStatus(pr PullRequest) (PullRequest, error) {
-	if a.gql == nil || pr.NodeID == "" {
+func fetchPRStatus(gql *api.GraphQLClient, pr PullRequest) (PullRequest, error) {
+	if gql == nil || pr.NodeID == "" {
 		return pr, fmt.Errorf("GraphQL client unavailable")
 	}
 	snapshot := []PullRequest{pr}
-	_, err := hydrateListMetadata(a.gql, snapshot, listMetadataRequest{
+	_, err := hydrateListMetadata(gql, snapshot, listMetadataRequest{
 		mergeStatus:    true,
 		viewerApproval: true,
 	})

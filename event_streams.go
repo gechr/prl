@@ -69,12 +69,12 @@ type eventStreams struct {
 	nextRead  time.Time
 }
 
-func newEventStreams(enabled bool) *eventStreams {
+func newEventStreams(enabled bool, getClient func() (client.EventClient, error)) *eventStreams {
 	if !enabled {
 		return nil
 	}
 	return &eventStreams{
-		client:    sync.OnceValues(newEventClient),
+		client:    getClient,
 		listeners: make(map[prKey]context.CancelFunc),
 		stopped:   make(chan struct{}),
 		wake:      make(chan struct{}, 1),

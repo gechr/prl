@@ -90,8 +90,7 @@ func (m *tuiModel) bumpPRGeneration(key prKey) {
 func (m *tuiModel) refreshChangedPRs() tea.Cmd {
 	if m.view != tuiViewList || m.refreshing || m.changedRefreshInFlight ||
 		len(m.changedPRs) == 0 ||
-		m.actions == nil ||
-		m.actions.gql == nil {
+		m.gql == nil {
 		return nil
 	}
 	var refs []prRef
@@ -110,7 +109,7 @@ func (m *tuiModel) refreshChangedPRs() tea.Cmd {
 		return nil
 	}
 	m.changedRefreshInFlight = true
-	gql, resolver := m.actions.gql, m.resolver
+	gql, resolver := m.gql, m.resolver
 	ownerFilter := singleOwner(m.cli.Owner.Values)
 	queryGen := m.queryGen
 	return func() tea.Msg {
@@ -248,7 +247,7 @@ func (m *tuiModel) syncVisibleEventStreams(msg tea.Msg) tea.Cmd {
 // query and local actions have priority over stream reads.
 func (m *tuiModel) refreshFromEvents() tea.Cmd {
 	if !m.eventsPending || m.view != tuiViewList || m.refreshing ||
-		m.changedRefreshInFlight || m.actionsInFlight > 0 || m.actions == nil || m.actions.gql == nil {
+		m.changedRefreshInFlight || m.actionsInFlight > 0 || m.gql == nil {
 		return nil
 	}
 	m.eventsPending = false
@@ -266,7 +265,7 @@ func (m *tuiModel) refreshFromEvents() tea.Cmd {
 		return nil
 	}
 	m.changedRefreshInFlight = true
-	gql, resolver := m.actions.gql, m.resolver
+	gql, resolver := m.gql, m.resolver
 	owner := singleOwner(m.cli.Owner.Values)
 	gen := m.queryGen
 	return func() tea.Msg {

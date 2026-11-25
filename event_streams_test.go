@@ -28,7 +28,7 @@ func TestEventStreamsConfig(t *testing.T) {
 	cfg, err := loadConfig()
 	require.NoError(t, err)
 	require.False(t, cfg.Features.EventStreams)
-	require.Nil(t, newEventStreams(cfg.Features.EventStreams))
+	require.Nil(t, newEventStreams(cfg.Features.EventStreams, nil))
 
 	path, err := configPath()
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestEventStreamsListenAndReconcile(t *testing.T) {
 
 func TestTUIQueuesEventsDuringRefresh(t *testing.T) {
 	m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2))
-	m.actions = NewActionRunner(nil, eventTestClient(t, mergedEventNode, eventStatus))
+	m.gql = eventTestClient(t, mergedEventNode, eventStatus)
 	m.autoRefresh = true
 	m.refreshing = true
 	m.eventStreams = testEventStreams(http.StatusCreated)
@@ -144,7 +144,7 @@ func TestTUIEventClearsConflictWithPollingOff(t *testing.T) {
 		t.Fatal("missing stream notification")
 	}
 	const clean = `{"id":"PR_node","state":"OPEN","updatedAt":"2025-08-11T10:00:00Z","mergeStateStatus":"CLEAN"}`
-	m.actions = NewActionRunner(nil, eventTestClient(t, clean, eventStatusAndReviews))
+	m.gql = eventTestClient(t, clean, eventStatusAndReviews)
 	m, cmd := updateModel(t, m, prEventsMsg{})
 	require.True(t, m.changedRefreshInFlight)
 	batch, ok := cmd().(tea.BatchMsg)
@@ -265,7 +265,7 @@ func TestTUIKeepsListeningAfterStreamFailure(t *testing.T) {
 
 func TestEventStreamsBatchBursts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := newEventStreams(true)
+		s := newEventStreams(true, nil)
 		defer s.close()
 		first, second := prKey("one"), prKey("two")
 		s.listeners[first], s.listeners[second] = func() {}, func() {}
@@ -295,7 +295,7 @@ const eventStatusFields = "id headRefOid mergeStateStatus reviewDecision " +
 
 func TestHeadEventCIProbes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := newEventStreams(true)
+		s := newEventStreams(true, nil)
 		defer s.close()
 		pr := approvalTestPR(1)
 		pr.awaitingChecks = true
@@ -334,7 +334,7 @@ func TestHeadEventCIProbes(t *testing.T) {
 
 func TestHeadEventRechecksPersistentConflict(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := newEventStreams(true)
+		s := newEventStreams(true, nil)
 		defer s.close()
 		pr := approvalTestPR(1)
 		pr.MergeStatus = MergeStatusConflict
@@ -354,7 +354,7 @@ func TestHeadEventRechecksPersistentConflict(t *testing.T) {
 
 func TestDetachedCIProbeIsDiscarded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := newEventStreams(true)
+		s := newEventStreams(true, nil)
 		defer s.close()
 		pr := approvalTestPR(1)
 		pr.awaitingChecks = true
@@ -487,7 +487,7 @@ func TestMixedEventBatchRequestsOnlyAffectedViewerReviews(t *testing.T) {
 }
 
 func testEventStreams(createStatus int) *eventStreams {
-	streams := newEventStreams(true)
+	streams := newEventStreams(true, nil)
 	streams.client = func() (client.EventClient, error) {
 		return client.NewEventClient(
 			&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -562,7 +562,7 @@ func TestEventStreamReconnectAndRenew(t *testing.T) {
 			resp.Header.Set("Content-Type", "text/event-stream")
 			return resp, nil
 		})
-		streams := newEventStreams(true)
+		streams := newEventStreams(true, nil)
 		streams.client = func() (client.EventClient, error) {
 			return client.NewEventClient(&http.Client{Transport: transport}, "github.com"), nil
 		}
@@ -602,7 +602,7 @@ func TestEventStreamMissingSubscriptionRenewsOnce(t *testing.T) {
 		})},
 		"github.com",
 	)
-	streams := newEventStreams(true)
+	streams := newEventStreams(true, nil)
 	streams.client = func() (client.EventClient, error) { return c, nil }
 	err := streams.listenPREvents(
 		t.Context(),
@@ -662,7 +662,7 @@ func TestEventStreamIdleReconnectAndCancellation(t *testing.T) {
 				return r, nil
 			},
 		}
-		streams := newEventStreams(true)
+		streams := newEventStreams(true, nil)
 		streams.client = func() (client.EventClient, error) { return mock, nil }
 		start := time.Now()
 		err := streams.listenPREvents(

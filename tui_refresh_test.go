@@ -94,6 +94,7 @@ func TestReviewExitRefreshesOnlyChangedPRs(t *testing.T) {
 			m.selected[cursorKey] = true
 			actions, calls := changedPRTestClient(t, []int{2, 4})
 			m.actions = actions
+			m.gql = m.actions.gql
 			for _, n := range []int{2, 4} {
 				key := makePRKey(prs[n-1])
 				m.beginApproval([]prKey{key})
@@ -160,6 +161,7 @@ func TestLateActionRefreshesAfterExit(t *testing.T) {
 	require.False(t, m.refreshing)
 	actions, calls := changedPRTestClient(t, []int{1})
 	m.actions = actions
+	m.gql = m.actions.gql
 	m, cmd := updateModel(t, m, actionDoneMsg{msg: approvedMsg(key, nil)})
 	require.True(t, m.changedRefreshInFlight)
 	require.False(t, m.refreshing)

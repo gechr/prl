@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cli/cli/v2/pkg/cmd/event/client"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/auth"
 	xslices "github.com/gechr/x/slices"
@@ -86,24 +87,6 @@ func withGitHubErrorDetail(err error) error {
 	return &githubDetailError{err: err, detail: detail}
 }
 
-func newRESTClient(options ...clientOption) (*api.RESTClient, error) {
-	opts := api.ClientOptions{}
-	for _, o := range options {
-		o(&opts)
-	}
-	opts.Transport = sharedGitHubRateLimiter.wrap(opts.Transport)
-	return api.NewRESTClient(opts)
-}
-
-func newGraphQLClient(options ...clientOption) (*api.GraphQLClient, error) {
-	opts := api.ClientOptions{}
-	for _, o := range options {
-		o(&opts)
-	}
-	opts.Transport = sharedGitHubRateLimiter.wrap(opts.Transport)
-	return api.NewGraphQLClient(opts)
-}
-
 // getCurrentLogin returns the login of the authenticated GitHub user.
 func getCurrentLogin(rest *api.RESTClient) (string, error) {
 	var u struct {
@@ -115,27 +98,46 @@ func getCurrentLogin(rest *api.RESTClient) (string, error) {
 	return u.Login, nil
 }
 
-// newActionRunner creates an ActionRunner, initializing a GraphQL client
+// actionRunner creates an ActionRunner, initializing a GraphQL client
 // only when the CLI flags require one.
-func newActionRunner(cli *CLI, rest *api.RESTClient) (*ActionRunner, error) {
+func (clients *githubClients) actionRunner(cli *CLI) (*ActionRunner, error) {
 	var gql *api.GraphQLClient
 	if cli.Approve || cli.ForceMerge || cli.MarkDraft || cli.MarkReady || cli.Merge != nil ||
 		cli.Unsubscribe {
 		var err error
-		gql, err = newGraphQLClient(withDebug(cli.Debug))
+		gql, err = clients.graphQL()
 		if err != nil {
-			return nil, fmt.Errorf("creating GraphQL client: %w", err)
+			return nil, err
 		}
 	}
-	return NewActionRunner(rest, gql), nil
+	return NewActionRunner(clients.rest, gql), nil
 }
 
-func lazyGraphQLClient(debug bool) func() (*api.GraphQLClient, error) {
-	return sync.OnceValues(func() (*api.GraphQLClient, error) {
-		gql, err := newGraphQLClient(withDebug(debug))
+type githubClients struct {
+	rest    *api.RESTClient
+	graphQL func() (*api.GraphQLClient, error)
+	events  func() (client.EventClient, error)
+}
+
+func newGitHubClients(debug bool) (*githubClients, error) {
+	opts := api.ClientOptions{Transport: sharedGitHubRateLimiter.wrap(nil)}
+	if debug {
+		opts.Log = os.Stderr
+	}
+	rest, err := api.NewRESTClient(opts)
+	if err != nil {
+		return nil, fmt.Errorf("creating REST client: %w", err)
+	}
+	getGraphQL := sync.OnceValues(func() (*api.GraphQLClient, error) {
+		gql, err := api.NewGraphQLClient(opts)
 		if err != nil {
 			return nil, fmt.Errorf("creating GraphQL client: %w", err)
 		}
 		return gql, nil
 	})
+	return &githubClients{
+		rest:    rest,
+		graphQL: getGraphQL,
+		events:  sync.OnceValues(newEventClient),
+	}, nil
 }

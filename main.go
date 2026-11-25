@@ -180,14 +180,14 @@ func (c *CLI) run(app *conductor.Runtime) error {
 	}
 
 	// Create REST client
-	rest, err := newRESTClient(withDebug(cli.Debug))
+	clients, err := newGitHubClients(cli.Debug)
 	if err != nil {
-		return fmt.Errorf("creating REST client: %w", err)
+		return err
 	}
 
 	// Count mode: use API total_count (single lightweight request)
 	if cli.Count {
-		count, cErr := executeCount(rest, params)
+		count, cErr := executeCount(clients.rest, params)
 		if cErr != nil {
 			return cErr
 		}
@@ -200,7 +200,7 @@ func (c *CLI) run(app *conductor.Runtime) error {
 
 	// Watch mode: loop search+render with screen clear
 	if cli.Watch {
-		return runWatch(prl, rest, cli, cfg, tty, params, s)
+		return runWatch(prl, clients, cli, cfg, tty, params, s)
 	}
 
 	// Interactive TUI browser
@@ -210,7 +210,7 @@ func (c *CLI) run(app *conductor.Runtime) error {
 		}
 		cli.setOutput(valueTable)
 		clog.SetLevel(clog.LevelFatal) // TUI manages its own notifications
-		return runTui(prl, rest, cli, cfg, tty, params, s)
+		return runTui(prl, clients, cli, cfg, tty, params, s)
 	}
 
 	// Watch mode and the TUI handle interrupts themselves.
@@ -220,7 +220,7 @@ func (c *CLI) run(app *conductor.Runtime) error {
 	var output string
 	if err := withSpinner(tty && !cli.Debug, s, func(stopSpinner func()) error {
 		var runErr error
-		output, runErr = runOnce(prl, rest, cli, cfg, tty, params, stopSpinner)
+		output, runErr = runOnce(prl, clients, cli, cfg, tty, params, stopSpinner)
 		return runErr
 	}); err != nil {
 		return err
@@ -368,7 +368,7 @@ func watchRefreshBaseDelay(n int, override *time.Duration) time.Duration {
 // runWatch refreshes search membership periodically and updates streamed PRs by reference.
 func runWatch(
 	p *prl,
-	rest *api.RESTClient,
+	clients *githubClients,
 	cli *CLI,
 	cfg *Config,
 	tty bool,
@@ -389,10 +389,10 @@ func runWatch(
 	cache := newListMetadataCache()
 	read := func(readCLI *CLI, previous []PullRequest, changed prEvents) fetchResult {
 		if len(changed) == 0 {
-			out, prs, err := buildOutput(p, rest, readCLI, cfg, tty, params, cache)
+			out, prs, err := buildOutput(p, clients, readCLI, cfg, tty, params, cache)
 			return fetchResult{output: out, prs: prs, err: err}
 		}
-		gql, err := newGraphQLClient(withDebug(readCLI.Debug))
+		gql, err := clients.graphQL()
 		if err != nil {
 			return fetchResult{events: changed, err: err}
 		}
@@ -461,15 +461,11 @@ func runWatch(
 		refreshFailed = false
 		go func() { results <- read(cli, previous, changed) }()
 	}
-	var validationClient *api.GraphQLClient
 	validate := func(prs []PullRequest) {
-		if validationClient == nil {
-			var err error
-			validationClient, err = newGraphQLClient(withDebug(cli.Debug))
-			if err != nil {
-				clog.Debug().Err(err).Msg("Head validation unavailable")
-				return
-			}
+		validationClient, err := clients.graphQL()
+		if err != nil {
+			clog.Debug().Err(err).Msg("Head validation unavailable")
+			return
 		}
 		validating++
 		go func(prs []PullRequest, cache *listMetadataCache) {
@@ -487,7 +483,7 @@ func runWatch(
 		spinnerTick int
 	)
 
-	streams := newEventStreams(cfg.Features.EventStreams)
+	streams := newEventStreams(cfg.Features.EventStreams, clients.events)
 	defer streams.close()
 	streams.sync(r.prs)
 
@@ -646,14 +642,14 @@ func needsListMergeStatus(cli *CLI) bool {
 // rendered output string, the PRs (for re-rendering on resize), and any error.
 func buildOutput(
 	p *prl,
-	rest *api.RESTClient,
+	clients *githubClients,
 	cli *CLI,
 	cfg *Config,
 	tty bool,
 	params *SearchParams,
 	cache *listMetadataCache,
 ) (string, []PullRequest, error) {
-	loader := listLoader{rest: rest, graphQL: lazyGraphQLClient(cli.Debug), cache: cache}
+	loader := listLoader{rest: clients.rest, graphQL: clients.graphQL, cache: cache}
 	result, err := loader.load(cli, params)
 	if err != nil || len(result.prs) == 0 {
 		return "", nil, err
@@ -721,7 +717,7 @@ func renderOutput(
 // after clearing the spinner.
 func runOnce(
 	prl *prl,
-	rest *api.RESTClient,
+	clients *githubClients,
 	cli *CLI,
 	cfg *Config,
 	tty bool,
@@ -730,7 +726,7 @@ func runOnce(
 ) (string, error) {
 	prl = prl.forTerminal(tty)
 
-	loader := listLoader{rest: rest, graphQL: lazyGraphQLClient(cli.Debug)}
+	loader := listLoader{rest: clients.rest, graphQL: clients.graphQL}
 	result, err := loader.load(cli, params)
 	if err != nil {
 		return "", err
@@ -772,7 +768,7 @@ func runOnce(
 			return "", gErr
 		}
 		if !asJSON {
-			out += groupCapSuffix(rest, cli, params, result.rawFetched, tty)
+			out += groupCapSuffix(clients.rest, cli, params, result.rawFetched, tty)
 		}
 		return out, nil
 	}
@@ -826,7 +822,7 @@ func runOnce(
 		if stopSpinner != nil {
 			stopSpinner()
 		}
-		return "", runInteractive(cli, rest, cfg, rows)
+		return "", runInteractive(cli, clients, cfg, rows)
 	}
 
 	// Non-interactive clone: --clone --yes
@@ -834,14 +830,14 @@ func runOnce(
 		if stopSpinner != nil {
 			stopSpinner()
 		}
-		return "", cloneRepos(rest, prs, cfg.VCS, cli.Debug)
+		return "", cloneRepos(clients, prs, cfg.VCS)
 	}
 
 	// Non-interactive actions: pass PRs directly
 	if stopSpinner != nil {
 		stopSpinner()
 	}
-	if err := runActions(cli, rest, prs); err != nil {
+	if err := runActions(cli, clients, prs); err != nil {
 		return "", err
 	}
 
@@ -868,7 +864,7 @@ func runOnce(
 }
 
 // runInteractive shows the multi-select prompt and dispatches to send or action runner.
-func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow) error {
+func runInteractive(cli *CLI, clients *githubClients, cfg *Config, rows []TableRow) error {
 	selected, err := interactiveSelect(rows, buildActionHeader(cli))
 	if errors.Is(err, pick.ErrCanceled) {
 		return errCanceled
@@ -887,11 +883,11 @@ func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow
 
 	// Clone repos
 	if cli.Clone {
-		return cloneRepos(rest, selectedPRs, cfg.VCS, cli.Debug)
+		return cloneRepos(clients, selectedPRs, cfg.VCS)
 	}
 
 	// Run actions first (approve, merge, close, etc.)
-	if err := runActions(cli, rest, selectedPRs); err != nil {
+	if err := runActions(cli, clients, selectedPRs); err != nil {
 		return err
 	}
 
@@ -906,11 +902,11 @@ func runInteractive(cli *CLI, rest *api.RESTClient, cfg *Config, rows []TableRow
 // runActions executes PR action flags (approve, edit, close, etc.) if any are set.
 // After enabling automerge (--merge), it updates the in-memory PR structs so
 // downstream consumers (e.g. --send Slack reactions) reflect the new state.
-func runActions(cli *CLI, rest *api.RESTClient, prs []PullRequest) error {
+func runActions(cli *CLI, clients *githubClients, prs []PullRequest) error {
 	if !cli.HasAction() {
 		return nil
 	}
-	actions, err := newActionRunner(cli, rest)
+	actions, err := clients.actionRunner(cli)
 	if err != nil {
 		return err
 	}

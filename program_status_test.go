@@ -131,6 +131,7 @@ func TestBackgroundReadDispatchReportsWorking(t *testing.T) {
 			pr := approvalTestPR(1)
 			m := approvalTestModel("", pr)
 			m.actions = NewActionRunner(nil, &api.GraphQLClient{})
+			m.gql = m.actions.gql
 			m.view = tuiViewDetail
 			m.detailKey = makePRKey(pr)
 			require.NotNil(t, tt.start(&m, m.detailKey))

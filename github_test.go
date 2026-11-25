@@ -139,3 +139,22 @@ func TestWithGitHubErrorDetailReturnsErrorUnchangedWithoutDetail(t *testing.T) {
 	require.Same(t, err, withGitHubErrorDetail(err))
 	require.NoError(t, withGitHubErrorDetail(nil))
 }
+
+func TestCommandSharesClientsWithActions(t *testing.T) {
+	t.Setenv("GH_HOST", "github.com")
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_TOKEN", "test")
+	clients, err := newGitHubClients(false)
+	require.NoError(t, err)
+	gql, err := clients.graphQL()
+	require.NoError(t, err)
+	actions, err := clients.actionRunner(&CLI{Approve: true})
+	require.NoError(t, err)
+	require.Same(t, clients.rest, actions.rest)
+	require.Same(t, gql, actions.gql)
+	first, err := clients.events()
+	require.NoError(t, err)
+	second, err := clients.events()
+	require.NoError(t, err)
+	require.Same(t, first, second)
+}

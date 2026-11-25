@@ -259,15 +259,15 @@ func (m *tuiModel) approvalFlash(msg actionMsg) tea.Cmd {
 // statusCmd re-fetches the status of the PR shown in the diff view.
 func (m *tuiModel) statusCmd(key prKey) tea.Cmd {
 	pr := m.prForKey(key)
-	if pr == nil || m.actions == nil || m.actions.gql == nil {
+	if pr == nil || m.gql == nil {
 		return nil
 	}
-	actions := m.actions
+	gql := m.gql
 	prCopy := *pr
 	gen := m.approvalGen[key]
 	changeGen := m.prChangeGen[key]
 	return m.trackRead(func() tea.Msg {
-		fresh, err := actions.fetchPRStatus(prCopy)
+		fresh, err := fetchPRStatus(gql, prCopy)
 		return prStatusMsg{key: key, gen: gen, changeGen: changeGen, pr: fresh, err: err}
 	})
 }

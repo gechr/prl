@@ -29,16 +29,14 @@ type cloneTarget struct {
 // It uses the SSH remote format (git@github.com:owner/repo) and the VCS
 // configured via PRL_VCS (default: git).
 // When a repo has exactly one PR, the PR's head branch is checked out via --branch.
-func cloneRepos(rest *api.RESTClient, prs []PullRequest, vcs string, debug bool) error {
+func cloneRepos(clients *githubClients, prs []PullRequest, vcs string) error {
 	ctx := context.Background()
-	var gql *api.GraphQLClient
-	if client, err := newGraphQLClient(withDebug(debug)); err == nil {
-		gql = client
-	} else {
+	gql, err := clients.graphQL()
+	if err != nil {
 		clog.Debug().Err(err).Msg("Skipping GraphQL branch resolution")
 	}
 
-	targets := buildCloneTargets(rest, gql, prs)
+	targets := buildCloneTargets(clients.rest, gql, prs)
 	if len(targets) == 0 {
 		return nil
 	}
