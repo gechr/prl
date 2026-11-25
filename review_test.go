@@ -881,18 +881,20 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 	require.Equal(
 		t,
 		[]filterChoice{
-			{label: codexReviewModel55, value: codexReviewModel55},
-			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
-			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
-			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
-			{label: codexReviewModel6Luna, value: codexReviewModel6Luna},
-			{label: codexReviewModel6Sol, value: codexReviewModel6Sol},
+			{label: codexReviewModel62Sol, value: codexReviewModel62Sol},
+			{label: codexReviewModel62Astra, value: codexReviewModel62Astra},
+			{label: codexReviewModel61Terra, value: codexReviewModel61Terra},
 			{label: codexReviewModel61Sol, value: codexReviewModel61Sol},
 			{label: codexReviewModel6Astra, value: codexReviewModel6Astra},
+			{label: codexReviewModel6Sol, value: codexReviewModel6Sol},
+			{label: codexReviewModel6Luna, value: codexReviewModel6Luna},
+			{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
+			{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
+			{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 		},
 		reviewModelChoices(nil, reviewProviderCodex),
 	)
-	require.Equal(t, codexReviewModel6Astra, defaultReviewModel(nil, reviewProviderCodex))
+	require.Equal(t, codexReviewModel62Astra, defaultReviewModel(nil, reviewProviderCodex))
 	require.Equal(
 		t,
 		[]filterChoice{
@@ -912,29 +914,20 @@ func TestCodex56ModelsIncludeMaxEffort(t *testing.T) {
 }
 
 func TestCodexSolAndLunaEfforts(t *testing.T) {
-	for _, model := range []string{codexReviewModel61Sol, codexReviewModel6Sol, codexReviewModel6Luna} {
+	for _, model := range []string{codexReviewModel62Sol, codexReviewModel61Sol, codexReviewModel6Sol, codexReviewModel6Luna} {
 		t.Run(model, func(t *testing.T) {
 			require.Equal(
 				t,
 				codexReviewEffortMedium,
 				defaultReviewEffort(nil, reviewProviderCodex, model),
 			)
-			require.Equal(t, []filterChoice{
+			require.Subset(t, reviewEffortChoices(nil, reviewProviderCodex, model), []filterChoice{
 				{label: codexReviewEffortLow, value: codexReviewEffortLow},
 				{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
 				{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
 				{label: codexReviewEffortXHigh, value: codexReviewEffortXHigh},
 				{label: codexReviewEffortMax, value: codexReviewEffortMax},
-			}, reviewEffortChoices(nil, reviewProviderCodex, model))
-			require.False(
-				t,
-				isValidReviewEffort(
-					nil,
-					reviewProviderCodex,
-					model,
-					codexReviewEffortUltra,
-				),
-			)
+			})
 			cmd := buildAIReviewCommand(
 				testReviewPullRequest(),
 				"/tmp/prl-prompt.txt",
@@ -951,7 +944,7 @@ func TestCodexSolAndLunaEfforts(t *testing.T) {
 	}
 }
 
-func TestBuildAIReviewCommandUsesCodex6AstraByDefault(t *testing.T) {
+func TestBuildAIReviewCommandUsesCodex62AstraByDefault(t *testing.T) {
 	pr := testReviewPullRequest()
 	cmd := buildAIReviewCommand(
 		pr,
@@ -963,7 +956,7 @@ func TestBuildAIReviewCommandUsesCodex6AstraByDefault(t *testing.T) {
 	require.Equal(
 		t,
 		expectedAIReviewBaseCommand(pr)+
-			`codex --sandbox read-only -m gpt-6-astra -c model_reasoning_effort=high "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
+			`codex --sandbox read-only -m gpt-6.2-astra -c model_reasoning_effort=high "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`,
 		cmd,
 	)
 }
@@ -1049,7 +1042,16 @@ func TestGeminiEffortRulesUseCatchAllGlob(t *testing.T) {
 }
 
 func TestCodexUltraEffortCommands(t *testing.T) {
-	for _, model := range []string{codexReviewModel6Astra, codexReviewModel56Sol, codexReviewModel56Terra} {
+	for _, model := range []string{
+		codexReviewModel62Sol,
+		codexReviewModel62Astra,
+		codexReviewModel61Terra,
+		codexReviewModel61Sol,
+		codexReviewModel6Astra,
+		codexReviewModel6Sol,
+		codexReviewModel56Sol,
+		codexReviewModel56Terra,
+	} {
 		t.Run(model, func(t *testing.T) {
 			require.True(t, isValidReviewModel(nil, reviewProviderCodex, model))
 			require.True(
@@ -1072,7 +1074,7 @@ func TestCodexUltraEffortCommands(t *testing.T) {
 				` -c model_reasoning_effort=ultra "$(/bin/cat /tmp/prl-prompt.txt)"; rm -f /tmp/prl-prompt.txt`, cmd)
 		})
 	}
-	for _, model := range []string{codexReviewModel56Luna, codexReviewModel55, codexReviewModel6Sol} {
+	for _, model := range []string{codexReviewModel56Luna, codexReviewModel6Luna} {
 		require.False(
 			t,
 			isValidReviewEffort(nil, reviewProviderCodex, model, codexReviewEffortUltra),

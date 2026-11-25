@@ -79,14 +79,16 @@ const (
 	claudeReviewModelSonnet = "sonnet"
 	claudeReviewModelOpus   = "opus"
 	claudeReviewModelFable  = "fable"
-	codexReviewModel6Astra  = "gpt-6-astra"
+	codexReviewModel62Sol   = "gpt-6.2-sol"
+	codexReviewModel62Astra = "gpt-6.2-astra"
+	codexReviewModel61Terra = "gpt-6.1-terra"
 	codexReviewModel61Sol   = "gpt-6.1-sol"
+	codexReviewModel6Astra  = "gpt-6-astra"
 	codexReviewModel6Sol    = "gpt-6-sol"
 	codexReviewModel6Luna   = "gpt-6-luna"
 	codexReviewModel56Sol   = "gpt-5.6-sol"
 	codexReviewModel56Terra = "gpt-5.6-terra"
 	codexReviewModel56Luna  = "gpt-5.6-luna"
-	codexReviewModel55      = "gpt-5.5"
 
 	claudeReviewEffortLow    = "low"
 	claudeReviewEffortMedium = "medium"
@@ -151,16 +153,18 @@ var claudeReviewConfig = reviewProviderConfig{
 
 var codexReviewConfig = reviewProviderConfig{
 	models: []filterChoice{
-		{label: codexReviewModel55, value: codexReviewModel55},
-		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
-		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
-		{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
-		{label: codexReviewModel6Luna, value: codexReviewModel6Luna},
-		{label: codexReviewModel6Sol, value: codexReviewModel6Sol},
+		{label: codexReviewModel62Sol, value: codexReviewModel62Sol},
+		{label: codexReviewModel62Astra, value: codexReviewModel62Astra},
+		{label: codexReviewModel61Terra, value: codexReviewModel61Terra},
 		{label: codexReviewModel61Sol, value: codexReviewModel61Sol},
 		{label: codexReviewModel6Astra, value: codexReviewModel6Astra},
+		{label: codexReviewModel6Sol, value: codexReviewModel6Sol},
+		{label: codexReviewModel6Luna, value: codexReviewModel6Luna},
+		{label: codexReviewModel56Sol, value: codexReviewModel56Sol},
+		{label: codexReviewModel56Terra, value: codexReviewModel56Terra},
+		{label: codexReviewModel56Luna, value: codexReviewModel56Luna},
 	},
-	defaultModel: codexReviewModel6Astra,
+	defaultModel: codexReviewModel62Astra,
 }
 
 var geminiReviewConfig = reviewProviderConfig{
@@ -354,7 +358,7 @@ var codexUltraEffortChoices = []filterChoice{
 	{label: codexReviewEffortUltra, value: codexReviewEffortUltra},
 }
 
-var codexSolEffortChoices = []filterChoice{
+var codexLunaEffortChoices = []filterChoice{
 	{label: codexReviewEffortLow, value: codexReviewEffortLow},
 	{label: codexReviewEffortMedium, value: codexReviewEffortMedium},
 	{label: codexReviewEffortHigh, value: codexReviewEffortHigh},
@@ -363,9 +367,24 @@ var codexSolEffortChoices = []filterChoice{
 }
 
 var codexEffortRules = []reviewEffortRule{
-	{pattern: codexReviewModel61Sol, choices: codexSolEffortChoices, def: codexReviewEffortMedium},
-	{pattern: codexReviewModel6Sol, choices: codexSolEffortChoices, def: codexReviewEffortMedium},
-	{pattern: codexReviewModel6Luna, choices: codexSolEffortChoices, def: codexReviewEffortMedium},
+	{
+		pattern: codexReviewModel62Sol,
+		choices: codexUltraEffortChoices,
+		def:     codexReviewEffortMedium,
+	},
+	{
+		pattern: codexReviewModel62Astra,
+		choices: codexUltraEffortChoices,
+		def:     codexReviewEffortHigh,
+	},
+	{pattern: codexReviewModel61Terra, choices: codexUltraEffortChoices, def: codexReviewEffortLow},
+	{
+		pattern: codexReviewModel61Sol,
+		choices: codexUltraEffortChoices,
+		def:     codexReviewEffortMedium,
+	},
+	{pattern: codexReviewModel6Sol, choices: codexUltraEffortChoices, def: codexReviewEffortMedium},
+	{pattern: codexReviewModel6Luna, choices: codexLunaEffortChoices, def: codexReviewEffortMedium},
 	{pattern: codexReviewModel6Astra, choices: codexUltraEffortChoices, def: codexReviewEffortHigh},
 	{pattern: codexReviewModel56Sol, choices: codexUltraEffortChoices, def: codexReviewEffortHigh},
 	{

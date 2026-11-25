@@ -123,7 +123,7 @@ func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testi
   review:
     default:
       provider: codex
-      model: gpt-6-sol
+      model: gpt-6-luna
       effort: ultra
 `),
 			0o600,
@@ -134,7 +134,7 @@ func TestLoadConfigRejectsInvalidReviewDefaultEffortForProviderAndModel(t *testi
 	require.EqualError(
 		t,
 		err,
-		`invalid tui.review.default.effort "ultra" for provider "codex" model "gpt-6-sol"`,
+		`invalid tui.review.default.effort "ultra" for provider "codex" model "gpt-6-luna"`,
 	)
 }
 
