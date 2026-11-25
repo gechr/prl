@@ -530,6 +530,8 @@ type tuiModel struct {
 
 	// Background auto-refresh.
 	eventStreams    *eventStreams
+	eventTargets    eventTargets
+	eventAttachGen  int
 	eventsPending   bool
 	autoRefresh     bool
 	refreshing      bool          // true while a background refresh is in-flight
@@ -1040,7 +1042,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return model, cmd
 	}
-	cmd = tea.Batch(cmd, tm.refreshChangedPRs(), tm.refreshFromEvents())
+	cmd = tea.Batch(
+		cmd,
+		tm.syncVisibleEventStreams(msg),
+		tm.refreshChangedPRs(),
+		tm.refreshFromEvents(),
+	)
 	tm.syncConfirmDialog()
 	if tm.presetMenu.open {
 		if tm.canKeepPresetMenuOpen() {
@@ -1388,6 +1395,13 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.eventsPending = true
 		return m, m.eventStreams.wait
 
+	case eventStreamFailureMsg:
+		if m.autoRefresh {
+			return m, m.eventStreams.wait
+		}
+		return m, tea.Batch(m.eventStreams.wait, tuiFlashMessage(&m,
+			"Event stream unavailable for a PR (press R for periodic refresh)", true))
+
 	case changedPRsMsg:
 		return m, m.applyChangedPRs(msg)
 
@@ -1442,9 +1456,6 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.items = msg.items
 		m.applyPendingActions()
 		m.snapshotPRs = prItems(m.items)
-		if m.autoRefresh {
-			m.eventStreams.sync(m.snapshotPRs)
-		}
 		m.saveSnapshot()
 		m.applyPendingApprovals()
 		header, rows, widths := m.rerender()
@@ -1836,10 +1847,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			warnStateSaveErr(err, "auto-refresh setting")
 		}
 		if m.autoRefresh {
-			m.eventStreams.sync(m.snapshotPRs)
 			return m, m.rescheduleRefresh()
 		}
-		m.eventStreams.sync(nil)
 		m.invalidateRefresh()
 		return m, nil
 
@@ -3754,9 +3763,6 @@ func runTui(
 
 	model.eventStreams = newEventStreams(cfg.Features.EventStreams)
 	defer model.eventStreams.close()
-	if model.autoRefresh {
-		model.eventStreams.sync(model.snapshotPRs)
-	}
 
 	// Apply persisted sort and stack settings before showing the first frame.
 	model.sortColumn = cfg.TUI.Sort.Key

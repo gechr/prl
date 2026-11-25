@@ -9,7 +9,10 @@ import (
 	"testing/synctest"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/cli/go-gh/v2/pkg/api"
+	"github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -72,8 +75,9 @@ exec /bin/sleep 60
 }
 
 func TestTUIQueuesEventsDuringRefresh(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 	m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2))
-	m.actions = NewActionRunner(nil, eventTestClient(t))
+	m.actions = NewActionRunner(nil, eventTestClient(t, mergedEventNode))
 	m.snapshotPRs = prItems(m.items)
 	m.autoRefresh = true
 	m.refreshing = true
@@ -113,6 +117,166 @@ func TestUnavailableEventStreamKeepsPeriodicRefresh(t *testing.T) {
 	m, cmd := updateModel(t, m, refreshTickMsg{id: m.refreshID})
 	require.True(t, m.refreshing)
 	require.NotNil(t, cmd)
+}
+
+func TestTUIEventClearsConflictWithPollingOff(t *testing.T) {
+	dir := t.TempDir()
+	writeExecutable(t, dir, "gh", "#!/bin/sh\necho '"+eventCheckSuite+"'\nexec /bin/sleep 60\n")
+	t.Setenv("PATH", dir)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	pr := approvalTestPR(1)
+	pr.MergeStatus = MergeStatusConflict
+	m := approvalTestModel("", pr)
+	m.cfg = &Config{}
+	m.tty = true
+	m.cli.Columns.Values = []string{colRef}
+	m.eventStreams = newEventStreams(true)
+	t.Cleanup(m.eventStreams.close)
+	m, attach := updateModel(
+		t,
+		m,
+		refreshResultMsg{items: buildPRRowModels([]PullRequest{pr}, "", nil)},
+	)
+	require.Empty(t, m.eventStreams.listeners)
+	require.NotNil(t, attach)
+	m, _ = updateModel(t, m, attach())
+	require.Contains(t, m.eventStreams.listeners, makePRKey(pr))
+	require.Equal(
+		t,
+		ansi.Force().Hyperlink(pr.URL, styleHeading.Render(pr.Ref())),
+		m.rows[0].Cells[0].Text,
+	)
+
+	m, _ = pressKey(t, m, tuiKeybindToggleRefresh)
+	require.True(t, m.autoRefresh)
+	m, _ = pressKey(t, m, tuiKeybindToggleRefresh)
+	require.False(t, m.autoRefresh)
+	require.Contains(t, m.eventStreams.listeners, makePRKey(pr))
+	select {
+	case <-m.eventStreams.wake:
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing stream notification")
+	}
+	const clean = `{"id":"PR_node","state":"OPEN","updatedAt":"2025-08-11T10:00:00Z","mergeStateStatus":"CLEAN"}`
+	m.actions = NewActionRunner(nil, eventTestClient(t, clean))
+	m, cmd := updateModel(t, m, prEventsMsg{})
+	require.True(t, m.changedRefreshInFlight)
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok)
+	// The first command waits for the next event, the second refreshes this PR.
+	require.Len(t, batch, 2)
+	m, cmd = updateModel(t, m, batch[1]())
+	require.Equal(t, MergeStatusReady, m.snapshotPRs[0].MergeStatus)
+	require.Equal(
+		t,
+		ansi.Force().Hyperlink(pr.URL, m.p.theme.BoldGreen.Render(pr.Ref())),
+		m.rows[0].Cells[0].Text,
+	)
+	require.Nil(t, cmd)
+}
+
+func TestTUIEventStreamsFollowFilteredViewport(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	var prs []PullRequest
+	for n := 1; n <= maxEventStreams+1; n++ {
+		pr := approvalTestPR(n)
+		pr.URL = "https://github.com/owner/repo/pull/" + strconv.Itoa(n)
+		prs = append(prs, pr)
+	}
+	target := prs[0]
+	target.Title = "Distinctive title"
+	prs[0] = target
+	m := approvalTestModel("", prs...)
+	m.filterInput = textinput.New()
+	m.cli.Columns.Values = []string{colTitle}
+	m.items = buildPRRowModels(prs, "", nil)
+	m.rerenderList()
+	m.height = 7
+	m.cursor, m.offset = 0, 0
+	m.eventStreams = newEventStreams(true)
+	t.Cleanup(m.eventStreams.close)
+	m, _ = pressKey(t, m, "/")
+	initial := eventAttachMsg{gen: m.eventAttachGen}
+	m, _ = updateModel(t, m, initial)
+	first := m.rowKeyAt(m.visibleIndices()[0])
+	require.Len(t, m.eventStreams.listeners, m.listViewport())
+	require.Contains(t, m.eventStreams.listeners, first)
+	require.NotContains(t, m.eventStreams.listeners, makePRKey(target))
+	m.eventStreams.queue(t.Context(), first, eventStatus)
+
+	m, _ = updateModel(t, m, tea.PasteMsg{Content: target.Title})
+	m, _ = updateModel(t, m, initial)
+	require.Empty(t, m.eventStreams.listeners)
+	m, _ = updateModel(t, m, eventAttachMsg{gen: m.eventAttachGen})
+	require.Len(t, m.eventStreams.listeners, 1)
+	require.Contains(t, m.eventStreams.listeners, makePRKey(target))
+	require.Empty(t, m.eventStreams.pending)
+
+	m, _ = updateModel(t, m, tea.PasteMsg{Content: " without a match"})
+	require.Empty(t, m.eventStreams.listeners)
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	intermediate := eventAttachMsg{gen: m.eventAttachGen}
+	m, _ = pressKey(t, m, tuiKeybindTop)
+	m, _ = updateModel(t, m, intermediate)
+	require.Empty(t, m.eventStreams.listeners)
+	m, _ = updateModel(t, m, eventAttachMsg{gen: m.eventAttachGen})
+	require.NotContains(t, m.eventStreams.listeners, makePRKey(target))
+	require.Contains(t, m.eventStreams.listeners, first)
+}
+
+func TestTUIReviewPreservesPendingHeadProbe(t *testing.T) {
+	pr := approvalTestPR(1)
+	m := approvalTestModel("", pr)
+	m.eventStreams = newEventStreams(true)
+	t.Cleanup(m.eventStreams.close)
+	key := makePRKey(pr)
+	canceled := false
+	m.eventStreams.listeners[key] = func() { canceled = true }
+	m.eventStreams.pending[key] = eventStatus | eventFirstHeadProbe
+	m.view = tuiViewDetail
+	m, _ = updateModel(t, m, prEventsMsg{})
+	require.True(t, m.eventsPending)
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
+	require.Equal(t, tuiViewList, m.view)
+	require.False(t, canceled)
+	require.Equal(t, prEvents{key: eventStatus | eventFirstHeadProbe}, m.eventStreams.takeChanges())
+}
+
+func TestTUIKeepsListeningAfterStreamFailure(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	for _, polling := range []bool{false, true} {
+		t.Run("polling="+strconv.FormatBool(polling), func(t *testing.T) {
+			pr := approvalTestPR(1)
+			m := approvalTestModel("", pr)
+			m.autoRefresh = polling
+			m.eventStreams = newEventStreams(true)
+			t.Cleanup(m.eventStreams.close)
+			m.eventStreams.sync([]PullRequest{pr, approvalTestPR(2)})
+			m.eventStreams.workers.Wait()
+			require.Len(t, m.eventStreams.failed, 1)
+			m, cmd := updateModel(t, m, m.eventStreams.wait())
+			require.NotNil(t, cmd)
+			require.Equal(t, !polling, m.flash.Err)
+			if !polling {
+				require.Equal(
+					t,
+					"Event stream unavailable for a PR (press R for periodic refresh)",
+					m.flash.Msg,
+				)
+			}
+			m.eventStreams.wake <- struct{}{}
+			next := cmd()
+			if batch, ok := next.(tea.BatchMsg); ok {
+				for _, command := range batch {
+					next = command()
+					if _, received := next.(prEventsMsg); received {
+						break
+					}
+				}
+			}
+			require.IsType(t, prEventsMsg{}, next)
+		})
+	}
 }
 
 func TestEventStreamsBatchBursts(t *testing.T) {
@@ -156,7 +320,7 @@ func TestHeadEventCIProbes(t *testing.T) {
 		head := eventStatusAndReviews | eventNewHead
 		s.queue(t.Context(), key, head)
 		s.wait()
-		s.followUpCI(pr, s.takeChanges()[key])
+		s.followUpHead(pr, s.takeChanges()[key])
 
 		start := time.Now()
 		for range 6 {
@@ -167,19 +331,39 @@ func TestHeadEventCIProbes(t *testing.T) {
 		s.wait()
 		require.Equal(t, watchMinInterval, time.Since(start))
 		events := s.takeChanges()
-		require.Equal(t, head|eventFirstCIProbe, events[key])
-		s.followUpCI(pr, events[key])
+		require.Equal(t, head|eventFirstHeadProbe, events[key])
+		s.followUpHead(pr, events[key])
 
-		for _, want := range []prEventScope{eventStatus | eventFirstCIProbe, eventStatus} {
+		for _, want := range []prEventScope{eventStatus | eventFirstHeadProbe, eventStatus} {
 			s.wait()
 			events = s.takeChanges()
 			require.Equal(t, prEvents{key: want}, events)
-			s.followUpCI(pr, events[key])
+			s.followUpHead(pr, events[key])
 		}
 		require.Empty(t, s.pending)
 
 		pr.awaitingChecks = false
-		s.followUpCI(pr, head)
+		s.followUpHead(pr, head)
+		require.Empty(t, s.pending)
+	})
+}
+
+func TestHeadEventRechecksPersistentConflict(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := newEventStreams(true)
+		defer s.close()
+		pr := approvalTestPR(1)
+		pr.MergeStatus = MergeStatusConflict
+		key := makePRKey(pr)
+		s.listeners[key] = func() {}
+
+		s.followUpHead(pr, eventNewHead)
+		for _, want := range []prEventScope{eventStatus | eventFirstHeadProbe, eventStatus} {
+			s.wait()
+			events := s.takeChanges()
+			require.Equal(t, prEvents{key: want}, events)
+			s.followUpHead(pr, events[key])
+		}
 		require.Empty(t, s.pending)
 	})
 }
@@ -193,7 +377,7 @@ func TestDetachedCIProbeIsDiscarded(t *testing.T) {
 		key := makePRKey(pr)
 		s.listeners[key] = func() {}
 		s.nextRead = time.Now().Add(watchMinInterval)
-		s.followUpCI(pr, eventNewHead)
+		s.followUpHead(pr, eventNewHead)
 		timer := s.timer
 		s.sync(nil)
 
@@ -208,7 +392,9 @@ func TestDetachedCIProbeIsDiscarded(t *testing.T) {
 	})
 }
 
-func eventTestClient(t *testing.T) *api.GraphQLClient {
+const mergedEventNode = `{"id":"PR_node","state":"MERGED","updatedAt":"2025-08-11T10:00:00Z","headRefOid":"new-head"}`
+
+func eventTestClient(t *testing.T, node string) *api.GraphQLClient {
 	t.Helper()
 	gql, err := api.NewGraphQLClient(api.ClientOptions{
 		Host: "github.com", AuthToken: "test",
@@ -223,7 +409,7 @@ func eventTestClient(t *testing.T) *api.GraphQLClient {
 			return jsonResponse(
 				req,
 				http.StatusOK,
-				`{"data":{"mergeNodes":[{"id":"PR_node","state":"MERGED","updatedAt":"2025-08-11T10:00:00Z","headRefOid":"new-head"}]}}`,
+				`{"data":{"mergeNodes":[`+node+`]}}`,
 			), nil
 		}),
 	})
@@ -239,7 +425,7 @@ func TestWatchEventReadsOnlyChangedStatus(t *testing.T) {
 	prs := []PullRequest{pr, other}
 	changed := prEvents{makePRKey(pr): eventStatus}
 	got, err := refreshWatchEvents(
-		eventTestClient(t),
+		eventTestClient(t, mergedEventNode),
 		testCLI(),
 		&SearchParams{},
 		prs,
@@ -249,7 +435,7 @@ func TestWatchEventReadsOnlyChangedStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []PullRequest{other}, got)
 	got, err = refreshWatchEvents(
-		eventTestClient(t),
+		eventTestClient(t, mergedEventNode),
 		testCLI(),
 		&SearchParams{PRRefs: []prRef{{Number: 1}}},
 		prs,

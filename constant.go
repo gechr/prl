@@ -397,7 +397,7 @@ const (
 	tuiDescOpen             = "Open in browser"
 	tuiDescOptions          = "Options"
 	tuiDescQuit             = "Quit"
-	tuiDescRefresh          = "Toggle auto-refresh"
+	tuiDescRefresh          = "Toggle periodic refresh"
 	tuiDescReview           = "Launch AI review"
 	tuiDescReviewNoConfirm  = "Launch AI review (no confirm)"
 	tuiDescSelect           = "Toggle selection"

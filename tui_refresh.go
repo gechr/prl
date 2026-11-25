@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"maps"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -169,7 +170,7 @@ func (m *tuiModel) applyChangedPRs(msg changedPRsMsg) tea.Cmd {
 			automerge:      msg.events != nil,
 		}, newTimelineActors())
 		if msg.events != nil {
-			m.eventStreams.followUpCI(item.PR, msg.events[key])
+			m.eventStreams.followUpHead(item.PR, msg.events[key])
 		}
 	}
 	m.applyPendingApprovals()
@@ -205,6 +206,42 @@ func (m *tuiModel) scheduleMembershipCheck() tea.Cmd {
 	return scheduleTick(max(0, remaining), refreshTickMsg{id: m.refreshID})
 }
 
+type eventAttachMsg struct{ gen int }
+
+func (m *tuiModel) syncVisibleEventStreams(msg tea.Msg) tea.Cmd {
+	if m.eventStreams == nil {
+		return nil
+	}
+	if m.view != tuiViewList || m.height == 0 {
+		// Preserve listeners and queued probes during review. Reconcile the
+		// visible rows when the list returns, even if a timer fired meanwhile.
+		m.eventTargets = nil
+		return nil
+	}
+	wanted := make(eventTargets)
+	for _, line := range m.viewportLines() {
+		if line.row >= 0 && line.header == "" {
+			wanted.add(m.rows[line.row].Item.PR)
+		}
+		if len(wanted) == maxEventStreams {
+			break
+		}
+	}
+	if m.eventTargets != nil && maps.Equal(m.eventTargets, wanted) {
+		if tick, ok := msg.(eventAttachMsg); ok && tick.gen == m.eventAttachGen {
+			m.eventStreams.attach(wanted)
+		}
+		return nil
+	}
+	m.eventTargets = wanted
+	m.eventAttachGen++
+	m.eventStreams.detachHidden(wanted)
+	if len(m.eventStreams.listeners) == len(wanted) {
+		return nil
+	}
+	return scheduleTick(eventAttachDelay, eventAttachMsg{gen: m.eventAttachGen})
+}
+
 // Fetch the status fields of notified PRs from their confirmed rows. The list
 // query and local actions have priority over stream reads.
 func (m *tuiModel) refreshFromEvents() tea.Cmd {
@@ -214,7 +251,7 @@ func (m *tuiModel) refreshFromEvents() tea.Cmd {
 	}
 	m.eventsPending = false
 	changed := m.eventStreams.takeChanges()
-	if !m.autoRefresh || len(changed) == 0 {
+	if len(changed) == 0 {
 		return nil
 	}
 	gens := make(map[prKey]int, len(changed))

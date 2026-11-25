@@ -15,8 +15,9 @@ import (
 
 // gh maintains one long-lived process and connection per pull request.
 const (
-	maxEventStreams = 8
-	eventBatchDelay = 250 * time.Millisecond
+	maxEventStreams  = 8
+	eventBatchDelay  = 250 * time.Millisecond
+	eventAttachDelay = time.Second
 )
 
 const (
@@ -31,12 +32,20 @@ const (
 	eventStatus prEventScope = 1 << iota
 	eventReviews
 	eventNewHead
-	eventFirstCIProbe
+	eventFirstHeadProbe
 
 	eventStatusAndReviews = eventStatus | eventReviews
 )
 
 type prEvents map[prKey]prEventScope
+
+type eventTargets map[prKey]string
+
+func (targets eventTargets) add(pr PullRequest) {
+	if strings.HasPrefix(pr.URL, "https://github.com/") {
+		targets[makePRKey(pr)] = pr.URL
+	}
+}
 
 var pullRequestEvents = []string{
 	eventCheckSuite,
@@ -51,6 +60,8 @@ type eventStreams struct {
 	workers   sync.WaitGroup
 	stopped   chan struct{}
 	wake      chan struct{}
+	failed    chan struct{}
+	warnOnce  sync.Once
 	mu        sync.Mutex
 	pending   prEvents
 	timer     *time.Timer
@@ -65,6 +76,7 @@ func newEventStreams(enabled bool) *eventStreams {
 		listeners: make(map[prKey]context.CancelFunc),
 		stopped:   make(chan struct{}),
 		wake:      make(chan struct{}, 1),
+		failed:    make(chan struct{}, 1),
 		pending:   make(prEvents),
 	}
 }
@@ -87,16 +99,18 @@ func (s *eventStreams) sync(prs []PullRequest) {
 	if s == nil {
 		return
 	}
-	wanted := make(map[prKey]string)
+	wanted := make(eventTargets)
 	for _, pr := range prs {
-		if !strings.HasPrefix(pr.URL, "https://github.com/") {
-			continue
-		}
-		wanted[makePRKey(pr)] = pr.URL
+		wanted.add(pr)
 		if len(wanted) == maxEventStreams {
 			break
 		}
 	}
+	s.detachHidden(wanted)
+	s.attach(wanted)
+}
+
+func (s *eventStreams) detachHidden(wanted eventTargets) {
 	for key, cancel := range s.listeners {
 		if _, keep := wanted[key]; !keep {
 			cancel()
@@ -106,6 +120,9 @@ func (s *eventStreams) sync(prs []PullRequest) {
 			s.mu.Unlock()
 		}
 	}
+}
+
+func (s *eventStreams) attach(wanted eventTargets) {
 	for key, url := range wanted {
 		if _, listening := s.listeners[key]; listening {
 			continue
@@ -116,10 +133,11 @@ func (s *eventStreams) sync(prs []PullRequest) {
 			err := listenPREvents(ctx, url, func(scope prEventScope) {
 				s.queue(ctx, key, scope)
 			})
-			if err != nil && ctx.Err() == nil {
-				clog.Debug().
-					Err(err).
-					Msg("GitHub Event Stream unavailable - continuing periodic refresh")
+			if ctx.Err() == nil {
+				s.warnOnce.Do(func() {
+					clog.Warn().Err(err).Msg("GitHub Event Stream unavailable")
+					s.failed <- struct{}{}
+				})
 			}
 		})
 	}
@@ -136,10 +154,10 @@ func (s *eventStreams) queue(ctx context.Context, key prKey, scope prEventScope)
 	s.enqueue(key, scope)
 }
 
-// After a push GitHub may take time to create checks. Reuse the stream batch
-// timer for at most two more status reads, stopping once checks are visible.
-func (s *eventStreams) followUpCI(pr PullRequest, scope prEventScope) {
-	if !pr.awaitingChecks || pr.State != valueOpen || pr.MergeStatus == MergeStatusConflict {
+// After a push GitHub may still report a conflict or have no checks yet.
+// Use the batch timer for at most two more reads while either condition holds.
+func (s *eventStreams) followUpHead(pr PullRequest, scope prEventScope) {
+	if pr.State != valueOpen || (!pr.awaitingChecks && pr.MergeStatus != MergeStatusConflict) {
 		return
 	}
 	key := makePRKey(pr)
@@ -149,8 +167,8 @@ func (s *eventStreams) followUpCI(pr PullRequest, scope prEventScope) {
 	next := eventStatus
 	switch {
 	case scope&eventNewHead != 0:
-		next |= eventFirstCIProbe
-	case scope&eventFirstCIProbe == 0:
+		next |= eventFirstHeadProbe
+	case scope&eventFirstHeadProbe == 0:
 		return
 	}
 	s.mu.Lock()
@@ -158,7 +176,7 @@ func (s *eventStreams) followUpCI(pr PullRequest, scope prEventScope) {
 	s.enqueue(key, next)
 }
 
-// Caller holds mu. Combine scopes so pushes and CI probes share a single read.
+// Caller holds mu. Combine scopes so pushes and follow-up probes share a single read.
 func (s *eventStreams) enqueue(key prKey, scope prEventScope) {
 	if len(s.pending) == 0 && s.timer == nil {
 		s.timer = time.AfterFunc(max(eventBatchDelay, time.Until(s.nextRead)), func() {
@@ -197,7 +215,10 @@ func (s *eventStreams) takeChanges() prEvents {
 	return changed
 }
 
-type prEventsMsg struct{}
+type (
+	prEventsMsg           struct{}
+	eventStreamFailureMsg struct{}
+)
 
 func (s *eventStreams) wait() tea.Msg {
 	select {
@@ -205,6 +226,8 @@ func (s *eventStreams) wait() tea.Msg {
 		return nil
 	case <-s.wake:
 		return prEventsMsg{}
+	case <-s.failed:
+		return eventStreamFailureMsg{}
 	}
 }
 

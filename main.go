@@ -542,7 +542,7 @@ func runWatch(
 			streams.sync(lastPRs)
 			if r.events != nil && r.err == nil && needsListMergeStatus(cli) {
 				for _, pr := range r.prs {
-					streams.followUpCI(pr, r.events[makePRKey(pr)])
+					streams.followUpHead(pr, r.events[makePRKey(pr)])
 				}
 			}
 			if r.events == nil {

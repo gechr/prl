@@ -753,7 +753,7 @@ features:
 # version-controlled config stable while remembering your last session.
 tui:
   refresh:
-    # Automatically refresh results in the background.
+    # Periodically refresh the PR list. Event streams are configured separately.
     enabled: true
 
   review:

@@ -29,12 +29,16 @@ func (p listRefreshPolicy) maxAge(pr PullRequest, status MergeStatus) time.Durat
 	return quietStatusInterval
 }
 
-func (m tuiModel) refreshPolicy() *listRefreshPolicy {
-	visible := make(prKeys)
+func (m tuiModel) viewportLines() []tuiListLine {
 	lines := m.listLines()
 	start := min(m.offset, len(lines))
 	end := min(start+m.listViewport(), len(lines))
-	for _, line := range lines[start:end] {
+	return lines[start:end]
+}
+
+func (m tuiModel) refreshPolicy() *listRefreshPolicy {
+	visible := make(prKeys)
+	for _, line := range m.viewportLines() {
 		if line.row >= 0 {
 			visible[m.rowKeyAt(line.row)] = true
 		}
