@@ -32,15 +32,16 @@ func (m *tuiModel) applyPendingActions() {
 
 func (m *tuiModel) reconcilePendingActions(settle bool) {
 	for key, pending := range m.pendingActions {
-		item := m.itemForKey(key)
-		if item == nil || time.Since(pending.at) >= 2*time.Minute {
+		pr := m.confirmed.get(key)
+		if pr == nil || time.Since(pending.at) >= 2*time.Minute {
 			delete(m.pendingActions, key)
 			continue
 		}
-		before := item.PR
-		applyKnownActionState(item, pending.action)
-		if settle && before.State == item.PR.State && before.IsDraft == item.PR.IsDraft &&
-			before.Automerge == item.PR.Automerge {
+		before := *pr
+		applyKnownActionState(pr, pending.action)
+		m.projectPR(key)
+		if settle && before.State == pr.State && before.IsDraft == pr.IsDraft &&
+			before.Automerge == pr.Automerge {
 			delete(m.pendingActions, key)
 		}
 		m.reconcileVisibility(key)
@@ -49,41 +50,36 @@ func (m *tuiModel) reconcilePendingActions(settle bool) {
 
 // applyActionState updates known PR state before evaluating the active filters.
 func (m *tuiModel) applyActionState(key prKey, action tuiAction) {
-	pr := m.prForKey(key)
+	pr := m.confirmed.get(key)
 	if pr == nil {
 		return
 	}
-	item := PRRowModel{PR: *pr}
-	if applyKnownActionState(&item, action) {
+	if applyKnownActionState(pr, action) {
 		if m.pendingActions == nil {
 			m.pendingActions = make(map[prKey]pendingAction)
 		}
 		m.pendingActions[key] = pendingAction{action: action, at: time.Now()}
-		m.updatePR(key, func(item *PRRowModel) { applyKnownActionState(item, action) })
-		if len(m.items) > 0 {
-			header, rows, widths := m.rerender()
-			*m = m.reindexRows(m.rows, rows)
-			m.header, m.colWidths = header, widths
-		}
+		m.projectPR(key)
+		m.rerenderList()
 	}
 	m.reconcileVisibility(key)
 }
 
-func applyKnownActionState(item *PRRowModel, action tuiAction) bool {
+func applyKnownActionState(pr *PullRequest, action tuiAction) bool {
 	switch action {
 	case tuiActionMerged, tuiActionForceMerged:
-		item.PR.State = valueMerged
+		pr.State = valueMerged
 	case tuiActionClosed:
-		item.PR.State = valueClosed
+		pr.State = valueClosed
 	case tuiActionReopened:
-		item.PR.State = valueOpen
+		pr.State = valueOpen
 	case tuiActionMarkedDraft:
-		item.PR.IsDraft = true
+		pr.IsDraft = true
 	case tuiActionMarkedReady:
-		item.PR.IsDraft = false
+		pr.IsDraft = false
 	case tuiActionAutomerged:
-		item.PR.Automerge = true
-		item.PR.automergeLoaded = true
+		pr.Automerge = true
+		pr.automergeLoaded = true
 	case tuiActionApproved,
 		tuiActionUnapproved,
 		tuiActionBranchUpdated,
@@ -94,9 +90,6 @@ func applyKnownActionState(item *PRRowModel, action tuiAction) bool {
 		tuiActionUnsubscribed:
 		return false
 	}
-	item.State = item.PR.State
-	item.MergeReason = deriveMergeReason(item.PR)
-	item.Review = deriveReviewStatus(item.PR)
 	return true
 }
 

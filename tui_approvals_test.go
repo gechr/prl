@@ -44,6 +44,7 @@ func approvalTestModel(review string, prs ...PullRequest) tuiModel {
 	return tuiModel{
 		cli:           cli,
 		items:         items,
+		confirmed:     newConfirmedPRList(items),
 		rows:          rows,
 		selected:      make(prKeys),
 		styles:        newTuiStyles(),
@@ -205,7 +206,8 @@ func TestApprovalFailureAfterRowLeftListRefreshes(t *testing.T) {
 	m := approvalTestModel(valueReviewFilterSelfRequired, approvalTestPR(1), approvalTestPR(2))
 	key := makePRKey(m.rows[0].Item.PR)
 	m.beginApproval([]prKey{key})
-	m.items, m.rows = m.items[1:], m.rows[1:]
+	m.replaceListItems(m.items[1:])
+	m.rows = m.rows[1:]
 
 	m, cmd := updateModel(t, m, approvedMsg(key, errApproveTest))
 
@@ -219,13 +221,16 @@ func TestApprovalSuccessAfterRowLeftListSettles(t *testing.T) {
 	m := approvalTestModel(valueReviewFilterSelfRequired, approvalTestPR(1), approvalTestPR(2))
 	key := makePRKey(m.rows[0].Item.PR)
 	m.beginApproval([]prKey{key})
-	m.items, m.rows = m.items[1:], m.rows[1:]
+	m.replaceListItems(m.items[1:])
+	m.rows = m.rows[1:]
 
 	m, _ = updateModel(t, m, approvedMsg(key, nil))
 
 	require.Empty(t, m.pendingApprovals)
 	require.False(t, m.refreshing)
 	require.Equal(t, "Approved owner/repo#1", ansi.Strip(m.flash.Msg))
+	require.Equal(t, 2, m.items[0].PR.Number)
+	require.Equal(t, 2, m.rows[0].Item.PR.Number)
 }
 
 func TestApprovalSuccessInvalidatesInFlightRefresh(t *testing.T) {
@@ -471,7 +476,7 @@ func TestApproveMergeBlocksAnotherApprovalUntilCompletion(t *testing.T) {
 			require.Equal(t, resultApprovalPending, m.approvalBlockReason(key, m.rows[0].Item.PR))
 			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModAlt})
 			require.Equal(t, 1, m.approvalGen[key])
-			require.False(t, m.pendingApprovals[key].prev.viewerApproved)
+			require.False(t, m.confirmed.get(key).viewerApproved)
 		})
 	}
 }
@@ -650,7 +655,7 @@ func TestDiffAwaitedPrefetchWithChangedHeadRefetches(t *testing.T) {
 	m := diffTestModel(approvalTestPR(1), pr2)
 	k1, k2 := m.diffKey, makePRKey(pr2)
 	_ = m.prefetchNext()
-	m.updatePR(k2, func(item *PRRowModel) { item.PR.HeadSHA = "new" })
+	m.updateConfirmed(k2, func(pr *PullRequest) { pr.HeadSHA = "new" })
 	m, _ = pressKey(t, m, tuiKeybindNext)
 
 	m, cmd := updateModel(t, m, diffFetchedMsg{
@@ -1020,7 +1025,8 @@ func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {
 	m.cli.preset = "Needs your review"
 	require.Equal(t, "No pull requests match the current filter", emptyOverlayHeadline(m))
 
-	m.rows, m.items = nil, nil
+	m.replaceListItems(nil)
+	m.rows = nil
 	require.Equal(t, "No pull requests found for the current query", emptyOverlayHeadline(m))
 }
 
@@ -1214,4 +1220,17 @@ func TestCyclePresetWithNoAvailablePresets(t *testing.T) {
 	require.Empty(t, m.cli.preset)
 	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
 	require.Empty(t, m.cli.preset)
+}
+
+func TestFailedApprovalProjectsLatestConfirmedRead(t *testing.T) {
+	pr := approvalTestPR(1)
+	m := approvalTestModel("", pr)
+	key := makePRKey(pr)
+	m.beginApproval([]prKey{key})
+	require.False(t, m.confirmed.get(key).viewerApproved)
+	pr.viewerApproved = true
+	m, _ = updateModel(t, m, refreshResultMsg{items: buildPRRowModels([]PullRequest{pr}, "", nil)})
+	m.settleApprovals([]approvalResult{{key: key, err: errApproveTest}})
+	require.True(t, m.confirmed.get(key).viewerApproved)
+	require.True(t, m.prForKey(key).viewerApproved)
 }

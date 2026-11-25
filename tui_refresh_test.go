@@ -303,3 +303,22 @@ func TestFetchedStatusRebuildsListCells(t *testing.T) {
 	require.Equal(t, valueReviewFilterApproved, m.rows[0].Item.Review)
 	require.Equal(t, "ready approved", rowFilterText(m.rows[0]))
 }
+
+func TestStatusEventKeepsConfirmedApprovalAndHiddenRows(t *testing.T) {
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	m := approvalTestModel(valueReviewFilterSelfRequired, first, second)
+	key := makePRKey(first)
+	m.settleApprovals([]approvalResult{{key: key, outcome: approveAlreadyViewer}})
+	other := makePRKey(second)
+	m.applyActionState(other, tuiActionClosed)
+	m.applyChangedPRs(
+		changedPRsMsg{
+			items:  buildPRRowModels([]PullRequest{first}, "", nil),
+			events: prEvents{key: eventStatus},
+		},
+	)
+	require.True(t, m.confirmed.get(key).viewerApproved)
+	require.True(t, m.items[0].PR.viewerApproved)
+	require.True(t, m.filterHidden[key])
+	require.True(t, m.filterHidden[other])
+}

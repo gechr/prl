@@ -534,10 +534,10 @@ type tuiModel struct {
 	eventAttachGen  int
 	eventsPending   bool
 	autoRefresh     bool
-	refreshing      bool          // true while a background refresh is in-flight
-	lastInteraction time.Time     // tracks last user keypress for idle-based refresh decay
-	lastRefreshAt   time.Time     // last accepted membership check
-	snapshotPRs     []PullRequest // confirmed rows for disk write-through
+	refreshing      bool      // true while a background refresh is in-flight
+	lastInteraction time.Time // tracks last user keypress for idle-based refresh decay
+	lastRefreshAt   time.Time // last accepted membership check
+	confirmed       confirmedPRList
 	// showRefreshStatus is true when the in-flight refresh was triggered by
 	// applying options and should show a temporary "Refreshing..." status.
 	showRefreshStatus  bool
@@ -1395,13 +1395,12 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// cursor/offset against the new rows.
 		// Render with the current stack/sort settings; a refresh may have
 		// captured settings from before the options menu was applied.
-		m.items = msg.items
+		m.replaceListItems(msg.items)
 		m.applyPendingActions()
-		m.snapshotPRs = prItems(m.items)
 		m.saveSnapshot()
 		m.applyPendingApprovals()
 		header, rows, widths := m.rerender()
-		m = m.mergeRefresh(rows, m.items)
+		m = m.mergeRefresh(rows)
 		m.header, m.colWidths = header, widths
 		return m, tea.Batch(m.rescheduleRefresh(), m.startHeadValidation(msg.items))
 
@@ -1513,11 +1512,7 @@ func (m *tuiModel) applyDetailMergeStatus(key prKey, status *MergeStatus) {
 		return
 	}
 
-	m.updatePR(key, func(item *PRRowModel) {
-		item.PR.MergeStatus = *status
-		item.MergeStatus = *status
-		item.MergeReason = deriveMergeReason(item.PR)
-	})
+	m.updateConfirmed(key, func(pr *PullRequest) { pr.MergeStatus = *status })
 	m.rerenderList()
 }
 
@@ -3378,7 +3373,7 @@ func (m tuiModel) rowKeyAt(idx int) prKey {
 
 // mergeRefresh replaces the model's data with fresh results while preserving
 // cursor position and selections by matching on PR identity.
-func (m tuiModel) mergeRefresh(newRows []TableRow, newItems []PRRowModel) tuiModel {
+func (m tuiModel) mergeRefresh(newRows []TableRow) tuiModel {
 	oldRows := m.rows
 
 	// Try to keep cursor on the same PR.
@@ -3395,7 +3390,6 @@ func (m tuiModel) mergeRefresh(newRows []TableRow, newItems []PRRowModel) tuiMod
 		}
 	}
 
-	m.items = newItems
 	m.rows = newRows
 	m.cursor = newCursor
 	m.restoreFoldedCursor()
@@ -3676,7 +3670,6 @@ func runTui(
 	login, _ := getCurrentLogin(rest)
 
 	model := tuiModel{
-		items:           r.items,
 		rows:            r.rows,
 		header:          r.header,
 		colWidths:       r.colWidths,
@@ -3685,7 +3678,6 @@ func runTui(
 		autoRefresh:     cfg.TUI.AutoRefresh.Enabled,
 		lastInteraction: time.Now(),
 		lastRefreshAt:   time.Now(),
-		snapshotPRs:     prItems(r.items),
 		spinner:         buildSpinner(cfg.Spinner),
 		styles:          newTuiStyles(),
 		selected:        make(prKeys),
@@ -3703,6 +3695,7 @@ func runTui(
 		metadataCache:   r.cache,
 	}
 
+	model.replaceListItems(r.items)
 	model.eventStreams = newEventStreams(cfg.Features.EventStreams)
 	defer model.eventStreams.close()
 

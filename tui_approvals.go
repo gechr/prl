@@ -11,7 +11,6 @@ import (
 
 // pendingApproval records an approval change that has been sent but not confirmed.
 type pendingApproval struct {
-	prev   PullRequest // the PR before the optimistic update, for rollback
 	remove bool
 }
 
@@ -125,16 +124,6 @@ func targetKeys(targets []targetPR) []prKey {
 	return keys
 }
 
-// updatePR applies fn to the row and the canonical item for key.
-func (m *tuiModel) updatePR(key prKey, fn func(*PRRowModel)) {
-	if idx := m.resolveIndex(key, -1); idx >= 0 {
-		fn(&m.rows[idx].Item)
-	}
-	if item := m.itemForKey(key); item != nil {
-		fn(item)
-	}
-}
-
 func (m *tuiModel) itemForKey(key prKey) *PRRowModel {
 	for i := range m.items {
 		if makePRKey(m.items[i].PR) == key {
@@ -142,13 +131,6 @@ func (m *tuiModel) itemForKey(key prKey) *PRRowModel {
 		}
 	}
 	return nil
-}
-
-func setViewerApproval(approved, loaded bool) func(*PRRowModel) {
-	return func(item *PRRowModel) {
-		item.PR.viewerApproved = approved
-		item.PR.viewerApprovalLoaded = loaded
-	}
 }
 
 // reconcileVisibility hides key if its row no longer matches the active
@@ -188,9 +170,9 @@ func (m *tuiModel) beginApprovalChange(keys []prKey, remove bool) {
 		if pr == nil {
 			continue
 		}
-		m.pendingApprovals[key] = pendingApproval{prev: *pr, remove: remove}
+		m.pendingApprovals[key] = pendingApproval{remove: remove}
 		m.approvalGen[key]++
-		m.updatePR(key, setViewerApproval(!remove, true))
+		m.projectPR(key)
 		m.reconcileVisibility(key)
 	}
 	m.resyncCursorAndOffset()
@@ -207,13 +189,16 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 	updated, missing := false, false
 	changed := make(prKeys)
 	for _, r := range results {
-		pending, wasPending := m.pendingApprovals[r.key]
+		_, wasPending := m.pendingApprovals[r.key]
 		delete(m.pendingApprovals, r.key)
 		m.approvalGen[r.key]++
 		if r.err == nil && r.outcome != approveSkippedAggregate {
 			updated = true
 			changed[r.key] = true
-			m.updatePR(r.key, setViewerApproval(!r.remove, true))
+			m.updateConfirmed(
+				r.key,
+				func(pr *PullRequest) { pr.viewerApproved = !r.remove; pr.viewerApprovalLoaded = true },
+			)
 			m.reconcileVisibility(r.key)
 			continue
 		}
@@ -222,9 +207,7 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 			continue
 		}
 		if wasPending {
-			m.updatePR(r.key, setViewerApproval(
-				pending.prev.viewerApproved, pending.prev.viewerApprovalLoaded,
-			))
+			m.projectPR(r.key)
 		}
 		m.reconcileVisibility(r.key)
 	}
@@ -251,14 +234,8 @@ func (m *tuiModel) settleApprovals(results []approvalResult) tea.Cmd {
 // items and rebuilds the hidden set for them, so a refresh that lands while
 // an approval is in flight doesn't flash the row back.
 func (m *tuiModel) applyPendingApprovals() {
-	m.filterHidden = nil
-	for key, pending := range m.pendingApprovals {
-		item := m.itemForKey(key)
-		if item == nil {
-			continue
-		}
-		item.PR.viewerApproved = !pending.remove
-		item.PR.viewerApprovalLoaded = true
+	for key := range m.pendingApprovals {
+		m.projectPR(key)
 		m.reconcileVisibility(key)
 	}
 }
@@ -311,24 +288,21 @@ func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
 	_, pending := m.pendingApprovals[msg.key]
 	viewerCurrent := !pending && msg.gen == m.approvalGen[msg.key]
 	fresh := msg.pr
-	m.updatePR(msg.key, func(item *PRRowModel) {
+	m.updateConfirmed(msg.key, func(pr *PullRequest) {
 		if fresh.reviewDecisionLoaded {
-			item.PR.statusFetchedAt = fresh.statusFetchedAt
-			item.PR.MergeStatus = fresh.MergeStatus
-			item.PR.behind = fresh.behind
-			item.PR.ReviewDecision = fresh.ReviewDecision
-			item.PR.reviewDecisionLoaded = true
+			pr.statusFetchedAt = fresh.statusFetchedAt
+			pr.MergeStatus = fresh.MergeStatus
+			pr.behind = fresh.behind
+			pr.ReviewDecision = fresh.ReviewDecision
+			pr.reviewDecisionLoaded = true
 			if fresh.HeadSHA != "" {
-				item.PR.HeadSHA = fresh.HeadSHA
+				pr.HeadSHA = fresh.HeadSHA
 			}
-			item.MergeStatus = fresh.MergeStatus
-			item.MergeReason = deriveMergeReason(item.PR)
-			item.Review = deriveReviewStatus(item.PR)
 		}
 		if fresh.viewerApprovalLoaded && viewerCurrent {
-			item.PR.viewerApproved = fresh.viewerApproved
-			item.PR.viewerApprovalLoaded = true
-			item.PR.viewerIsAuthor = fresh.viewerIsAuthor
+			pr.viewerApproved = fresh.viewerApproved
+			pr.viewerApprovalLoaded = true
+			pr.viewerIsAuthor = fresh.viewerIsAuthor
 		}
 	})
 	m.reconcileVisibility(msg.key)

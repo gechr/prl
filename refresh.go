@@ -72,7 +72,7 @@ func (c *listMetadataCache) cloneForRows(prs []PullRequest, invalid prKeys) *lis
 }
 
 func (m *tuiModel) invalidatePRMetadata(keys prKeys) {
-	m.metadataCache = m.metadataCache.cloneForRows(prItems(m.items), keys)
+	m.metadataCache = m.metadataCache.cloneForRows(m.confirmed.prs, keys)
 }
 
 // saveSnapshot writes confirmed rows only. A targeted read never advances the
@@ -81,7 +81,7 @@ func (m tuiModel) saveSnapshot() {
 	if m.cli == nil || m.params == nil || m.lastRefreshAt.IsZero() {
 		return
 	}
-	if err := saveListResultCacheAt(m.cli, m.params, m.snapshotPRs, m.lastRefreshAt); err != nil {
+	if err := saveListResultCacheAt(m.cli, m.params, m.confirmed.prs, m.lastRefreshAt); err != nil {
 		clog.Debug().Err(err).Msg("list cache save failed")
 	}
 }

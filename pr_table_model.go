@@ -59,25 +59,30 @@ func buildPRRowModels(
 		labels := xslices.Map(pr.Labels, func(l Label) string { return l.Name })
 
 		models[i] = PRRowModel{
-			PR:          pr,
-			Ref:         ref,
-			Owner:       owner,
-			Repo:        pr.Repository.Name,
-			RepoNWO:     pr.Repository.NameWithOwner,
-			Number:      pr.Number,
-			Title:       pr.Title,
-			Labels:      labels,
-			Author:      buildAuthorModel(pr, resolver),
-			State:       pr.State,
-			CreatedAt:   pr.CreatedAt,
-			UpdatedAt:   pr.UpdatedAt,
-			URL:         pr.URL,
-			MergeStatus: pr.MergeStatus,
-			MergeReason: deriveMergeReason(pr),
-			Review:      deriveReviewStatus(pr),
+			Ref:       ref,
+			Owner:     owner,
+			Repo:      pr.Repository.Name,
+			RepoNWO:   pr.Repository.NameWithOwner,
+			Number:    pr.Number,
+			Title:     pr.Title,
+			Labels:    labels,
+			Author:    buildAuthorModel(pr, resolver),
+			CreatedAt: pr.CreatedAt,
+			UpdatedAt: pr.UpdatedAt,
+			URL:       pr.URL,
 		}
+		models[i].setPR(pr)
 	}
 	return models
+}
+
+// setPR projects mutable status fields after a read or a local action.
+func (item *PRRowModel) setPR(pr PullRequest) {
+	item.PR = pr
+	item.State = pr.State
+	item.MergeStatus = pr.MergeStatus
+	item.MergeReason = deriveMergeReason(pr)
+	item.Review = deriveReviewStatus(pr)
 }
 
 // buildAuthorModel resolves author information from a PullRequest.

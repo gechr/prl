@@ -936,6 +936,7 @@ func TestDetailFetchReplacesUnknownListStatus(t *testing.T) {
 		width:     80,
 	}
 
+	m.confirmed = newConfirmedPRList(m.items)
 	m.applyDetailMergeStatus(makePRKey(pr), &status)
 
 	require.Equal(t, MergeStatusReady, m.rows[0].Item.PR.MergeStatus)
@@ -1690,6 +1691,10 @@ func TestActionMsgRemovalRecomputesOffset(t *testing.T) {
 		selected:    make(prKeys),
 	}
 
+	for _, row := range rows {
+		m.items = append(m.items, row.Item)
+	}
+	m.confirmed = newConfirmedPRList(m.items)
 	model, cmd := m.Update(actionMsg{
 		index:  len(rows) - 1,
 		key:    makePRKey(prs[len(prs)-1]),
@@ -1766,7 +1771,8 @@ func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {
 		diffQueue: []prKey{makePRKey(prB)},
 	}
 
-	bm := m.mergeRefresh(newRows, []PRRowModel{{PR: prB}, {PR: prA}})
+	m.replaceListItems([]PRRowModel{{PR: prB}, {PR: prA}})
+	bm := m.mergeRefresh(newRows)
 
 	require.True(t, bm.selected[makePRKey(prB)])
 	require.Equal(t, 0, bm.cursor)

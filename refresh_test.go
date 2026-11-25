@@ -190,7 +190,6 @@ func TestTargetedSnapshotPreservesAgesAndConfirmedRows(t *testing.T) {
 	m := approvalTestModel("", prs...)
 	m.params = testCacheParams()
 	m.lastRefreshAt = time.Now().Add(-4 * time.Minute).UTC()
-	m.snapshotPRs = prItems(m.items)
 	m.beginApproval([]prKey{makePRKey(prs[1])})
 	prs[0].statusFetchedAt = time.Now().UTC()
 	prs[0].viewerApproved = true
@@ -223,13 +222,15 @@ func TestRefreshKeepsCursorScreenLine(t *testing.T) {
 	line := m.cursorLinePosition() - m.offset
 	newPRs := append([]PullRequest{refreshTestPR(26)}, prs...)
 	newModel := approvalTestModel("", newPRs...)
-	m = m.mergeRefresh(newModel.rows, newModel.items)
+	m.replaceListItems(newModel.items)
+	m = m.mergeRefresh(newModel.rows)
 	require.Equal(t, key, m.rowKeyAt(m.cursor))
 	require.Equal(t, line, m.cursorLinePosition()-m.offset)
 	newPRs = append(newPRs[:m.cursor:m.cursor], newPRs[m.cursor+1:]...)
 	newModel = approvalTestModel("", newPRs...)
 	oldCursor := m.cursor
-	m = m.mergeRefresh(newModel.rows, newModel.items)
+	m.replaceListItems(newModel.items)
+	m = m.mergeRefresh(newModel.rows)
 	require.Equal(t, oldCursor, m.cursor, "keep the nearest surviving row")
 }
 
@@ -246,7 +247,8 @@ func TestRefreshAtTopRevealsNewRows(t *testing.T) {
 		if reindex {
 			m = m.reindexRows(m.rows, newModel.rows)
 		} else {
-			m = m.mergeRefresh(newModel.rows, newModel.items)
+			m.replaceListItems(newModel.items)
+			m = m.mergeRefresh(newModel.rows)
 		}
 		require.Zero(t, m.offset)
 		require.Equal(t, key, m.rowKeyAt(m.cursor))

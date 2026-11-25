@@ -69,7 +69,6 @@ func TestEventStreamsListenAndReconcile(t *testing.T) {
 func TestTUIQueuesEventsDuringRefresh(t *testing.T) {
 	m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2))
 	m.actions = NewActionRunner(nil, eventTestClient(t, mergedEventNode, eventStatus))
-	m.snapshotPRs = prItems(m.items)
 	m.autoRefresh = true
 	m.refreshing = true
 	m.eventStreams = testEventStreams(http.StatusCreated)
@@ -153,7 +152,7 @@ func TestTUIEventClearsConflictWithPollingOff(t *testing.T) {
 	// The first command waits for the next event, the second refreshes this PR.
 	require.Len(t, batch, 2)
 	m, cmd = updateModel(t, m, batch[1]())
-	require.Equal(t, MergeStatusReady, m.snapshotPRs[0].MergeStatus)
+	require.Equal(t, MergeStatusReady, m.confirmed.prs[0].MergeStatus)
 	require.Equal(
 		t,
 		ansi.Force().Hyperlink(pr.URL, m.p.theme.BoldGreen.Render(pr.Ref())),

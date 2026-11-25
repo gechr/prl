@@ -152,18 +152,21 @@ func (m *tuiModel) applyChangedPRs(msg changedPRsMsg) tea.Cmd {
 		if msg.gens[key] != m.prChangeGen[key] {
 			continue // a later action already queued another read
 		}
-		m.updatePR(key, func(row *PRRowModel) { *row = item })
-		m.reconcileVisibility(key)
-		for i := range m.snapshotPRs {
-			if makePRKey(m.snapshotPRs[i]) == key {
-				confirmed := item
-				if pending, ok := m.pendingActions[key]; ok &&
-					time.Since(pending.at) < 2*time.Minute {
-					applyKnownActionState(&confirmed, pending.action)
-				}
-				m.snapshotPRs[i] = confirmed.PR
-			}
+		pr := m.confirmed.get(key)
+		display := m.itemForKey(key)
+		if pr == nil || display == nil {
+			continue
 		}
+		if msg.events != nil && msg.events[key]&eventReviews == 0 {
+			// Status-only reads carry the viewer fields captured when the read began.
+			item.PR.viewerApproved = pr.viewerApproved
+			item.PR.viewerApprovalLoaded = pr.viewerApprovalLoaded
+			item.PR.viewerIsAuthor = pr.viewerIsAuthor
+		}
+		*display = item
+		*pr = item.PR
+		m.projectPR(key)
+		m.reconcileVisibility(key)
 		m.metadataCache.store(item.PR, listMetadataRequest{
 			mergeStatus:    true,
 			viewerApproval: msg.events == nil || msg.events[key]&eventReviews != 0,
@@ -173,7 +176,6 @@ func (m *tuiModel) applyChangedPRs(msg changedPRsMsg) tea.Cmd {
 			m.eventStreams.followUpHead(item.PR, msg.events[key])
 		}
 	}
-	m.applyPendingApprovals()
 	m.reconcilePendingActions(false)
 	m.rerenderList()
 	m.saveSnapshot()
@@ -259,7 +261,7 @@ func (m *tuiModel) refreshFromEvents() tea.Cmd {
 		m.bumpPRGeneration(key)
 		gens[key] = m.prChangeGen[key]
 	}
-	prs := eventPRs(m.snapshotPRs, changed)
+	prs := eventPRs(m.confirmed.prs, changed)
 	if len(prs) == 0 {
 		return nil
 	}
