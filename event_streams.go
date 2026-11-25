@@ -1,19 +1,17 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"os/exec"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/cli/cli/v2/pkg/cmd/event/client"
 	"github.com/gechr/clog"
 )
 
-// gh maintains one long-lived process and connection per pull request.
+// Each listener holds one open HTTP connection.
 const (
 	maxEventStreams  = 8
 	eventBatchDelay  = 250 * time.Millisecond
@@ -21,6 +19,8 @@ const (
 )
 
 const (
+	eventReview     = "com.github.pull_request.review.submitted.v1"
+	eventState      = "com.github.pull_request.state.changed.v1"
 	eventCheckSuite = "com.github.pull_request.check_suite.status.changed.v1"
 	eventConflict   = "com.github.pull_request.merge_conflict.v1"
 	eventHead       = "com.github.pull_request.head.changed.v1"
@@ -51,11 +51,12 @@ var pullRequestEvents = []string{
 	eventCheckSuite,
 	eventHead,
 	eventConflict,
-	"com.github.pull_request.review.submitted.v1",
-	"com.github.pull_request.state.changed.v1",
+	eventReview,
+	eventState,
 }
 
 type eventStreams struct {
+	client    func() (client.EventClient, error)
 	listeners map[prKey]context.CancelFunc // owned by the watch or TUI loop
 	workers   sync.WaitGroup
 	stopped   chan struct{}
@@ -73,6 +74,7 @@ func newEventStreams(enabled bool) *eventStreams {
 		return nil
 	}
 	return &eventStreams{
+		client:    sync.OnceValues(newEventClient),
 		listeners: make(map[prKey]context.CancelFunc),
 		stopped:   make(chan struct{}),
 		wake:      make(chan struct{}, 1),
@@ -130,7 +132,7 @@ func (s *eventStreams) attach(wanted eventTargets) {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.listeners[key] = cancel
 		s.workers.Go(func() {
-			err := listenPREvents(ctx, url, func(scope prEventScope) {
+			err := s.listenPREvents(ctx, url, func(scope prEventScope) {
 				s.queue(ctx, key, scope)
 			})
 			if ctx.Err() == nil {
@@ -229,37 +231,4 @@ func (s *eventStreams) wait() tea.Msg {
 	case <-s.failed:
 		return eventStreamFailureMsg{}
 	}
-}
-
-func listenPREvents(ctx context.Context, url string, notify func(prEventScope)) error {
-	cmd := exec.CommandContext(ctx, "gh", "event", "listen", "--follow", "--resource", url,
-		"--event", strings.Join(pullRequestEvents, ","), "--jq", ".type")
-	output, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	// gh writes its attachment notice to stderr, including after reconnects.
-	// Only the notice and requested event types trigger an authoritative read.
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	scanner := bufio.NewScanner(output)
-	for scanner.Scan() {
-		line := scanner.Text()
-		switch {
-		case line == eventCheckSuite || line == eventConflict:
-			notify(eventStatus)
-		case line == eventHead:
-			notify(eventStatusAndReviews | eventNewHead)
-		case strings.HasPrefix(line, "Listening for events") || slices.Contains(pullRequestEvents, line):
-			notify(eventStatusAndReviews)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return err
-	}
-	return cmd.Wait()
 }

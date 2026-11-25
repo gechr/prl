@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +15,8 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	cliapi "github.com/cli/cli/v2/api"
+	"github.com/cli/cli/v2/pkg/cmd/event/client"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -34,21 +40,7 @@ func TestEventStreamsConfig(t *testing.T) {
 }
 
 func TestEventStreamsListenAndReconcile(t *testing.T) {
-	dir := t.TempDir()
-	// Emit the documented gh output, then stay attached until canceled.
-	const script = `#!/bin/sh
-[ "$1 $2 $3 $4" = "event listen --follow --resource" ] || exit 1
-[ "$6" = "--event" ] && [ "$8 $9" = "--jq .type" ] || exit 1
-case "$5" in
-  */1) echo 'Listening for events.' >&2 ;;
-  */2) echo 'Listening for events on a new subscription.' >&2 ;;
-  *) echo 'com.github.pull_request.head.changed.v1' ;;
-esac
-exec /bin/sleep 60
-`
-	writeExecutable(t, dir, "gh", script)
-	t.Setenv("PATH", dir)
-	streams := newEventStreams(true)
+	streams := testEventStreams(http.StatusCreated)
 	t.Cleanup(streams.close)
 
 	var prs []PullRequest
@@ -75,13 +67,12 @@ exec /bin/sleep 60
 }
 
 func TestTUIQueuesEventsDuringRefresh(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
 	m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2))
-	m.actions = NewActionRunner(nil, eventTestClient(t, mergedEventNode))
+	m.actions = NewActionRunner(nil, eventTestClient(t, mergedEventNode, eventStatus))
 	m.snapshotPRs = prItems(m.items)
 	m.autoRefresh = true
 	m.refreshing = true
-	m.eventStreams = newEventStreams(true)
+	m.eventStreams = testEventStreams(http.StatusCreated)
 	t.Cleanup(m.eventStreams.close)
 	key := m.rowKeyAt(0)
 	m.eventStreams.listeners[key] = func() {}
@@ -104,11 +95,10 @@ func TestTUIQueuesEventsDuringRefresh(t *testing.T) {
 }
 
 func TestUnavailableEventStreamKeepsPeriodicRefresh(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
 	pr := approvalTestPR(1)
 	m := approvalTestModel("", pr)
 	m.autoRefresh = true
-	m.eventStreams = newEventStreams(true)
+	m.eventStreams = testEventStreams(http.StatusForbidden)
 	t.Cleanup(m.eventStreams.close)
 	m.eventStreams.sync([]PullRequest{pr})
 	m.eventStreams.workers.Wait()
@@ -120,9 +110,6 @@ func TestUnavailableEventStreamKeepsPeriodicRefresh(t *testing.T) {
 }
 
 func TestTUIEventClearsConflictWithPollingOff(t *testing.T) {
-	dir := t.TempDir()
-	writeExecutable(t, dir, "gh", "#!/bin/sh\necho '"+eventCheckSuite+"'\nexec /bin/sleep 60\n")
-	t.Setenv("PATH", dir)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	pr := approvalTestPR(1)
 	pr.MergeStatus = MergeStatusConflict
@@ -130,7 +117,7 @@ func TestTUIEventClearsConflictWithPollingOff(t *testing.T) {
 	m.cfg = &Config{}
 	m.tty = true
 	m.cli.Columns.Values = []string{colRef}
-	m.eventStreams = newEventStreams(true)
+	m.eventStreams = testEventStreams(http.StatusCreated)
 	t.Cleanup(m.eventStreams.close)
 	m, attach := updateModel(
 		t,
@@ -158,7 +145,7 @@ func TestTUIEventClearsConflictWithPollingOff(t *testing.T) {
 		t.Fatal("missing stream notification")
 	}
 	const clean = `{"id":"PR_node","state":"OPEN","updatedAt":"2025-08-11T10:00:00Z","mergeStateStatus":"CLEAN"}`
-	m.actions = NewActionRunner(nil, eventTestClient(t, clean))
+	m.actions = NewActionRunner(nil, eventTestClient(t, clean, eventStatusAndReviews))
 	m, cmd := updateModel(t, m, prEventsMsg{})
 	require.True(t, m.changedRefreshInFlight)
 	batch, ok := cmd().(tea.BatchMsg)
@@ -176,7 +163,6 @@ func TestTUIEventClearsConflictWithPollingOff(t *testing.T) {
 }
 
 func TestTUIEventStreamsFollowFilteredViewport(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
 	var prs []PullRequest
 	for n := 1; n <= maxEventStreams+1; n++ {
 		pr := approvalTestPR(n)
@@ -193,7 +179,7 @@ func TestTUIEventStreamsFollowFilteredViewport(t *testing.T) {
 	m.rerenderList()
 	m.height = 7
 	m.cursor, m.offset = 0, 0
-	m.eventStreams = newEventStreams(true)
+	m.eventStreams = testEventStreams(http.StatusForbidden)
 	t.Cleanup(m.eventStreams.close)
 	m, _ = pressKey(t, m, "/")
 	initial := eventAttachMsg{gen: m.eventAttachGen}
@@ -227,7 +213,7 @@ func TestTUIEventStreamsFollowFilteredViewport(t *testing.T) {
 func TestTUIReviewPreservesPendingHeadProbe(t *testing.T) {
 	pr := approvalTestPR(1)
 	m := approvalTestModel("", pr)
-	m.eventStreams = newEventStreams(true)
+	m.eventStreams = testEventStreams(http.StatusCreated)
 	t.Cleanup(m.eventStreams.close)
 	key := makePRKey(pr)
 	canceled := false
@@ -243,13 +229,12 @@ func TestTUIReviewPreservesPendingHeadProbe(t *testing.T) {
 }
 
 func TestTUIKeepsListeningAfterStreamFailure(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
 	for _, polling := range []bool{false, true} {
 		t.Run("polling="+strconv.FormatBool(polling), func(t *testing.T) {
 			pr := approvalTestPR(1)
 			m := approvalTestModel("", pr)
 			m.autoRefresh = polling
-			m.eventStreams = newEventStreams(true)
+			m.eventStreams = testEventStreams(http.StatusForbidden)
 			t.Cleanup(m.eventStreams.close)
 			m.eventStreams.sync([]PullRequest{pr, approvalTestPR(2)})
 			m.eventStreams.workers.Wait()
@@ -394,18 +379,21 @@ func TestDetachedCIProbeIsDiscarded(t *testing.T) {
 
 const mergedEventNode = `{"id":"PR_node","state":"MERGED","updatedAt":"2025-08-11T10:00:00Z","headRefOid":"new-head"}`
 
-func eventTestClient(t *testing.T, node string) *api.GraphQLClient {
+func eventTestClient(t *testing.T, node string, scope prEventScope) *api.GraphQLClient {
 	t.Helper()
 	gql, err := api.NewGraphQLClient(api.ClientOptions{
 		Host: "github.com", AuthToken: "test",
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			body := decodeGraphQLBody(t, readBody(t, req.Body))
 			require.Equal(t, []any{"PR_node"}, body.Variables["mergeIDs"])
-			require.Equal(
-				t,
-				"query ListMetadata($mergeIDs: [ID!]!){mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{"+eventStatusFields+" autoMergeRequest{enabledAt}}}}",
-				body.Query,
-			)
+			vars := "$mergeIDs: [ID!]!"
+			fields := "mergeNodes:nodes(ids:$mergeIDs){... on PullRequest{" + eventStatusFields + " autoMergeRequest{enabledAt}}}"
+			if scope&eventReviews != 0 {
+				require.Equal(t, []any{"PR_node"}, body.Variables["viewerReviewIDs"])
+				vars += ", $viewerReviewIDs: [ID!]!"
+				fields += " viewer{login} viewerReviewNodes:nodes(ids:$viewerReviewIDs){... on PullRequest{id latestOpinionatedReviews(last:100){nodes{author{login} state}}}}"
+			}
+			require.Equal(t, "query ListMetadata("+vars+"){"+fields+"}", body.Query)
 			return jsonResponse(
 				req,
 				http.StatusOK,
@@ -425,7 +413,7 @@ func TestWatchEventReadsOnlyChangedStatus(t *testing.T) {
 	prs := []PullRequest{pr, other}
 	changed := prEvents{makePRKey(pr): eventStatus}
 	got, err := refreshWatchEvents(
-		eventTestClient(t, mergedEventNode),
+		eventTestClient(t, mergedEventNode, eventStatus),
 		testCLI(),
 		&SearchParams{},
 		prs,
@@ -435,7 +423,7 @@ func TestWatchEventReadsOnlyChangedStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []PullRequest{other}, got)
 	got, err = refreshWatchEvents(
-		eventTestClient(t, mergedEventNode),
+		eventTestClient(t, mergedEventNode, eventStatus),
 		testCLI(),
 		&SearchParams{PRRefs: []prRef{{Number: 1}}},
 		prs,
@@ -497,4 +485,265 @@ func TestMixedEventBatchRequestsOnlyAffectedViewerReviews(t *testing.T) {
 	require.True(t, prs[0].viewerApproved)
 	require.Equal(t, MergeStatusConflict, prs[1].MergeStatus)
 	require.True(t, prs[1].viewerApproved)
+}
+
+func testEventStreams(createStatus int) *eventStreams {
+	streams := newEventStreams(true)
+	streams.client = func() (client.EventClient, error) {
+		return client.NewEventClient(
+			&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Method == http.MethodPost {
+					return jsonResponse(req, createStatus, `{"id":"one"}`), nil
+				}
+				resp := jsonResponse(req, http.StatusOK, "event: "+eventCheckSuite+"\ndata: {}\n\n")
+				resp.Header.Set("Content-Type", "text/event-stream")
+				return resp, nil
+			})},
+			"github.com",
+		), nil
+	}
+	return streams
+}
+
+func TestEventStreamReconnectAndRenew(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const resource = "https://github.com/owner/repo/pull/9"
+		const end = "event: github.stream.end\ndata: "
+		var requests []string
+		start := time.Now()
+		var lastAttach time.Time
+		transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests = append(requests, req.Method+" "+req.URL.Path)
+			if req.Method == http.MethodPost {
+				var subscription struct {
+					Resource string   `json:"resource_url"`
+					Events   []string `json:"event_types"`
+				}
+				require.NoError(t, json.NewDecoder(req.Body).Decode(&subscription))
+				require.Equal(t, resource, subscription.Resource)
+				require.ElementsMatch(t, pullRequestEvents, subscription.Events)
+			} else {
+				require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
+			}
+			switch len(requests) {
+			case 1:
+				resp := jsonResponse(
+					req,
+					http.StatusServiceUnavailable,
+					`{"message":"retry later"}`,
+				)
+				resp.Header.Set(headerRetryAfter, "10")
+				return resp, nil
+			case 2:
+				require.GreaterOrEqual(t, time.Since(start), 10*time.Second)
+				return jsonResponse(req, http.StatusCreated, `{"id":"first"}`), nil
+			case 7:
+				return jsonResponse(req, http.StatusOK, `{"id":"second"}`), nil
+			}
+			var body string
+			switch len(requests) {
+			case 3:
+			case 4:
+				// First attach after creation has its own backoff.
+				require.Less(t, time.Since(lastAttach), 1500*time.Millisecond)
+			case 5:
+				require.GreaterOrEqual(t, time.Since(lastAttach), 2*time.Second)
+				body = ": heartbeat\n\nevent: " + eventHead + "\ndata: {\"type\":\"" + eventHead + "\"}\n\n" +
+					"event: " + eventReview + "\ndata: {\"type\":\"" + eventReview + "\"}\n\n"
+			case 6:
+				require.Less(t, time.Since(lastAttach), 1500*time.Millisecond)
+				body = end + `{"outcome":"subscription_ended","reason":"expired"}` + "\n\n"
+			case 8:
+				body = "event: " + eventConflict + "\ndata: {}\n\n" + end + `{"outcome":"subscription_ended","reason":"access_revoked"}` + "\n\n"
+			default:
+				t.Fatalf("unexpected request %d", len(requests))
+			}
+			lastAttach = time.Now()
+			resp := jsonResponse(req, http.StatusOK, body)
+			resp.Header.Set("Content-Type", "text/event-stream")
+			return resp, nil
+		})
+		streams := newEventStreams(true)
+		streams.client = func() (client.EventClient, error) {
+			return client.NewEventClient(&http.Client{Transport: transport}, "github.com"), nil
+		}
+		var changes []prEventScope
+		err := streams.listenPREvents(t.Context(), resource, func(scope prEventScope) {
+			changes = append(changes, scope)
+		})
+		require.EqualError(t, err, "GitHub ended the event subscription (access_revoked)")
+		require.Equal(t, []string{
+			"POST /event-subscriptions",
+			"POST /event-subscriptions",
+			"GET /event-subscriptions/first/events",
+			"GET /event-subscriptions/first/events",
+			"GET /event-subscriptions/first/events",
+			"GET /event-subscriptions/first/events",
+			"POST /event-subscriptions",
+			"GET /event-subscriptions/second/events",
+		}, requests)
+		require.Equal(t, []prEventScope{
+			eventStatusAndReviews, eventStatusAndReviews, eventStatusAndReviews,
+			eventStatusAndReviews | eventNewHead, eventStatusAndReviews,
+			eventStatusAndReviews, eventStatusAndReviews, eventStatus,
+		}, changes)
+	})
+}
+
+func TestEventStreamMissingSubscriptionRenewsOnce(t *testing.T) {
+	var methods []string
+	c := client.NewEventClient(
+		&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			methods = append(methods, req.Method)
+			require.LessOrEqual(t, len(methods), 4)
+			if req.Method == http.MethodPost {
+				return jsonResponse(req, http.StatusCreated, `{"id":"missing"}`), nil
+			}
+			return jsonResponse(req, http.StatusNotFound, `{"message":"not found"}`), nil
+		})},
+		"github.com",
+	)
+	streams := newEventStreams(true)
+	streams.client = func() (client.EventClient, error) { return c, nil }
+	err := streams.listenPREvents(
+		t.Context(),
+		"https://github.com/owner/repo/pull/9",
+		func(prEventScope) {
+			t.Fatal("received a notification before attachment")
+		},
+	)
+	require.ErrorIs(t, err, client.ErrSubscriptionNotFound)
+	require.Equal(t, []string{"POST", "GET", "POST", "GET"}, methods)
+}
+
+func TestEventStreamEndOutcomes(t *testing.T) {
+	require.NoError(t, streamEndError(`{"outcome":"reconnect"}`))
+	require.NoError(t, streamEndError("{"))
+	require.EqualError(
+		t,
+		streamEndError(`{"outcome":"unexpected"}`),
+		"GitHub returned an unknown event stream outcome",
+	)
+	require.ErrorIs(t, streamEndError(`{"outcome":"subscription_ended"}`), errRenewSubscription)
+	require.ErrorIs(
+		t,
+		streamEndError(`{"outcome":"subscription_ended","reason":"another_reason"}`),
+		errRenewSubscription,
+	)
+	require.EqualError(
+		t,
+		streamEndError(`{"outcome":"subscription_ended","reason":"deleted"}`),
+		"GitHub ended the event subscription (deleted)",
+	)
+}
+
+func TestEventStreamIdleReconnectAndCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var opens int
+		mock := &client.EventClientMock{
+			CreateSubscriptionFunc: func(context.Context, string, []string) (*client.Subscription, bool, error) {
+				return &client.Subscription{ID: "one"}, true, nil
+			},
+			OpenStreamFunc: func(ctx context.Context, _ string) (io.ReadCloser, error) {
+				opens++
+				r, w := io.Pipe()
+				context.AfterFunc(ctx, func() { _ = w.Close() })
+				if opens == 1 {
+					go func() {
+						for range 2 {
+							time.Sleep(30 * time.Second)
+							if _, err := io.WriteString(w, ": heartbeat\n\n"); err != nil {
+								return
+							}
+						}
+					}()
+				}
+				return r, nil
+			},
+		}
+		streams := newEventStreams(true)
+		streams.client = func() (client.EventClient, error) { return mock, nil }
+		start := time.Now()
+		err := streams.listenPREvents(
+			ctx,
+			"https://github.com/owner/repo/pull/9",
+			func(prEventScope) {
+				if opens == 2 {
+					cancel()
+				}
+			},
+		)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Len(t, mock.CreateSubscriptionCalls(), 1)
+		require.Equal(t, 2, opens)
+		require.GreaterOrEqual(t, time.Since(start), 105*time.Second)
+		require.Less(t, time.Since(start), 107*time.Second)
+	})
+}
+
+func TestEventClientStreamsWithEnvironmentAuthentication(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_TOKEN", "test")
+	t.Setenv("GH_DEBUG", "api")
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	var streamWriter *io.PipeWriter
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		authenticated := req.Header.Get("Authorization") == "token test"
+		require.True(t, authenticated)
+		if req.Method == http.MethodPost {
+			return jsonResponse(req, http.StatusOK, `{"id":"one"}`), nil
+		}
+		require.Equal(t, "text/event-stream", req.Header.Get("Accept"))
+		resp := jsonResponse(req, http.StatusOK, "")
+		resp.Header.Set("Content-Type", "text/event-stream")
+		reader, writer := io.Pipe()
+		resp.Body, streamWriter = reader, writer
+		context.AfterFunc(req.Context(), func() { _ = writer.Close() })
+		return resp, nil
+	})
+	c, err := newEventClient()
+	require.NoError(t, err)
+	sub, _, err := c.CreateSubscription(
+		ctx,
+		"https://github.com/owner/repo/pull/9",
+		pullRequestEvents,
+	)
+	require.NoError(t, err)
+	body, err := c.OpenStream(ctx, sub.ID)
+	require.NoError(t, err)
+	defer body.Close()
+	require.NoError(t, ctx.Err())
+	require.NoError(t, streamWriter.Close())
+}
+
+func TestEventBackoffRetriesAndCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		backoff := eventBackoff(time.Second)
+		start := time.Now()
+		err := backoff.wait(t.Context(), cliapi.HTTPError{HTTPError: &api.HTTPError{
+			StatusCode: http.StatusTooManyRequests,
+			Headers:    http.Header{headerRetryAfter: []string{"8"}},
+		}})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, time.Since(start), 8*time.Second)
+		require.Less(t, time.Since(start), 12*time.Second)
+
+		invalid := cliapi.HTTPError{
+			HTTPError: &api.HTTPError{StatusCode: http.StatusUnprocessableEntity},
+		}
+		require.ErrorIs(t, backoff.wait(t.Context(), invalid), invalid)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		time.AfterFunc(time.Second, cancel)
+		start = time.Now()
+		err = backoff.wait(ctx, &url.Error{Op: "GET", Err: io.ErrUnexpectedEOF})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, time.Second, time.Since(start))
+	})
 }

@@ -740,7 +740,7 @@ default:
   state: %[5]s
 
 features:
-  # Refresh watched PRs on GitHub Event Streams notifications (requires gh 2.105.0+).
+  # Refresh watched PRs on GitHub Event Streams notifications (requires Event Streams preview access).
   event_streams: false
 
 # TUI (interactive browse) settings.
