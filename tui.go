@@ -666,75 +666,17 @@ func newRefreshSnapshot(m tuiModel) refreshSnapshot {
 // fetchAndBuild runs the search, filter, enrich, and build pipeline.
 // It returns the built row models, or an error.
 func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
-	needMergeStatus := true
-	prs, err := executeListSearch(
-		r.rest,
-		func() (*api.GraphQLClient, error) {
-			if r.gql == nil {
-				return nil, fmt.Errorf("GraphQL client unavailable")
-			}
-			return r.gql, nil
-		},
-		r.params,
-		needMergeStatus,
-	)
+	loader := listLoader{rest: r.rest, graphQL: func() (*api.GraphQLClient, error) {
+		if r.gql == nil {
+			return nil, fmt.Errorf("GraphQL client unavailable")
+		}
+		return r.gql, nil
+	}, cache: r.cache, policy: r.policy, browse: true}
+	result, err := loader.load(r.cli, r.params)
 	if err != nil {
 		return nil, err
 	}
-	prs, err = applyFilters(r.cli, prs)
-	if err != nil {
-		return nil, err
-	}
-
-	closedAllowed, err := resolveTimelineLogins(r.rest, r.cli.ClosedBy.Values)
-	if err != nil {
-		clog.Debug().Err(err).Msg("timeline filters failed")
-		closedAllowed = map[string]bool{}
-	}
-	mergedAllowed, err := resolveTimelineLogins(r.rest, r.cli.MergedBy.Values)
-	if err != nil {
-		clog.Debug().Err(err).Msg("timeline filters failed")
-		mergedAllowed = map[string]bool{}
-	}
-	if r.gql != nil {
-		if stackErr := hydrateStackMetadata(r.gql, prs); stackErr != nil {
-			clog.Debug().Err(stackErr).Msg("stack metadata hydration failed")
-		}
-	}
-	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
-	// The TUI always loads the viewer's approval: it drives the approved marker,
-	// the diff status line and the double-approval guard, not just the
-	// self-required filter.
-	needViewerApproval := true
-	needMetadata := needMergeStatus || needTimeline || needViewerApproval
-
-	if needMetadata && r.gql != nil {
-		actors, hydrateErr := hydrateListMetadataForRefresh(r.gql, prs, listMetadataRequest{
-			mergeStatus:    needMergeStatus,
-			timelineClosed: len(closedAllowed) > 0,
-			timelineMerged: len(mergedAllowed) > 0,
-			viewerApproval: needViewerApproval,
-		}, r.cache, r.policy)
-		if hydrateErr != nil {
-			clog.Debug().Err(hydrateErr).Msg("list metadata hydration failed")
-		}
-		if hydrateErr == nil && needTimeline {
-			prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
-		}
-		if hydrateErr == nil && r.cli.ReviewSelfRequired() {
-			prs = filterByViewerApproval(prs)
-		}
-	}
-
-	// Post-enrichment filters.
-	if r.cli.PRState() == StateReady {
-		prs = filterReady(prs)
-	}
-	// The CI filter and presets are applied when rows are shown (see
-	// displayFilter), so changing them needs no refetch.
-
-	ownerFilter := singleOwner(r.cli.Owner.Values)
-	return buildPRRowModels(prs, ownerFilter, r.resolver), nil
+	return buildPRRowModels(result.prs, singleOwner(r.cli.Owner.Values), r.resolver), nil
 }
 
 // run fetches and renders fresh results. The list-result disk cache is saved

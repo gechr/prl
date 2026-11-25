@@ -636,65 +636,6 @@ func shouldDeferInitialWatchEnrichment(cli *CLI, tty bool) bool {
 	return true
 }
 
-func applyListMetadata(
-	cli *CLI,
-	getGQL func() (*api.GraphQLClient, error),
-	prs []PullRequest,
-	needAutomerge bool,
-	needMergeStatus bool,
-	closedAllowed map[string]bool,
-	mergedAllowed map[string]bool,
-	cache *listMetadataCache,
-) ([]PullRequest, error) {
-	needTimeline := len(closedAllowed) > 0 || len(mergedAllowed) > 0
-	needViewerApproval := cli.ReviewSelfRequired()
-	if !needTimeline && !needMergeStatus && !needAutomerge && !needViewerApproval &&
-		!cli.IsInteractive() {
-		return prs, nil
-	}
-
-	g, err := getGQL()
-	if err != nil {
-		if cli.Merge != nil || needTimeline || needViewerApproval {
-			return nil, err
-		}
-		clog.Debug().Err(err).Msg("skipping list metadata hydration")
-		return prs, nil
-	}
-
-	if cli.IsInteractive() {
-		if stackErr := hydrateStackMetadata(g, prs); stackErr != nil {
-			clog.Debug().Err(stackErr).Msg("skipping stack metadata hydration")
-		}
-	}
-
-	actors, err := hydrateListMetadataCached(g, prs, listMetadataRequest{
-		automerge:      needAutomerge,
-		mergeStatus:    needMergeStatus,
-		timelineClosed: len(closedAllowed) > 0,
-		timelineMerged: len(mergedAllowed) > 0,
-		viewerApproval: needViewerApproval,
-	}, cache)
-	if err != nil {
-		if cli.Merge != nil || needTimeline || needViewerApproval {
-			return nil, err
-		}
-		clog.Debug().Err(err).Msg("skipping list metadata hydration")
-		return prs, nil
-	}
-
-	if cli.Merge != nil {
-		prs = filterByAutomergeState(prs, !*cli.Merge)
-	}
-	if needTimeline {
-		prs = filterByTimelineActorsLoaded(prs, closedAllowed, mergedAllowed, actors)
-	}
-	if needViewerApproval {
-		prs = filterByViewerApproval(prs)
-	}
-	return prs, nil
-}
-
 // Grouped output uses search fields unless a readiness or CI filter needs enrichment.
 func needsListMergeStatus(cli *CLI) bool {
 	needsEnrich := cli.PRState() == StateReady || cli.CIFilter().Active()
@@ -712,88 +653,12 @@ func buildOutput(
 	params *SearchParams,
 	cache *listMetadataCache,
 ) (string, []PullRequest, error) {
-	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
-	var gql *api.GraphQLClient
-	getGQL := func() (*api.GraphQLClient, error) {
-		if gql == nil {
-			var gqlErr error
-			gql, gqlErr = newGraphQLClient(withDebug(cli.Debug))
-			if gqlErr != nil {
-				return nil, fmt.Errorf("creating GraphQL client: %w", gqlErr)
-			}
-		}
-		return gql, nil
-	}
-
-	ready := cli.PRState() == StateReady
-	ciFilter := cli.CIFilter()
-	needMergeStatus := needsListMergeStatus(cli)
-	prs, err := executeListSearch(rest, getGQL, params, needMergeStatus)
-	if err != nil {
+	loader := listLoader{rest: rest, graphQL: lazyGraphQLClient(cli.Debug), cache: cache}
+	result, err := loader.load(cli, params)
+	if err != nil || len(result.prs) == 0 {
 		return "", nil, err
 	}
-
-	// Apply filters
-	prs, err = applyFilters(cli, prs)
-	if err != nil {
-		return "", nil, err
-	}
-	if len(prs) == 0 {
-		return "", nil, nil
-	}
-
-	// Resolve timeline filter logins before the shared metadata pass.
-	closedAllowed, err := resolveTimelineLogins(rest, cli.ClosedBy.Values)
-	if err != nil {
-		return "", nil, err
-	}
-	mergedAllowed, err := resolveTimelineLogins(rest, cli.MergedBy.Values)
-	if err != nil {
-		return "", nil, err
-	}
-
-	needAutomerge := cli.Merge != nil || (!cli.Quick && cli.Send)
-	prs, err = applyListMetadata(
-		cli,
-		getGQL,
-		prs,
-		needAutomerge && !allAutomergeLoaded(prs),
-		needMergeStatus,
-		closedAllowed,
-		mergedAllowed,
-		cache,
-	)
-	if err != nil {
-		return "", nil, err
-	}
-	if len(prs) == 0 {
-		return "", nil, nil
-	}
-
-	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
-	if cli.Quick && !needMergeStatus {
-		for i := range prs {
-			if prs[i].State == valueOpen {
-				prs[i].MergeStatus = MergeStatusBlocked
-			}
-		}
-	}
-
-	// Post-filter: --state=ready keeps only PRs that are ready to merge.
-	if ready {
-		prs = filterReady(prs)
-		if len(prs) == 0 {
-			return "", nil, nil
-		}
-	}
-
-	// Post-filter: --ci keeps only PRs matching the requested CI status.
-	if ciFilter.Active() {
-		prs = filterByCI(prs, ciFilter)
-		if len(prs) == 0 {
-			return "", nil, nil
-		}
-	}
+	prs := result.prs
 
 	// Render output
 	out, rErr := renderOutput(p, cli, cfg, tty, prs)
@@ -865,93 +730,18 @@ func runOnce(
 ) (string, error) {
 	prl = prl.forTerminal(tty)
 
-	// Lazy GraphQL client (shared by automerge filter and merge status enrichment).
-	var gql *api.GraphQLClient
-	getGQL := func() (*api.GraphQLClient, error) {
-		if gql == nil {
-			var gqlErr error
-			gql, gqlErr = newGraphQLClient(withDebug(cli.Debug))
-			if gqlErr != nil {
-				return nil, fmt.Errorf("creating GraphQL client: %w", gqlErr)
-			}
-		}
-		return gql, nil
-	}
-
-	ready := cli.PRState() == StateReady
-	ciFilter := cli.CIFilter()
-	needMergeStatus := needsListMergeStatus(cli)
-	prs, err := executeListSearch(rest, getGQL, params, needMergeStatus)
+	loader := listLoader{rest: rest, graphQL: lazyGraphQLClient(cli.Debug)}
+	result, err := loader.load(cli, params)
 	if err != nil {
 		return "", err
 	}
-	rawFetched := len(prs)
-
-	// Apply filters
-	prs, err = applyFilters(cli, prs)
-	if err != nil {
-		return "", err
-	}
-	if len(prs) == 0 {
-		if cli.ExitZero {
+	if len(result.prs) == 0 {
+		if cli.ExitZero && !result.matched {
 			return "", errFatal
 		}
 		return "", nil
 	}
-
-	// Resolve timeline filter logins before the shared metadata pass.
-	closedAllowed, err := resolveTimelineLogins(rest, cli.ClosedBy.Values)
-	if err != nil {
-		return "", err
-	}
-	mergedAllowed, err := resolveTimelineLogins(rest, cli.MergedBy.Values)
-	if err != nil {
-		return "", err
-	}
-
-	needAutomerge := cli.Merge != nil || (!cli.Quick && cli.Send)
-
-	prs, err = applyListMetadata(
-		cli,
-		getGQL,
-		prs,
-		needAutomerge && !allAutomergeLoaded(prs),
-		needMergeStatus,
-		closedAllowed,
-		mergedAllowed,
-		nil,
-	)
-	if err != nil {
-		return "", err
-	}
-	if len(prs) == 0 {
-		return "", nil
-	}
-
-	// In quick mode, default open PRs to blocked so they render in blue instead of dim.
-	if cli.Quick && !needMergeStatus {
-		for i := range prs {
-			if prs[i].State == valueOpen {
-				prs[i].MergeStatus = MergeStatusBlocked
-			}
-		}
-	}
-
-	// Post-filter: --state=ready keeps only PRs that are ready to merge.
-	if ready {
-		prs = filterReady(prs)
-		if len(prs) == 0 {
-			return "", nil
-		}
-	}
-
-	// Post-filter: --ci keeps only PRs matching the requested CI status.
-	if ciFilter.Active() {
-		prs = filterByCI(prs, ciFilter)
-		if len(prs) == 0 {
-			return "", nil
-		}
-	}
+	prs := result.prs
 
 	// Group-by breakdown: bucket the fetched results locally (no extra API
 	// calls) instead of rendering the usual output.
@@ -982,7 +772,7 @@ func runOnce(
 			return "", gErr
 		}
 		if !asJSON {
-			out += groupCapSuffix(rest, cli, params, rawFetched, tty)
+			out += groupCapSuffix(rest, cli, params, result.rawFetched, tty)
 		}
 		return out, nil
 	}

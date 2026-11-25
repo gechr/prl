@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/cli/go-gh/v2/pkg/auth"
@@ -127,4 +128,14 @@ func newActionRunner(cli *CLI, rest *api.RESTClient) (*ActionRunner, error) {
 		}
 	}
 	return NewActionRunner(rest, gql), nil
+}
+
+func lazyGraphQLClient(debug bool) func() (*api.GraphQLClient, error) {
+	return sync.OnceValues(func() (*api.GraphQLClient, error) {
+		gql, err := newGraphQLClient(withDebug(debug))
+		if err != nil {
+			return nil, fmt.Errorf("creating GraphQL client: %w", err)
+		}
+		return gql, nil
+	})
 }
