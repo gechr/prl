@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"getsteep.dev/steep"
 	"getsteep.dev/steep/reel"
 	"getsteep.dev/steep/reel/vt"
 	cansi "github.com/charmbracelet/x/ansi"
@@ -81,33 +83,9 @@ func TestUpdateListViewCtrlRSinglePRBypassesConfirm(t *testing.T) {
 }
 
 func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
-	prA := testReviewPullRequest()
-	prB := testReviewPullRequest()
-	prB.Number = 43
-	prB.URL = "https://github.com/owner/repo/pull/43"
-	m := tuiModel{
-		items: []PRRowModel{{PR: prA}, {PR: prB}},
-		rows: []TableRow{
-			{Item: PRRowModel{PR: prA}},
-			{Item: PRRowModel{PR: prB}},
-		},
-		selected: prKeys{makePRKey(prA): true, makePRKey(prB): true},
-		styles:   newTuiStyles(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	require.Nil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, tuiActionCopilotReview, bm.confirmAction)
-	require.Equal(
-		t,
-		"Request Copilot review for 2 PRs?",
-		bm.confirmPrompt,
-	)
-	require.Equal(t, "2 PRs", bm.confirmSubject)
-	require.NotNil(t, bm.confirmCmd)
+	h := newTUIHarness(t, listTUIModel(approvalTestPR(1), approvalTestPR(2)))
+	h.Key("shift+down").Wait("❯ 2 ").Key("ctrl+r").Wait("Request Copilot review for 2 PRs?")
+	h.KeyEsc().WaitNot("Request Copilot review").Assert("❯ 2 ")
 }
 
 func TestUpdateDiffViewRLaunchesAIReview(t *testing.T) {
@@ -389,272 +367,92 @@ func TestRefreshResultClearsRowsButKeepsHeader(t *testing.T) {
 }
 
 func TestViewListShowsRefreshingHeaderWithoutRows(t *testing.T) {
-	m := tuiModel{
-		width:       120,
-		height:      12,
-		styles:      newTuiStyles(),
-		filterInput: textinput.New(),
-		selected:    make(prKeys),
-		p:           testPRL,
-		cli:         testCLI(),
-		spinner:     spinner{frames: []string{"*"}},
-		refreshing:  true,
-	}
-	m.header, m.rows, m.colWidths = m.rerender()
-
-	out := ansi.Strip(m.viewList().Content)
-	lines := strings.Split(out, nl)
-
-	require.NotEmpty(t, lines)
-	require.Equal(
-		t,
-		"*    TITLE                           PR                    STATUS    REASON        CREATED  UPDATED",
-		lines[0],
-	)
+	m := listTUIModel()
+	m.cli.Columns.Values = nil
+	m.width, m.height = 120, 12
+	m.spinner, m.refreshing = spinner{frames: []string{"*"}}, true
+	want := "*    TITLE                           PR                    STATUS    REASON        CREATED  UPDATED"
+	h := newTUIHarness(t, m)
+	require.Zero(t, h.Locate(reel.Contains(want)).Y)
 }
 
 func TestViewListNumbersVisibleRows(t *testing.T) {
-	fi := textinput.New()
-	fi.SetValue("eta")
-	m := tuiModel{
-		rows: []TableRow{
-			{Cells: []table.Cell{{Plain: "alpha"}}, Display: "alpha"},
-			{Cells: []table.Cell{{Plain: "beta"}}, Display: "beta"},
-			{Cells: []table.Cell{{Plain: "gamma"}}, Display: "gamma"},
-		},
-		cursor:      -1,
-		height:      20,
-		width:       80,
-		styles:      newTuiStyles(),
-		filterInput: fi,
-		selected:    make(prKeys),
-		p:           testPRL,
-	}
-
-	out := ansi.Strip(m.viewList().Content)
-
-	require.Equal(
-		t,
-		"  1  beta\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n/> eta \n"+
-			"────────────────────────────────────────────────────────────────────────────────\n"+
-			" enter show  space select  / filter  diff  comment  Close  open  alt+copy\n"+
-			"Refresh off  Options  ? help  quit",
-		out,
-	)
+	first, second, third := approvalTestPR(1), approvalTestPR(2), approvalTestPR(3)
+	first.Title, second.Title, third.Title = "alpha", "beta", "gamma"
+	m := listTUIModel(first, second, third)
+	m.sortColumn, m.sortAsc = colTitle, true
+	h := newTUIHarness(t, m)
+	h.Wait("❯ 1  alpha").Assert("  2  beta")
+	h.Key("/").Paste("eta").Key("enter").Wait("❯ 1  beta").
+		Assert("/> eta").AssertNot([]string{first.Title, third.Title})
 }
 
 func TestViewListFilterIndicatorIsLeftClamped(t *testing.T) {
-	m := tuiModel{
-		height:      12,
-		width:       80,
-		styles:      newTuiStyles(),
-		filterInput: textinput.New(),
-		selected:    make(prKeys),
-		p:           testPRL,
-		cli:         &CLI{State: valueClosed},
+	m := listTUIModel()
+	m.height = 12
+	m.cli.NoBot, m.cli.State = false, valueClosed
+	line := strings.Repeat("─", 38) + "┤ state:closed │ All Time ▾ │ All PRs ▾ ├─"
+	h := newTUIHarness(t, m)
+	require.Zero(t, h.Locate(reel.Contains(line)).X)
+}
+
+func TestListRangeSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		start      int
+		key        string
+		cursor     string
+		selected   []string
+		unselected string
+	}{
+		{"extend down", 0, "shift+down", "2", []string{"1", "2"}, "3"},
+		{"extend up", 2, "shift+up", "2", []string{"2", "3"}, "1"},
+		{"at top", 0, "shift+up", "1", []string{"1"}, "2"},
+		{"at bottom", 2, "shift+down", "3", []string{"3"}, "2"},
+		{"space", 1, "space", "2", []string{"2"}, "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := helpClickTestModel(3)
+			m.cursor = tc.start
+			h := newTUIHarness(t, m)
+			h.Key(tc.key).Wait("❯ " + tc.cursor + " ")
+			for _, label := range tc.selected {
+				waitListSelection(t, h, label, true)
+			}
+			waitListSelection(t, h, tc.unselected, false)
+		})
 	}
+}
 
-	out := ansi.Strip(m.viewList().Content)
-
-	require.Equal(
+func waitListSelection(t *testing.T, h *steep.Harness, label string, selected bool) {
+	t.Helper()
+	row := h.Locate(reel.Matches(regexp.MustCompile("(?m)^.." + regexp.QuoteMeta(label) + " ")))
+	waitCellStyle(
 		t,
-		"\n\n\n\n\n\n\n\n"+
-			"──────────────────────────────────────┤ state:closed │ All Time ▾ │ All PRs ▾ ├─\n"+
-			" enter show  space select  / filter  diff  comment  Close  open  alt+copy\n"+
-			"Refresh off  Options  ? help  quit",
-		out,
+		h,
+		row.Offset(2, 0),
+		func(style reel.CellStyle) bool { return (style.Attrs&vt.AttrBold != 0) == selected },
 	)
 }
 
-func TestUpdateListViewShiftDownSelectsAndMovesNext(t *testing.T) {
-	m := tuiModel{
-		rows: []TableRow{
-			{Item: PRRowModel{PR: testReviewPullRequest()}},
-			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
-			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
-		},
-		cursor:      0,
-		selected:    make(prKeys),
-		filterInput: textinput.New(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(0)])
-	require.True(t, bm.selected[bm.rowKeyAt(1)])
-	require.Equal(t, 1, bm.cursor)
+func TestListRangeSelectionSurvivesRepeatedAndReversedMovement(t *testing.T) {
+	h := newTUIHarness(t, helpClickTestModel(2))
+	h.Key("shift+down").Wait("❯ 2 ")
+	waitListSelection(t, h, "1", true)
+	waitListSelection(t, h, "2", true)
+	h.Key("shift+down").KeyUp().Wait("❯ 1 ")
+	waitListSelection(t, h, "1", true)
+	waitListSelection(t, h, "2", true)
+	h.Key("shift+down").Wait("❯ 2 ").Key("shift+up").Wait("❯ 1 ")
+	waitListSelection(t, h, "1", true)
+	waitListSelection(t, h, "2", true)
 }
 
-func TestUpdateListViewShiftUpSelectsAndMovesPrevious(t *testing.T) {
-	m := tuiModel{
-		rows: []TableRow{
-			{Item: PRRowModel{PR: testReviewPullRequest()}},
-			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
-			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
-		},
-		cursor:      2,
-		selected:    make(prKeys),
-		filterInput: textinput.New(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(1)])
-	require.True(t, bm.selected[bm.rowKeyAt(2)])
-	require.Equal(t, 1, bm.cursor)
-}
-
-func TestUpdateListViewShiftUpAtTopIsNoOp(t *testing.T) {
-	m := tuiModel{
-		rows: []TableRow{
-			{Item: PRRowModel{PR: testReviewPullRequest()}},
-			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
-		},
-		cursor:      0,
-		selected:    make(prKeys),
-		filterInput: textinput.New(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(0)])
-	require.Equal(t, 0, bm.cursor)
-}
-
-func TestUpdateListViewShiftDownAtBottomIsNoOp(t *testing.T) {
-	m := tuiModel{
-		rows: []TableRow{
-			{Item: PRRowModel{PR: testReviewPullRequest()}},
-			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
-		},
-		cursor:      1,
-		selected:    make(prKeys),
-		filterInput: textinput.New(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(1)])
-	require.Equal(t, 1, bm.cursor)
-}
-
-func TestUpdateListViewShiftDownAtBottomAfterRangeDoesNotFlicker(t *testing.T) {
-	m := tuiModel{
-		rows: []TableRow{
-			{Item: PRRowModel{PR: testReviewPullRequest()}},
-			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
-		},
-		cursor:      0,
-		selected:    make(prKeys),
-		filterInput: textinput.New(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(0)])
-	require.True(t, bm.selected[bm.rowKeyAt(1)])
-	require.Equal(t, 1, bm.cursor)
-
-	model, cmd = bm.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(0)])
-	require.True(t, bm.selected[bm.rowKeyAt(1)])
-	require.Equal(t, 1, bm.cursor)
-}
-
-func TestUpdateListViewShiftDirectionChangeDoesNotDeselect(t *testing.T) {
-	m := tuiModel{
-		rows: []TableRow{
-			{Item: PRRowModel{PR: testReviewPullRequest()}},
-			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
-			{Item: PRRowModel{PR: PullRequest{Number: 44}}},
-		},
-		cursor:      0,
-		selected:    make(prKeys),
-		filterInput: textinput.New(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-
-	model, cmd = bm.updateListView(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(0)])
-	require.True(t, bm.selected[bm.rowKeyAt(1)])
-	require.Equal(t, 0, bm.cursor)
-}
-
-func TestUpdateListViewDigitJumpImmediateWhenUnambiguous(t *testing.T) {
-	m := testDigitJumpModel(15)
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: '2', Text: "2"})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 1, bm.cursor)
-	require.Zero(t, bm.offset)
-	require.Zero(t, bm.jumpDigit)
-}
-
-func TestUpdateListViewDigitJumpWaitsWhenTwoDigitRowsExist(t *testing.T) {
-	m := testDigitJumpModel(15)
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: '1', Text: "1"})
-
-	require.NotNil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 0, bm.cursor)
-	require.Equal(t, 1, bm.jumpDigit)
-
-	model, cmd = bm.updateListView(tea.KeyPressMsg{Code: '5', Text: "5"})
-
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 14, bm.cursor)
-	require.Zero(t, bm.jumpDigit)
-}
-
-func TestUpdateListViewSpaceOnlySelectsCurrent(t *testing.T) {
-	m := tuiModel{
-		rows: []TableRow{
-			{Item: PRRowModel{PR: testReviewPullRequest()}},
-			{Item: PRRowModel{PR: PullRequest{Number: 43}}},
-		},
-		cursor:      0,
-		selected:    make(prKeys),
-		filterInput: textinput.New(),
-	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: tea.KeySpace})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.selected[bm.rowKeyAt(0)])
-	require.Equal(t, 0, bm.cursor)
+func TestListNumericJumps(t *testing.T) {
+	h := newTUIHarness(t, helpClickTestModel(15))
+	h.Key("2").Wait("❯ 2 ").Assert("  1 ")
+	h.Key("1").Key("5").Wait("❯ 15 ")
+	h.Key("1").Wait("❯ 1 ")
 }
 
 func TestRefreshTickIgnoresStaleAndInFlight(t *testing.T) {
@@ -1664,32 +1462,6 @@ func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {
 	require.Equal(t, 0, bm.cursor)
 	require.Equal(t, []int{0, 1}, bm.visibleIndices())
 	require.Equal(t, []prKey{makePRKey(prB)}, bm.diffQueue)
-}
-
-func testDigitJumpModel(total int) tuiModel {
-	rows := make([]TableRow, total)
-	for i := range total {
-		rows[i] = TableRow{
-			Item: PRRowModel{
-				PR: PullRequest{
-					Number: i + 1,
-					Repository: Repository{
-						Name:          "repo",
-						NameWithOwner: "owner/repo",
-					},
-				},
-			},
-		}
-	}
-	return tuiModel{
-		rows:        rows,
-		cursor:      0,
-		height:      20,
-		width:       120,
-		styles:      newTuiStyles(),
-		filterInput: textinput.New(),
-		selected:    make(prKeys),
-	}
 }
 
 func TestParseFilterTerm(t *testing.T) {

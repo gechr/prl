@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
-	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"getsteep.dev/steep/reel"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/x/ansi"
@@ -193,28 +193,15 @@ func TestStackListIDsAndHitTesting(t *testing.T) {
 }
 
 func TestStackConnectorClickFoldsAndExpands(t *testing.T) {
-	for _, y := range []int{1, 2, 3, 4} {
-		t.Run(fmt.Sprintf("line %d", y), func(t *testing.T) {
+	for offset := -1; offset <= 2; offset++ {
+		t.Run(fmt.Sprintf("line %d", offset+2), func(t *testing.T) {
 			m := newStackTestModel(t)
 			m.cursor = 2
-			click := tea.MouseClickMsg{
-				X:      m.listPrefixWidth() - stackTreeWidth,
-				Y:      y,
-				Button: tea.MouseLeft,
-			}
-			model, _ := m.Update(click)
-			folded, ok := model.(tuiModel)
-			require.True(t, ok)
-			require.Len(t, folded.listLines(), 2)
-			require.Equal(t, "▸  ", folded.listLines()[0].tree)
-			require.Nil(t, folded.currentPR())
-			require.False(t, folded.toggleCurrentSelection())
-			require.Empty(t, folded.targetPRs())
-			model, _ = folded.Update(tea.MouseClickMsg{X: click.X, Y: 1, Button: tea.MouseLeft})
-			expanded, ok := model.(tuiModel)
-			require.True(t, ok)
-			require.Len(t, expanded.listLines(), 5)
-			require.Equal(t, 2, expanded.currentPR().Number)
+			h := newTUIHarness(t, m)
+			h.Locate(reel.Contains("├─")).Offset(0, offset).LeftClick().
+				Wait("❯ 1  ▸").AssertNot([]string{"1a ", "1b ", "1c "})
+			h.Locate(reel.Contains("▸")).LeftClick().Wait("❯ 1a ├─").
+				Assert([]string{"1b ├─", "1c ╰─"})
 		})
 	}
 }
@@ -336,20 +323,9 @@ func TestHydrateStackMetadataRESTFallback(t *testing.T) {
 }
 
 func TestStackKeyboardControlsAndNumericJumps(t *testing.T) {
-	m := newStackTestModel(t)
-	model, _ := m.updateListView(tea.KeyPressMsg{Code: tea.KeyLeft})
-	m, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Len(t, m.listLines(), 2)
-	model, _ = m.updateListView(tea.KeyPressMsg{Code: '2', Text: "2"})
-	m, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 10, m.currentPR().Number)
-	m.cursor = 0
-	model, _ = m.updateListView(tea.KeyPressMsg{Code: tea.KeyRight})
-	m, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Len(t, m.listLines(), 5)
+	h := newTUIHarness(t, newStackTestModel(t))
+	h.KeyLeft().Wait("❯ 1  ▸").Key("2").Wait("❯ 2 ").AssertNot("1a ")
+	h.Key("1").Wait("❯ 1  ▸").KeyRight().Wait("❯ 1a ├─").Assert("1c ╰─")
 }
 
 func TestStackRefreshRetainsFoldAndVisibleCursor(t *testing.T) {
@@ -381,6 +357,8 @@ func TestStackFilteringKeepsHeadersOutOfActions(t *testing.T) {
 	m.toggleStack(lines[0].stackKey)
 	require.Len(t, m.listLines(), 1)
 	require.Nil(t, m.currentPR())
+	require.False(t, m.toggleCurrentSelection())
+	require.Empty(t, m.targetPRs())
 }
 
 func TestStackHeaderStyleUsesTerminalColours(t *testing.T) {
@@ -487,26 +465,19 @@ func TestStackScrollingBackUpRestoresFirstHeader(t *testing.T) {
 func TestStackJumpToTopShowsHeader(t *testing.T) {
 	m := newStackTestModel(t)
 	m.height = 6
-	m.cursor = 3
-	m.offset = m.scrolledOffset()
-	model, _ := m.updateListView(tea.KeyPressMsg{Code: 'g', Text: "g"})
-	m, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Zero(t, m.offset)
-	require.Equal(t, 2, m.currentPR().Number)
+	h := newTUIHarness(t, m)
+	h.Key("G").Wait("❯ 2 ").AssertNot("1a ├─")
+	h.Key("g").Wait("❯ 1a ├─").Assert("  1  ▾")
 }
 
 func TestStackShiftMoveSkipsFoldedHeaderSelection(t *testing.T) {
-	m := newStackTestModel(t)
-	m.toggleStack(m.rows[0].Item.StackKey)
-	m.extendSelectionAndMove(1)
-	require.Equal(t, 10, m.currentPR().Number)
-	require.Len(t, m.selected, 1)
-	m.extendSelectionAndMove(-1)
-	require.Nil(t, m.currentPR())
-	require.Len(t, m.selected, 1)
-	require.Len(t, m.targetPRs(), 1)
-	require.Equal(t, 10, m.targetPRs()[0].pr.Number)
+	h := newTUIHarness(t, newStackTestModel(t))
+	h.KeyLeft().Wait("❯ 1  ▸").Key("shift+down").Wait("❯ 2 ")
+	waitListSelection(t, h, "1", false)
+	waitListSelection(t, h, "2", true)
+	h.Key("shift+up").Wait("❯ 1  ▸")
+	waitListSelection(t, h, "1", false)
+	waitListSelection(t, h, "2", true)
 }
 
 func TestStackLabelPreservesUnicode(t *testing.T) {
