@@ -591,34 +591,35 @@ func TestExitDiffViewStartsImmediateRefreshWhenDue(t *testing.T) {
 	require.Equal(t, prKey(""), bm.diffKey)
 }
 
-func TestRenderDetailContentShowsCopilotReviewIcon(t *testing.T) {
-	pr := testReviewPullRequest()
-	pr.Author.Login = "alice"
-	resolver := NewAuthorResolver(&Config{})
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		detailKey: makePRKey(pr),
-		detail: PRDetail{
-			Reviews: []PRReview{{
-				User:  copilotReviewer,
-				State: "COMMENTED",
-			}},
-		},
-		resolver: resolver,
-		width:    80,
+func TestDetailViewReviewAndStatusIcons(t *testing.T) {
+	for _, tc := range []struct {
+		mode                  IconMode
+		state, review, status string
+	}{
+		{IconUnicode, "", "🤖 Copilot", "Unknown"},
+		{IconNerd, valueMerged, " Copilot", " Merged"},
+	} {
+		t.Run(tc.mode.String(), func(t *testing.T) {
+			previous := activeIcons
+			useIcons(iconsFor(tc.mode))
+			t.Cleanup(func() { useIcons(previous) })
+			pr := testReviewPullRequest()
+			pr.Title, pr.Author.Login, pr.State = "Update list", "reviewer", tc.state
+			m := actionViewTestModel(tuiViewDetail, pr)
+			m.width = 80
+			m.resolver = NewAuthorResolver(m.cfg)
+			m.detail.Reviews = []PRReview{{User: copilotReviewer, State: "COMMENTED"}}
+			h := newTUIHarness(t, m)
+			top := h.Locate(reel.Contains("Overview"))
+			lines := strings.Split(h.Wait(tc.review).Assert("No description provided.").View(), nl)
+			for i, want := range []string{
+				"Overview", "", "    Title: Update list", "   Author: @reviewer", "      URL: " + pr.URL,
+				"  Reviews: " + tc.review, "   Status: " + tc.status, "", "No description provided.",
+			} {
+				require.Equal(t, want, strings.TrimRight(lines[top.Y+i], " "))
+			}
+		})
 	}
-
-	lines := m.renderDetailContent()
-	rendered := strings.Join(lines, nl)
-
-	stripped := ansi.Strip(rendered)
-	require.Equal(
-		t,
-		"Overview\n\n    Title: \n   Author: @alice\n      URL: https://github.com/owner/repo/pull/42\n"+
-			"  Reviews: 🤖 Copilot\n   Status: Unknown\n\nNo description provided.",
-		stripped,
-	)
 }
 
 func TestRenderReviewIconStylesApprovalGreen(t *testing.T) {
@@ -669,37 +670,6 @@ func TestDetailFetchReplacesUnknownListStatus(t *testing.T) {
 		t,
 		"Overview\n\n    Title: \n   Author: @\n      URL: https://github.com/owner/repo/pull/42\n"+
 			"   Status: Ready to merge\n\nNo description provided.",
-		rendered,
-	)
-}
-
-func TestRenderDetailContentUsesNerdReviewAndStatusIcons(t *testing.T) {
-	previous := activeIcons
-	useIcons(iconsFor(IconNerd))
-	t.Cleanup(func() { useIcons(previous) })
-
-	pr := testReviewPullRequest()
-	pr.Author.Login = "alice"
-	pr.State = valueMerged
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		detailKey: makePRKey(pr),
-		detail: PRDetail{
-			Reviews: []PRReview{{
-				User:  copilotReviewer,
-				State: "COMMENTED",
-			}},
-		},
-		resolver: NewAuthorResolver(&Config{}),
-		width:    80,
-	}
-
-	rendered := ansi.Strip(strings.Join(m.renderDetailContent(), nl))
-	require.Equal(
-		t,
-		"Overview\n\n    Title: \n   Author: @alice\n      URL: https://github.com/owner/repo/pull/42\n"+
-			"  Reviews:  Copilot\n   Status:  Merged\n\nNo description provided.",
 		rendered,
 	)
 }
