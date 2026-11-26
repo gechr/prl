@@ -53,6 +53,7 @@ const (
 	keyTeams                 = "teams"
 	keySpinnerStyle          = "spinner.style"
 	keySpinnerColors         = "spinner.colors"
+	keyTUIAnimationsEnabled  = "tui.animations.enabled"
 	keyTUIAutoRefresh        = "tui.refresh.enabled"
 	keyTUIReviewDefaultEff   = "tui.review.default.effort"
 	keyTUIReviewDefaultModel = "tui.review.default.model"
@@ -174,8 +175,14 @@ type TUIStacksConfig struct {
 	Enabled bool `koanf:"enabled" yaml:"enabled"`
 }
 
+// TUIAnimationsConfig controls transitions between PRs.
+type TUIAnimationsConfig struct {
+	Enabled bool `koanf:"enabled"`
+}
+
 // TUIConfig holds TUI-specific configuration.
 type TUIConfig struct {
+	Animations   TUIAnimationsConfig  `koanf:"animations"`
 	AutoRefresh  TUIAutoRefreshConfig `koanf:"refresh"`
 	Review       TUIReviewConfig      `koanf:"review"`
 	Filters      TUIFiltersConfig     `koanf:"filters"`
@@ -259,6 +266,7 @@ func defaultConfig() map[string]any {
 		keyTUIReviewClaudePrompt: defaultReviewPromptTemplate(reviewProviderClaude),
 		keyTUIReviewCodexPrompt:  defaultReviewPromptTemplate(reviewProviderCodex),
 		keyTUIReviewGeminiPrompt: defaultReviewPromptTemplate(reviewProviderGemini),
+		keyTUIAnimationsEnabled:  true,
 		keyTUIScreenRepair:       false,
 		keyTUIFilterArchived:     nil,
 		keyTUIFilterBots:         nil,
@@ -752,6 +760,10 @@ features:
 # mirrors this tui: subtree and takes precedence over it. This keeps your
 # version-controlled config stable while remembering your last session.
 tui:
+  animations:
+    # Slide between PRs in detail and diff views.
+    enabled: true
+
   refresh:
     # Periodically refresh the PR list. Event streams are configured separately.
     enabled: true

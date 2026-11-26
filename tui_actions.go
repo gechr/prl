@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"bloomfx.dev/bloom/fx"
 	tea "charm.land/bubbletea/v2"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/x/ansi"
@@ -452,7 +453,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			m.diffQueueTotal = len(targets)
 		}
 		m.refreshTerminalSize()
-		return m, tea.Batch(requestWindowSizeCmd(), m.openDiff(makePRKey(targets[0].pr))), true
+		return m, tea.Batch(requestWindowSizeCmd(), m.openDiff(makePRKey(targets[0].pr), 0)), true
 
 	case tuiKeybindMerge:
 		targets := m.targetMergeablePRs()
@@ -1180,6 +1181,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.diffLoading {
 		switch msg.String() {
 		case tuiKeybindQuit, key.Esc, tuiKeybindDiff:
+			m.flash.Msg = ""
 			return m, m.exitDiffView()
 		}
 		return m, nil
@@ -1192,7 +1194,7 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.exitDiffView()
 	case tuiKeybindNext, key.Right:
 		// Skip to next in queue without approving.
-		_, cmd := m.advanceDiff()
+		_, cmd := m.advanceDiff(fx.Right)
 		return m, cmd
 	case tuiKeybindPrev, key.Left:
 		// Go back to previous diff in history.
@@ -1206,7 +1208,8 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.diffHistory = m.diffHistory[:len(m.diffHistory)-1]
 		// Push current back onto front of queue.
 		m.diffQueue = append([]prKey{m.diffKey}, m.diffQueue...)
-		return m, m.openDiff(prev)
+		cmd := m.openDiff(prev, fx.Left)
+		return m, cmd
 	case tuiKeybindVimDown, key.Down:
 		m.diffView.ScrollDown(1)
 		return m, nil
@@ -1370,12 +1373,32 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirmAction != "" {
 		return m.updateConfirmDialog(msg)
 	}
+	if m.detailLoading || m.diffLoading {
+		switch msg.String() {
+		case tuiKeybindQuit, key.Esc, key.Enter:
+			m.flash.Msg = ""
+			m.clearDiffState()
+			return m, m.exitDetailView()
+		}
+		return m, nil
+	}
 	if result, cmd, handled := m.handleViewAction(msg); handled {
 		return result, cmd
 	}
 	switch msg.String() {
 	case tuiKeybindQuit, key.Esc, key.Enter:
 		return m, m.exitDetailView()
+	case tuiKeybindNext, key.Right, tuiKeybindPrev, key.Left:
+		prev, next := m.detailNeighbors()
+		idx, from := next, fx.Right
+		if msg.String() == tuiKeybindPrev || msg.String() == key.Left {
+			idx, from = prev, fx.Left
+		}
+		if idx < 0 {
+			return m, nil
+		}
+		cmd := m.openDetail(idx, from)
+		return m, cmd
 	case tuiKeybindVimDown, key.Down:
 		m.detailView.ScrollDown(1)
 		return m, nil
@@ -1401,7 +1424,7 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.clearDiffState()
 		m.refreshTerminalSize()
-		return m, tea.Batch(requestWindowSizeCmd(), m.openDiff(m.detailKey))
+		return m, tea.Batch(requestWindowSizeCmd(), m.openDiff(m.detailKey, 0))
 	case tuiKeybindApprove, tuiKeybindApproveNoConfirm:
 		ctx, ok := m.actionContextForKey(m.detailKey)
 		if !ok || !m.isApprovable(ctx.pr) {

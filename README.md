@@ -203,6 +203,7 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 - `Shift+O`: filters and stack visibility.
 - `f/F`: status presets. `t/T`: time ranges. `Ctrl+X`: clear both.
 - Left/Right or click a stack header: collapse/expand stacks.
+- In detail view, `n`/Right and `p`/Left browse the next and previous PR in the filtered list. In diff view, the same keys browse the selected queue.
 - `a`: approve, or unapprove your own approval. Unapprove opens a reason editor prefilled with "Approval withdrawn by reviewer." In diff view, approving advances to the next PR.
 - `Alt+a`: approve or unapprove without confirmation, using the default reason.
 - `--interval 30s`: slow auto-refresh.
@@ -297,6 +298,8 @@ spinner:
   colors: ["39", "45", "51"]
 
 tui:
+  animations:
+    enabled: true # Set to false to switch PRs instantly in detail and diff views.
   refresh:
     enabled: true
   review:

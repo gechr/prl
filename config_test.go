@@ -41,6 +41,37 @@ func TestSaveConfigKeyClearsPersistedSortWithoutPanic(t *testing.T) {
 	require.Equal(t, tail, content[len(content)-len(tail):])
 }
 
+func TestTUIAnimationsConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		config   string
+		animated bool
+	}{
+		{"default", "tui: {}", true},
+		{"opt out", "tui:\n  animations:\n    enabled: false", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			cp, err := configPath()
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(filepath.Dir(cp), 0o755))
+			require.NoError(t, os.WriteFile(cp, []byte(tc.config), 0o600))
+			cfg, err := loadConfig()
+			require.NoError(t, err)
+
+			first, second := approvalTestPR(1), approvalTestPR(2)
+			m := diffTestModel(first, second)
+			m.cfg = cfg
+			m.syncDiffView()
+			dest := makePRKey(second)
+			m.cacheDiffForTest(dest, "")
+			m, _ = pressKey(t, m, tuiKeybindNext)
+			require.Equal(t, dest, m.diffKey)
+			require.Equal(t, tc.animated, m.slide.progress.Animating())
+		})
+	}
+}
+
 func TestLoadConfigRejectsInvalidIcons(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

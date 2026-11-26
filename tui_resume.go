@@ -349,6 +349,7 @@ func (s *savedSession) restore(m *tuiModel) {
 	case tuiViewDiff:
 		m.view, m.diffKey, m.diff = tuiViewDiff, s.Active, s.Diff
 		m.diffQueue, m.diffHistory, m.diffQueueTotal = s.DiffQueue, s.DiffHistory, s.DiffQueueTotal
+		m.diffQueuePos = m.diffQueueTotal - len(m.diffQueue)
 		m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
 		m.syncDiffView()
 		m.diffView.SetYOffset(s.ViewOffset)

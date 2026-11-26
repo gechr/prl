@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"bloomfx.dev/bloom/anim"
+	"bloomfx.dev/bloom/fx"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -335,6 +337,8 @@ type actionMsg struct {
 
 // detailFetchedMsg is sent when PR detail has been fetched.
 type detailFetchedMsg struct {
+	id     int
+	from   fx.Direction
 	index  int
 	key    prKey // stable lookup after refresh
 	detail PRDetail
@@ -441,6 +445,7 @@ type tuiModel struct {
 	sortAsc              bool
 	cursor               int
 	offset               int
+	slide                prSlide
 	view                 tuiView
 	diff                 string
 	diffLines            []string
@@ -497,8 +502,10 @@ type tuiModel struct {
 	diffQueue      []prKey // remaining PR keys to diff through
 	diffHistory    []prKey // previously viewed PR keys (for going back)
 	diffQueueTotal int     // total PRs in the queue (for counter display)
+	diffQueuePos   int     // position of the displayed diff, including while the next PR loads
 	diffLoading    bool
 	diffAwaitKey   prKey                    // diff the view is waiting to show
+	diffAwaitFrom  fx.Direction             // slide direction for that request
 	diffGen        int                      // bumps per diff session; drops stale fetches
 	diffPrefetch   map[prKey]diffFetchedMsg // fetched diffs for upcoming queue entries
 	diffInFlight   prKeys                   // diff fetches not yet returned
@@ -852,18 +859,34 @@ func (m tuiModel) scheduleDetailRefresh() tea.Cmd {
 // refetchDetail re-fetches the currently displayed detail view (e.g. after
 // an action like update-branch changes PR state).
 func (m *tuiModel) refetchDetail() tea.Cmd {
-	pr := m.prForKey(m.detailKey)
-	if pr == nil {
+	idx := m.resolveIndex(m.detailKey, -1)
+	if idx < 0 || m.detailLoading {
 		return nil
 	}
-	actions := m.actions
-	key := m.detailKey
-	idx := m.resolveIndex(key, -1)
-	prCopy := *pr
+	return m.fetchDetailCmd(idx, 0)
+}
+
+func (m *tuiModel) openDetail(idx int, from fx.Direction) tea.Cmd {
+	m.stopDetailRefresh(false)
+	m.detailLoading = true
+	flashPending(m, "Fetching", &m.rows[idx].Item.PR)
+	return m.fetchDetailCmd(idx, from)
+}
+
+func (m *tuiModel) fetchDetailCmd(idx int, from fx.Direction) tea.Cmd {
+	pr := m.rows[idx].Item.PR
+	id, actions := m.detailRefreshID, m.actions
 	return m.trackRead(func() tea.Msg {
-		owner, repo := prOwnerRepo(prCopy)
-		detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number, prCopy.NodeID)
-		return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
+		owner, repo := prOwnerRepo(pr)
+		detail, err := actions.fetchPRDetail(owner, repo, pr.Number, pr.NodeID)
+		return detailFetchedMsg{
+			id:     id,
+			from:   from,
+			index:  idx,
+			key:    makePRKey(pr),
+			detail: detail,
+			err:    err,
+		}
 	})
 }
 
@@ -874,6 +897,7 @@ func (m tuiModel) isStaleDetailRefresh(id int, key prKey) bool {
 func (m *tuiModel) stopDetailRefresh(clearKey bool) {
 	m.detailRefreshID++
 	if clearKey {
+		m.detailLoading = false
 		m.detailKey = ""
 	}
 }
@@ -883,7 +907,9 @@ func (m *tuiModel) stopDetailRefresh(clearKey bool) {
 func (m *tuiModel) clearDiffState() {
 	m.diffQueue = nil
 	m.diffHistory = nil
+	m.diffAwaitFrom = 0
 	m.diffQueueTotal = 0
+	m.diffQueuePos = 0
 	m.diffLoading = false
 	m.diffKey = ""
 	m.diffAwaitKey = ""
@@ -988,6 +1014,16 @@ func (m *tuiModel) exitDiffView() tea.Cmd {
 // Update runs the real update, then reconciles the dialog stack so a dialog
 // set up (or cleared) anywhere opens or closes before the next View.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case anim.FrameMsg:
+		cmd := m.slide.progress.Update(msg)
+		if !m.slide.progress.Animating() {
+			m.slide = prSlide{}
+		}
+		return m, cmd
+	case tea.KeyMsg, tea.MouseMsg, scrollwheel.Msg[wheelTarget], tea.WindowSizeMsg, tea.BlurMsg:
+		m.slide = prSlide{}
+	}
 	previousState, previousKind := m.programStatus()
 	m.recordChangedPRs(msg)
 	model, cmd := m.update(msg)
@@ -1008,6 +1044,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	tm.syncConfirmDialog()
+	if tm.view != m.view || tm.confirmUsesDialog() {
+		tm.slide = prSlide{}
+	}
 	if tm.presetMenu.open {
 		if tm.canKeepPresetMenuOpen() {
 			tm.movePresetMenu(0)
@@ -1250,16 +1289,29 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case detailFetchedMsg:
+		if msg.id != m.detailRefreshID {
+			return m, nil
+		}
 		m.detailLoading = false
 		if msg.err != nil {
-			return m, flashResult(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true)
+			return m, tea.Batch(
+				flashResult(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true),
+				m.scheduleDetailRefresh(),
+			)
 		}
 		idx := m.resolveIndex(msg.key, msg.index)
 		if idx < 0 {
-			return m, nil // PR no longer in list
+			m.flash.Msg = ""
+			return m, m.scheduleDetailRefresh()
+		}
+		m.refreshTerminalSize()
+		var slide tea.Cmd
+		if msg.from != 0 && m.view == tuiViewDetail && m.detailKey != msg.key {
+			slide = m.startPRSlide(msg.from, m.detailView, m.detailRenderLines)
+			m.cursor = idx
+			m.offset = m.scrolledOffset()
 		}
 		m.applyDetailMergeStatus(msg.key, msg.detail.MergeStatus)
-		m.refreshTerminalSize()
 		m.detailKey = msg.key
 		m.detail = msg.detail
 		m.contentRevision++
@@ -1268,7 +1320,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailView.GotoTop()
 		m.view = tuiViewDetail
 		m.flash.Msg = ""
-		return m, m.scheduleDetailRefresh()
+		return m, tea.Batch(slide, m.scheduleDetailRefresh())
 
 	case detailRefreshTickMsg:
 		if m.isStaleDetailRefresh(msg.id, msg.key) {
@@ -1491,19 +1543,10 @@ func (m tuiModel) handleActionResult(msg actionMsg) (tea.Model, tea.Cmd) {
 	if isHint {
 		msg.err = nil // treat as success
 	}
-	if msg.err != nil {
-		flashCmd := m.actionFlash(msg)
-		// Advance diff queue even on failure so user can continue reviewing.
-		if advanced, nextCmd := m.advanceDiff(); advanced {
-			return m, tea.Batch(flashCmd, nextCmd)
-		}
-		if m.view == tuiViewDiff {
-			return m, tea.Batch(flashCmd, m.exitDiffView())
-		}
-		return m, flashCmd
+	if msg.err == nil {
+		m.applyActionState(msg.key, msg.action)
+		m.resyncCursorAndOffset()
 	}
-	m.applyActionState(msg.key, msg.action)
-	m.resyncCursorAndOffset()
 	flashCmd := m.actionFlash(msg)
 	if hint != nil {
 		cmd := styleAccent.Bold(true).Render(hint.Hint)
@@ -1511,13 +1554,12 @@ func (m tuiModel) handleActionResult(msg actionMsg) (tea.Model, tea.Cmd) {
 		m.confirmPrompt = "To also mute notifications, run:\n\n" + cmd
 		m.confirmCmd = nil
 	}
-	if advanced, nextCmd := m.advanceDiff(); advanced {
+	// A completed action may belong to a PR the user has already navigated away from.
+	if m.view == tuiViewDiff && !m.diffLoading && m.diffKey == msg.key {
+		nextCmd := m.advanceOrExitDiff()
 		return m, tea.Batch(flashCmd, nextCmd)
 	}
-	if m.view == tuiViewDiff {
-		return m, tea.Batch(flashCmd, m.exitDiffView())
-	}
-	if m.view == tuiViewDetail && m.detailKey != "" {
+	if msg.err == nil && m.view == tuiViewDetail && m.detailKey == msg.key {
 		return m, tea.Batch(flashCmd, m.refetchDetail())
 	}
 	return m, flashCmd
@@ -1674,20 +1716,8 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshTerminalSize()
-		idx := m.cursor
-		actions := m.actions
-		prCopy := *pr
-		m.flash.Msg = m.styles.statusPending.Render("Fetching") + " " +
-			styleRef.Render(prCopy.Ref()) + valueEllipsis
-		m.flash.Err = false
-		m.detailLoading = true
-		key := makePRKey(prCopy)
-		fetchCmd := func() tea.Msg {
-			owner, repo := prOwnerRepo(prCopy)
-			detail, err := actions.fetchPRDetail(owner, repo, prCopy.Number, prCopy.NodeID)
-			return detailFetchedMsg{index: idx, key: key, detail: detail, err: err}
-		}
-		return m, tea.Batch(requestWindowSizeCmd(), fetchCmd)
+		cmd := m.openDetail(m.cursor, 0)
+		return m, tea.Batch(requestWindowSizeCmd(), cmd)
 
 	case tuiKeybindVimDown, key.Down:
 		if next, ok := m.nextVisible(1); ok {
@@ -2080,8 +2110,9 @@ func (m tuiModel) viewDiff() tea.View {
 		pr := m.rows[idx].Item.PR
 		var headerLine string
 		if m.diffQueueTotal > 0 {
-			pos := m.diffQueueTotal - len(m.diffQueue)
-			headerLine = headerStyle.Render(fmt.Sprintf("[%d/%d]", pos, m.diffQueueTotal)) +
+			headerLine = headerStyle.Render(
+				fmt.Sprintf("[%d/%d]", m.diffQueuePos, m.diffQueueTotal),
+			) +
 				" "
 		}
 		ref := fmt.Sprintf("%s#%d", pr.Repository.NameWithOwner, pr.Number)
@@ -2319,6 +2350,15 @@ func (m tuiModel) renderFullScreenView(
 		status = m.styles.statusOK.Render(
 			fmt.Sprintf("%d-%d/%d (%d%%)", offset+1, end, totalLines, pct),
 		)
+	}
+
+	if m.slide.progress.Animating() && vp.Width() > 0 && vpHeight > 0 {
+		body := m.renderViewportContent(renderLines, vp, false)
+		moving := m.slide.render(vp.Width(), vpHeight, body)
+		rows := layout.NormalizeLines(strings.Split(moving, nl), vp.Width())
+		// RenderFrame applies the viewport offset and draws its scrollbar after these rows.
+		offset := min(vp.YOffset(), len(renderLines))
+		renderLines = append(renderLines[:offset:offset], rows...)
 	}
 
 	v := tea.NewView(view.RenderFrame(view.FrameModel{
@@ -3079,6 +3119,13 @@ func (m tuiModel) detailHelpPairs() []key.Hint {
 	}
 	if actionable && !ctx.draft {
 		pairs = append(pairs, key.Hint{Key: tuiKeybindCopilotReview, Desc: tuiHelpCopilot})
+	}
+	prev, next := m.detailNeighbors()
+	if prev >= 0 {
+		pairs = append(pairs, key.Hint{Key: tuiKeybindPrev, Desc: tuiHelpPrev})
+	}
+	if next >= 0 {
+		pairs = append(pairs, key.Hint{Key: tuiKeybindNext, Desc: tuiHelpNext})
 	}
 	pairs = append(pairs, key.Hint{Key: tuiKeybindQuit, Desc: tuiHelpDismiss})
 	return pairs

@@ -525,6 +525,7 @@ func diffTestModel(prs ...PullRequest) tuiModel {
 		m.diffQueue = append(m.diffQueue, makePRKey(pr))
 	}
 	m.diffQueueTotal = len(prs)
+	m.diffQueuePos = 1
 	return m
 }
 
@@ -624,7 +625,7 @@ func TestDiffKeysIgnoredWhileNextDiffLoads(t *testing.T) {
 		return jsonResponse(req, http.StatusBadRequest, `{}`), nil
 	})
 	h := newTUIHarness(t, m)
-	h.Key("n").Wait("Diffing " + second.Ref()).Assert(first.Ref() + " »")
+	h.Key("n").Wait("Diffing " + second.Ref()).Assert("[1/2] " + first.Ref() + " »")
 	h.Key("a").KeyEsc().Wait("All PRs ▾").AssertNot("Approving")
 }
 
@@ -674,7 +675,7 @@ func TestDiffFetchAcceptsHeadAheadOfUnchangedRow(t *testing.T) {
 	pr.HeadSHA = "old"
 	m := diffTestModel(pr)
 	key := m.diffKey
-	_ = m.openDiff(key)
+	_ = m.openDiff(key, 0)
 
 	m, _ = updateModel(t, m, diffFetchedMsg{
 		gen: m.diffGen, index: -1, key: key, headSHA: "new", requestedHeadSHA: "old",
@@ -980,11 +981,11 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 	}).rest
 	h := newTUIHarness(t, m)
 	h.Wait("[1/2] " + first.Ref()).Assert("+first change")
-	h.KeyRight().Wait("[2/2] " + second.Ref()).Assert("+second change").AssertNot("+first change")
+	h.KeyRight().Wait("[2/2] " + second.Ref()).Wait("+second change").WaitNot("+first change")
 	h.KeyLeft().Wait("Diffing " + first.Ref()).Assert("+second change")
 	release()
-	h.Wait("[1/2] " + first.Ref()).Assert("+reloaded first change")
-	h.KeyRight().Wait("[2/2] " + second.Ref()).Assert("+reloaded second change")
+	h.Wait("[1/2] " + first.Ref()).Wait("+reloaded first change")
+	h.KeyRight().Wait("[2/2] " + second.Ref()).Wait("+reloaded second change")
 }
 
 func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {

@@ -59,7 +59,7 @@ func TestResumeCachedBrowser(t *testing.T) {
 				m.diff = strings.Repeat("+ example line\n", 50)
 				m.diffQueue = []prKey{m.rowKeyAt(21)}
 				m.diffHistory = []prKey{m.rowKeyAt(17)}
-				m.diffQueueTotal = 3
+				m.diffQueuePos, m.diffQueueTotal = 2, 3
 				m.applyWindowSize(m.width, m.height)
 				m.diffView.SetYOffset(10)
 			case tuiViewList:
