@@ -170,7 +170,7 @@ func TestStackListIDsAndHitTesting(t *testing.T) {
 	require.Len(t, lines, 5)
 	labels := make([]string, len(lines))
 	for i, line := range lines {
-		labels[i] = line.label
+		labels[i] = line.label()
 	}
 	require.Equal(t, []string{"1", "1a", "1b", "1c", "2"}, labels)
 	require.Equal(t, "1 ", ansi.Strip(m.renderTuiIndexLabel("1", false)))
@@ -256,6 +256,26 @@ func TestStackTogglePersistsWithoutFetching(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, stacked.listLines(), 5)
 	require.Equal(t, wantKey, stacked.rowKeyAt(stacked.cursor))
+}
+
+func TestStackFooterUsesDisplayedGroupNumbers(t *testing.T) {
+	m := newStackTestModel(t) // displayed labels: 1, 1a, 1b, 1c, 2
+	m.height -= m.listViewport() - 2
+	for _, tc := range []struct {
+		offset int
+		want   string
+	}{
+		{0, "1-1/2 (50%)"},
+		{2, "1-1/2 (50%)"},
+		{3, "1-2/2 (100%)"},
+	} {
+		m.offset = tc.offset
+		require.Equal(t, tc.want, ansi.Strip(m.listStatus(m.listLines())))
+	}
+	m.toggleStack(m.rows[0].Item.StackKey)
+	require.Empty(t, m.listStatus(m.listLines()))
+	m.height--
+	require.Equal(t, "1-1/2 (50%)", ansi.Strip(m.listStatus(m.listLines())))
 }
 
 func TestStackViewportAccountsForHeader(t *testing.T) {
@@ -351,7 +371,7 @@ func TestStackFilteringKeepsHeadersOutOfActions(t *testing.T) {
 	m.resyncCursorAndOffset()
 	lines := m.listLines()
 	require.Len(t, lines, 2)
-	require.Equal(t, "1a", lines[1].label)
+	require.Equal(t, "1a", lines[1].label())
 	require.Equal(t, "╰─ ", lines[1].tree)
 	require.Equal(t, 1, m.currentPR().Number)
 	m.toggleStack(lines[0].stackKey)

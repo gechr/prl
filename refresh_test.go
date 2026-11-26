@@ -294,10 +294,10 @@ func TestFocusCatchupKeepsFooterQuiet(t *testing.T) {
 	m.lastRefreshAt = time.Now()
 	m.items[0].PR.statusFetchedAt = time.Now().Add(-2*time.Minute - time.Second)
 	m.rows[0].Item = m.items[0]
-	require.Empty(t, m.listStatus())
+	require.Empty(t, m.listStatus(m.listLines()))
 	m.lastRefreshAt = time.Now().Add(-4*time.Minute - time.Second)
 	m.refreshing = true
-	require.Empty(t, m.listStatus())
+	require.Empty(t, m.listStatus(m.listLines()))
 }
 
 func TestGraphQLQueriesPreserveConditionalResponses(t *testing.T) {

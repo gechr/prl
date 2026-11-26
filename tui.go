@@ -1962,7 +1962,7 @@ func (m tuiModel) viewList() tea.View {
 
 	for _, entry := range visible[start:end] {
 		idx := entry.row
-		index := m.renderTuiIndexWidth(entry.label, m.selected[m.rowKeyAt(idx)], indexWidth)
+		index := m.renderTuiIndexWidth(entry.label(), m.selected[m.rowKeyAt(idx)], indexWidth)
 		if entry.header != "" {
 			folded := m.collapsedStacks[entry.stackKey]
 			arrowStyle := styleStackArrow
@@ -2044,7 +2044,7 @@ func (m tuiModel) viewList() tea.View {
 		b.WriteString(nl)
 		help = m.listHelpBar().Render()
 	}
-	b.WriteString(m.appendRightStatus(help, m.listStatus()))
+	b.WriteString(m.appendRightStatus(help, m.listStatus(visible)))
 
 	v := tea.NewView(layout.ExpandTabs(b.String()))
 	v.AltScreen = true
@@ -3222,19 +3222,20 @@ func (m tuiModel) fitRightStatus(help, status string) (string, int) {
 }
 
 // listStatus is the list footer's right-aligned status: a flash message, or
-// the scroll position when rows overflow the viewport.
-func (m tuiModel) listStatus() string {
+// the range of displayed group numbers when the list overflows the viewport.
+func (m tuiModel) listStatus(lines []tuiListLine) string {
 	if m.flash.Msg != "" {
 		return m.renderFlashStatus()
 	}
-	total := len(m.listLines())
+	total := len(lines)
 	viewport := m.listViewport()
 	if total <= viewport {
 		return ""
 	}
-	start := min(m.offset, total)
-	end := min(m.offset+viewport, total)
-	return m.styles.statusOK.Render(scrollbar.Position(start, end, total))
+	start := min(m.offset, total-viewport)
+	end := start + viewport - 1
+	position := scrollbar.Position(lines[start].group-1, lines[end].group, lines[total-1].group)
+	return m.styles.statusOK.Render(position)
 }
 
 func (m tuiModel) helpBar(pairs []key.Hint) helpbar.Model {
@@ -3284,7 +3285,7 @@ func (m tuiModel) listHelpHintIndex(x, y int) (int, bool) {
 		return 0, false
 	}
 	if y-top == bar.Lines()-1 {
-		if _, kept := m.fitRightStatus(bar.Render(), m.listStatus()); x >= kept {
+		if _, kept := m.fitRightStatus(bar.Render(), m.listStatus(m.listLines())); x >= kept {
 			return 0, false
 		}
 	}

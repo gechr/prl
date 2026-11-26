@@ -14,10 +14,15 @@ const (
 
 type tuiListLine struct {
 	row      int
-	label    string
+	group    int
+	suffix   string
 	header   string
 	tree     string
 	stackKey prKey
+}
+
+func (l tuiListLine) label() string {
+	return strconv.Itoa(l.group) + l.suffix
 }
 
 func (m tuiModel) stacksEnabled() bool {
@@ -72,13 +77,12 @@ func (m tuiModel) listLines() []tuiListLine {
 		idx := visible[pos]
 		item := m.rows[idx].Item
 		group++
-		label := strconv.Itoa(group)
 		if !m.stacksEnabled() || item.StackKey == "" {
 			tree := ""
 			if indent {
 				tree = strings.Repeat(" ", stackTreeWidth)
 			}
-			lines = append(lines, tuiListLine{row: idx, label: label, tree: tree})
+			lines = append(lines, tuiListLine{row: idx, group: group, tree: tree})
 			pos++
 			continue
 		}
@@ -91,7 +95,7 @@ func (m tuiModel) listLines() []tuiListLine {
 				lines,
 				tuiListLine{
 					row:      idx,
-					label:    label,
+					group:    group,
 					header:   item.StackHeader,
 					tree:     activeIcons.StackCollapsed + "  ",
 					stackKey: item.StackKey,
@@ -104,7 +108,7 @@ func (m tuiModel) listLines() []tuiListLine {
 			lines,
 			tuiListLine{
 				row:      -1,
-				label:    label,
+				group:    group,
 				header:   item.StackHeader,
 				tree:     activeIcons.StackExpanded + "  ",
 				stackKey: item.StackKey,
@@ -119,7 +123,8 @@ func (m tuiModel) listLines() []tuiListLine {
 				lines,
 				tuiListLine{
 					row:      visible[i],
-					label:    label + stackLetter(i-pos),
+					group:    group,
+					suffix:   stackLetter(i - pos),
 					tree:     tree,
 					stackKey: item.StackKey,
 				},
@@ -142,12 +147,11 @@ func (m tuiModel) cursorLinePosition() int {
 // Numeric jumps use the displayed group number and target its top PR.
 func (m tuiModel) jumpIndices() []int {
 	var indices []int
-	last := ""
+	last := 0
 	for _, line := range m.listLines() {
-		group := strings.TrimRight(line.label, "abcdefghijklmnopqrstuvwxyz")
-		if line.row >= 0 && group != last {
+		if line.row >= 0 && line.group != last {
 			indices = append(indices, line.row)
-			last = group
+			last = line.group
 		}
 	}
 	return indices
