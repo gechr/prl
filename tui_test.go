@@ -14,13 +14,14 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"getsteep.dev/steep"
+	"getsteep.dev/steep/reel"
 	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
 	"github.com/gechr/primer/picker"
-	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/scrollwheel"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/x/ansi"
@@ -1509,95 +1510,44 @@ func TestTUIWheelFilterPassesNonWheelMessages(t *testing.T) {
 	require.Equal(t, key, got)
 }
 
-func TestScrollbarTrackClickJumpsDiffViewport(t *testing.T) {
-	pr := testReviewPullRequest()
-	diffLines := make([]string, 60)
-	for i := range diffLines {
-		diffLines[i] = fmt.Sprintf("line %d", i)
-	}
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diffKey:   makePRKey(pr),
-		diffLines: diffLines,
-		diffView:  newScrollView(),
-		view:      tuiViewDiff,
-		height:    14,
-		width:     80,
-		styles:    newTuiStyles(),
-	}
-	m.syncDiffView()
+func TestDiffScrollbar(t *testing.T) {
+	m := diffTestModel(testReviewPullRequest())
+	const first, last = "+first line", "+last line"
+	m.diff = first + nl + strings.Repeat(" context\n", 60) + last
+	m.applyWindowSize(m.width, m.height)
 
-	hitbox, ok := m.scrollbarHitbox(scrollbarTargetDiff)
-	require.True(t, ok)
-
-	require.True(t, m.handleScrollbarPress(tea.Mouse{
-		X:      hitbox.X,
-		Y:      hitbox.Y + hitbox.Height - 1,
-		Button: tea.MouseLeft,
-	}))
-
-	require.True(t, m.scrollDrag.Active)
-	require.Equal(t, scrollbarTargetDiff, m.scrollDrag.target)
-	require.Positive(t, m.diffView.YOffset())
-	require.GreaterOrEqual(t, m.diffView.ScrollPercent(), 0.9)
+	testViewportScrollbar(t, m, first, last)
 }
 
-func TestScrollbarThumbDragMovesDiffViewport(t *testing.T) {
+func TestDetailScrollbar(t *testing.T) {
 	pr := testReviewPullRequest()
-	diffLines := make([]string, 60)
-	for i := range diffLines {
-		diffLines[i] = fmt.Sprintf("line %d", i)
-	}
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diffKey:   makePRKey(pr),
-		diffLines: diffLines,
-		diffView:  newScrollView(),
-		view:      tuiViewDiff,
-		height:    14,
-		width:     80,
-		styles:    newTuiStyles(),
-	}
-	m.syncDiffView()
-	m.diffView.SetYOffset(m.diffView.Height())
+	m := approvalTestModel("", pr)
+	m.view = tuiViewDetail
+	m.detailKey = makePRKey(pr)
+	m.detailView = newScrollView()
+	m.resolver = &AuthorResolver{}
+	const last = "End of description."
+	m.detail.Body = strings.Repeat("A paragraph.\n\n", 30) + last
+	m.detailLines = m.renderDetailContent()
+	m.syncDetailView()
 
-	hitbox, ok := m.scrollbarHitbox(scrollbarTargetDiff)
-	require.True(t, ok)
-	thumbPos, _ := scrollbar.ThumbMetrics(
-		hitbox.Height,
-		hitbox.TotalLines,
-		m.diffView.ScrollPercent(),
-	)
-	pressY := hitbox.Y + thumbPos
+	testViewportScrollbar(t, m, "Overview", last)
+}
 
-	require.True(t, m.handleScrollbarPress(tea.Mouse{
-		X:      hitbox.X,
-		Y:      pressY,
-		Button: tea.MouseLeft,
-	}))
+func testViewportScrollbar(t *testing.T, m tuiModel, first, last string) {
+	t.Helper()
+	h := steep.NewHarness(t, m, steep.WithWindowSize(m.width, m.height))
+	h.Wait(first).AssertNot(last)
 
-	initialOffset := m.diffView.YOffset()
-	require.True(t, m.handleScrollbarMotion(tea.Mouse{
-		X:      hitbox.X,
-		Y:      hitbox.Y + hitbox.Height - 1,
-		Button: tea.MouseLeft,
-	}))
+	top := h.Locate(reel.Contains("█"))
+	bottom := h.Locate(reel.Nth(-1, reel.Contains("┃")))
+	bottom.LeftClick().Wait(last).AssertNot(first)
+	bottom.LeftDrag(top).Wait(first).AssertNot(last)
 
-	require.Greater(t, m.diffView.YOffset(), initialOffset)
-	require.GreaterOrEqual(t, m.diffView.ScrollPercent(), 0.9)
-
-	model, cmd := m.Update(tea.MouseReleaseMsg(tea.Mouse{
-		X:      hitbox.X,
-		Y:      hitbox.Y + hitbox.Height - 1,
-		Button: tea.MouseLeft,
-	}))
-	require.Nil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.scrollDrag.Active)
+	// After release, a drag in the text must leave the viewport at the top.
+	// Down then advances exactly one row, as shown by the footer's range.
+	top.Offset(-1, 0).LeftDrag(bottom.Offset(-1, 0))
+	h.KeyDown().Wait(" 2-").AssertNot(first)
 }
 
 func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
