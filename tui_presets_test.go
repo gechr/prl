@@ -322,7 +322,7 @@ func TestRowHoverHighlightsWithoutMovingCursor(t *testing.T) {
 		t.Run(fmt.Sprint(light), func(t *testing.T) {
 			initPalette(light)
 			t.Cleanup(func() { initPalette(false) })
-			h := newTUIHarness(t, helpClickTestModel(3))
+			h := newTUIHarness(t, numberedListTestModel(3))
 			cursor := h.Locate(reel.Contains("❯ 1"))
 			row := h.Locate(reel.Contains("  2  ")).Offset(2, 0)
 			base, cursorStyle := cellStyle(h, row), cellStyle(h, cursor.Offset(2, 0))
@@ -341,7 +341,7 @@ func TestRowHoverHighlightsWithoutMovingCursor(t *testing.T) {
 }
 
 func TestRowHoverFollowsTheRowUnderThePointer(t *testing.T) {
-	m := helpClickTestModel(30)
+	m := numberedListTestModel(30)
 	m.height = 12
 	h := newTUIHarness(t, m)
 	row := h.Locate(reel.Contains("  2  ")).Offset(2, 0)

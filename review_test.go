@@ -6,9 +6,11 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
+	"getsteep.dev/steep/reel"
 	xos "github.com/gechr/x/os"
 	"github.com/gechr/x/shell"
 	"github.com/stretchr/testify/require"
@@ -399,42 +401,42 @@ func TestBuildAIReviewAppleScriptUnsupported(t *testing.T) {
 	require.EqualError(t, err, `unsupported terminal ""`)
 }
 
-func TestPrepareAIReviewConfirmUsesYesNo(t *testing.T) {
-	pr := testReviewPullRequest()
-	m := tuiModel{}
-
-	m = m.prepareAIReviewConfirm(pr, 0)
-
-	require.Equal(t, "review", m.confirmAction)
-	require.NotNil(t, m.confirmCmdFn)
-	require.True(t, m.confirmHasInput)
-	require.Equal(t, "Prompt", m.confirmInputLabel)
-	require.Len(t, m.confirmOptions, 4)
-	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
-	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
-	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
-	require.Equal(t, reviewYoloOptionLabel, m.confirmOptions[3].label)
-	require.Equal(
-		t,
-		reviewYoloNo,
-		m.selectedConfirmOptionValue(reviewOptionRow(m.confirmOptions, reviewYoloOptionLabel)),
-	)
-	require.Equal(t, string(defaultReviewProvider), m.selectedConfirmOptionValue(0))
-	require.Equal(
-		t,
-		defaultReviewModel(nil, defaultReviewProvider),
-		m.selectedConfirmOptionValue(1),
-	)
-	require.Equal(
-		t,
-		defaultReviewEffort(
-			nil,
-			defaultReviewProvider,
-			defaultReviewModel(nil, defaultReviewProvider),
-		),
-		m.selectedConfirmOptionValue(2),
-	)
-	require.Equal(t, reviewPrompt(pr, nil, defaultReviewProvider), m.confirmInputValue)
+func TestReviewDialogDefaults(t *testing.T) {
+	for _, provider := range []reviewProvider{defaultReviewProvider, reviewProviderGemini} {
+		t.Run(string(provider), func(t *testing.T) {
+			pr := testReviewPullRequest()
+			m := listTUIModel(pr)
+			m.width, m.height = 120, 40
+			if provider == reviewProviderGemini {
+				m.cfg.TUI.Review.Default = TUIReviewDefaultConfig{
+					Provider: string(provider), Model: geminiReviewModel31Pro,
+				}
+			}
+			m = m.prepareAIReviewConfirm(pr, 0)
+			require.NotNil(t, m.confirmCmdFn)
+			require.Equal(t, reviewPrompt(pr, m.cfg, provider), m.confirmInputValue)
+			m.syncConfirmDialog()
+			h := newTUIHarness(t, m)
+			model := configuredReviewModel(m.cfg, provider)
+			rows := []struct{ label, value string }{
+				{"Provider", string(provider)},
+				{"Model", model},
+				{"Effort", configuredReviewEffort(m.cfg, provider, model)},
+				{"YOLO", "no"},
+			}
+			title := h.Locate(reel.Contains("Launch AI review for " + pr.Ref() + "?"))
+			lastY := title.Y
+			for _, row := range rows {
+				want := regexp.QuoteMeta(row.label) + " +‹ " + regexp.QuoteMeta(row.value) + " ›"
+				at := h.Locate(reel.Matches(regexp.MustCompile(want)))
+				require.Greater(t, at.Y, lastY)
+				lastY = at.Y
+			}
+			require.Greater(t, h.Locate(reel.Contains("Prompt (optional)")).Y, lastY)
+			h.Key("tab").Key("tab").Key("tab").KeyRight().Wait("‹ yes ›")
+			h.KeyLeft().Wait("‹ no ›")
+		})
+	}
 }
 
 func TestClaudeReviewDefaultsUseOpusHighAndIncludeFable(t *testing.T) {
@@ -671,30 +673,6 @@ func TestGeminiReviewHasEffortOptions(t *testing.T) {
 	require.True(t, reviewProviderHasEffort(nil, reviewProviderGemini, geminiReviewModel31Pro))
 	require.True(t, reviewProviderHasEffort(nil, reviewProviderClaude, claudeReviewModelSonnet))
 	require.True(t, reviewProviderHasEffort(nil, reviewProviderCodex, codexReviewModel6Sol))
-}
-
-func TestGeminiPrepareAIReviewConfirmIncludesEffort(t *testing.T) {
-	pr := testReviewPullRequest()
-	cfg := &Config{
-		TUI: TUIConfig{
-			Review: TUIReviewConfig{
-				Default: TUIReviewDefaultConfig{
-					Provider: string(reviewProviderGemini),
-					Model:    geminiReviewModel31Pro,
-				},
-			},
-		},
-	}
-	m := tuiModel{cfg: cfg}
-
-	m = m.prepareAIReviewConfirm(pr, 0)
-
-	require.Len(t, m.confirmOptions, 4)
-	require.Equal(t, reviewProviderOptionLabel, m.confirmOptions[0].label)
-	require.Equal(t, reviewModelOptionLabel, m.confirmOptions[1].label)
-	require.Equal(t, reviewEffortOptionLabel, m.confirmOptions[2].label)
-	require.Equal(t, reviewYoloOptionLabel, m.confirmOptions[3].label)
-	require.Len(t, m.confirmOptionValues, 4)
 }
 
 func TestReviewPromptUsesConfigTemplate(t *testing.T) {

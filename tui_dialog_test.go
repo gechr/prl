@@ -7,11 +7,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	lg "charm.land/lipgloss/v2"
 	"getsteep.dev/steep"
 	"getsteep.dev/steep/reel"
+	"getsteep.dev/steep/reel/vt"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/dialog"
-	"github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,56 +96,40 @@ func TestNerdConfirmDialogsRenderPillCapsWithoutShifting(t *testing.T) {
 	previous := activeIcons
 	useIcons(iconsFor(IconNerd))
 	t.Cleanup(func() { useIcons(previous) })
-
-	bm := openPlainConfirm(t, plainConfirmModel())
-	activeRow := strings.Split(bm.dialogs.Top().Content(bm.width), nl)[2]
-	require.Equal(t, 1, strings.Count(activeRow, activeIcons.PillLeft))
-	require.Equal(t, 1, strings.Count(activeRow, activeIcons.PillRight))
-
-	model, cmd := bm.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	dimRow := strings.Split(bm.dialogs.Top().Content(bm.width), nl)[2]
-	require.Equal(t, lg.Width(activeRow), lg.Width(dimRow))
-
-	info := tuiModel{
-		confirmAction: tuiActionInfo,
-		confirmPrompt: "Approve failed",
-		styles:        newTuiStyles(),
-		width:         80,
-		height:        24,
+	assertCaps := func(t *testing.T, h *steep.Harness, label string) {
+		t.Helper()
+		at := h.Locate(
+			reel.Contains(activeIcons.PillLeft + " " + label + " " + activeIcons.PillRight),
+		)
+		line := strings.Split(h.View(), nl)[at.Y]
+		require.Equal(t, 1, strings.Count(line, activeIcons.PillLeft))
+		require.Equal(t, 1, strings.Count(line, activeIcons.PillRight))
 	}
-	info.syncConfirmDialog()
-	infoRow := strings.Split(info.dialogs.Top().Content(info.width), nl)[2]
-	require.Equal(t, 1, strings.Count(infoRow, activeIcons.PillLeft))
-	require.Equal(t, 1, strings.Count(infoRow, activeIcons.PillRight))
-}
-
-func TestInfoConfirmUsesDialog(t *testing.T) {
-	m := tuiModel{
-		confirmAction: tuiActionInfo,
-		confirmPrompt: "Approve failed",
-		styles:        newTuiStyles(),
-		width:         80,
-		height:        24,
-	}
-	require.True(t, m.confirmUsesDialog())
-
-	m.syncConfirmDialog()
-	require.True(t, m.dialogs.Active())
-	_, ok := m.dialogs.Top().(*dialog.Info)
-	require.True(t, ok)
-	require.Equal(t, 1, strings.Count(ansi.Strip(m.View().Content), "Approve failed"))
+	t.Run("confirmation", func(t *testing.T) {
+		h := newTUIHarness(t, openPlainConfirm(t, plainConfirmModel()))
+		assertCaps(t, h, "Yes")
+		yes, no := h.Locate(reel.Contains("Yes")), h.Locate(reel.Contains("No"))
+		h.KeyLeft()
+		assertCaps(t, h, "No")
+		require.Equal(t, yes.X, h.Locate(reel.Contains("Yes")).X)
+		require.Equal(t, no.X, h.Locate(reel.Contains("No")).X)
+	})
+	t.Run("message", func(t *testing.T) {
+		m := plainConfirmModel()
+		m.confirmAction, m.confirmCmd = tuiActionInfo, nil
+		assertCaps(t, newTUIHarness(t, openPlainConfirm(t, m)), "OK")
+	})
 }
 
 func TestInfoConfirmDialogQDismisses(t *testing.T) {
-	m := plainConfirmModel()
-	m.confirmAction = tuiActionInfo
-	m.confirmPrompt = "Approve failed"
+	m := listTUIModel(approvalTestPR(1))
+	m.confirmAction, m.confirmPrompt = tuiActionInfo, "Approve failed"
 	m.syncConfirmDialog()
+	require.IsType(t, &dialog.Info{}, m.dialogs.Top())
 	h := newTUIHarness(t, m)
-	h.Wait(m.confirmPrompt).Key("q").WaitNot(m.confirmPrompt).Assert("Options")
+	screen := h.Wait(m.confirmPrompt).Assert("OK").View()
+	require.Equal(t, 1, strings.Count(screen, m.confirmPrompt))
+	h.Key("q").WaitNot(m.confirmPrompt).Assert("Options")
 }
 
 func TestInputConfirmUsesFormDialog(t *testing.T) {
@@ -164,23 +148,18 @@ func TestInputConfirmDialogSeparatesAndAccentsField(t *testing.T) {
 	m.confirmHasInput = true
 	m.confirmCmd = nil
 	m.confirmCmdFn = func(confirmSubmission) tea.Cmd { return nil }
-	m.syncConfirmDialog()
-
-	d, ok := m.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	body := d.Model().Body()
-	lines := strings.Split(ansi.Strip(body), nl)
-	require.Equal(t, "Approve owner/repo#42?", strings.TrimSpace(lines[0]))
-	require.Empty(t, strings.TrimSpace(lines[1]))
-	require.Equal(
-		t,
-		"╭ Comment (optional) "+strings.Repeat("─", 48)+"╮",
-		lines[2],
-	)
-	// The sole field is focused, so its title and border carry the bold accent.
-	boldAccent := lg.NewStyle().Foreground(colorAccent).Bold(true)
-	require.Equal(t, 1, strings.Count(body, boldAccent.Render(" Comment (optional) ")))
-	require.Equal(t, 1, strings.Count(body, boldAccent.Render("╭")))
+	h := newTUIHarness(t, openPlainConfirm(t, m))
+	prompt := h.Locate(reel.Contains(m.confirmPrompt))
+	top := "╭ Comment (optional) " + strings.Repeat("─", 48) + "╮"
+	border := h.Locate(reel.Contains(top))
+	require.Equal(t, prompt.Y+2, border.Y)
+	gap := strings.Split(h.View(), nl)[prompt.Y+1]
+	require.Empty(t, strings.TrimSpace(ansi.Cut(gap, border.X, border.X+ansi.StringWidth(top))))
+	for _, at := range []steep.Location{border, border.Offset(2, 0)} {
+		style := cellStyle(h, at)
+		require.NotZero(t, style.Attrs&vt.AttrBold)
+		requireScreenColor(t, style.Fg, colorAccent)
+	}
 }
 
 func TestInputConfirmDialogSubmitsTrimmedText(t *testing.T) {

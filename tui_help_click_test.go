@@ -10,17 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func helpClickTestModel(count int) tuiModel {
-	prs := make([]PullRequest, count)
-	for i := range prs {
-		prs[i] = approvalTestPR(i + 1)
-	}
-	m := approvalTestModel("", prs...)
-	m.cfg = &Config{}
-	m.header = "PR"
-	return m
-}
-
 // footerLines returns the plain help lines and the screen row of the first.
 func footerLines(m tuiModel) ([]string, int) {
 	top := m.listSeparatorY() + 1
@@ -34,7 +23,7 @@ func TestHelpHintClickPressesItsKey(t *testing.T) {
 		{"? " + tuiHelpHelp, "Press any key to dismiss"},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
-			m := helpClickTestModel(3)
+			m := numberedListTestModel(3)
 			m.width, m.height = 120, 35
 			h := newTUIHarness(t, m)
 			for _, offset := range []int{0, ansi.StringWidth(tc.label) - 1} {
@@ -48,7 +37,7 @@ func TestHelpHintClickPressesItsKey(t *testing.T) {
 func TestHelpHintsDroppedForStatusAreNotButtons(t *testing.T) {
 	// 30 rows overflow the viewport, so the footer shows a scroll position
 	// that can push trailing hints off the help line.
-	m := helpClickTestModel(30)
+	m := numberedListTestModel(30)
 	m.height = 12
 	dropped := 0
 	// 47, 72 and 140 drop a hint for the status, 80 and 120 do not.
@@ -88,7 +77,7 @@ func helpHintText(m tuiModel, hint key.Hint) string {
 // Status text that happens to start where a dropped hint sat must not act as
 // that hint, even when it starts with the hint's key.
 func TestHelpStatusCannotImpersonateDroppedHint(t *testing.T) {
-	m := helpClickTestModel(30)
+	m := numberedListTestModel(30)
 	m.width, m.height = 80, 20
 	plain := strings.Split(ansi.Strip(m.helpBar(m.listHelpPairs()).Render()), nl)
 	last := plain[len(plain)-1]
@@ -96,19 +85,14 @@ func TestHelpStatusCannotImpersonateDroppedHint(t *testing.T) {
 	require.True(t, ok, "quit is the last hint")
 	x := ansi.StringWidth(before)
 	m.flash.Msg = "q" + strings.Repeat("x", m.width-2-x)
-	y := m.listSeparatorY() + len(plain)
-	require.Equal(t, "q", ansi.Cut(screenLine(m, y), x, x+1), "status sits where quit was")
-	_, hit := m.listHelpHintAt(x, y)
-	require.False(t, hit)
-}
-
-// screenLine returns the plain text of screen row y.
-func screenLine(m tuiModel, y int) string {
-	return strings.Split(ansi.Strip(m.View().Content), nl)[y]
+	h := newTUIHarness(t, m)
+	status := h.Locate(reel.Contains(m.flash.Msg))
+	require.Equal(t, x, status.X, "status sits where quit was")
+	status.LeftClick().KeyDown().Wait("❯ 2 ")
 }
 
 func TestHelpHintHoverHighlightsTheHint(t *testing.T) {
-	h := newTUIHarness(t, helpClickTestModel(3))
+	h := newTUIHarness(t, numberedListTestModel(3))
 	hint := h.Locate(reel.Contains("? "+tuiHelpHelp)).Offset(2, 0)
 	base := cellStyle(h, hint)
 	text := h.View()

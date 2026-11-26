@@ -102,7 +102,11 @@ func TestCopilotReviewShortcut(t *testing.T) {
 
 func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
 	h := newTUIHarness(t, listTUIModel(approvalTestPR(1), approvalTestPR(2)))
-	h.Key("shift+down").Wait("❯ 2 ").Key("ctrl+r").Wait("Request Copilot review for 2 PRs?")
+	h.Key("shift+down").
+		Wait("❯ 2 ").
+		Key("ctrl+r").
+		Wait("Request Copilot review for 2 PRs?").
+		Assert([]string{"Yes", "No"})
 	h.KeyEsc().WaitNot("Request Copilot review").Assert("❯ 2 ")
 }
 
@@ -394,7 +398,7 @@ func TestListRangeSelection(t *testing.T) {
 		{"space", 1, "space", "2", []string{"2"}, "1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := helpClickTestModel(3)
+			m := numberedListTestModel(3)
 			m.cursor = tc.start
 			h := newTUIHarness(t, m)
 			h.Key(tc.key).Wait("❯ " + tc.cursor + " ")
@@ -418,7 +422,7 @@ func waitListSelection(t *testing.T, h *steep.Harness, label string, selected bo
 }
 
 func TestListRangeSelectionSurvivesRepeatedAndReversedMovement(t *testing.T) {
-	h := newTUIHarness(t, helpClickTestModel(2))
+	h := newTUIHarness(t, numberedListTestModel(2))
 	h.Key("shift+down").Wait("❯ 2 ")
 	waitListSelection(t, h, "1", true)
 	waitListSelection(t, h, "2", true)
@@ -431,7 +435,7 @@ func TestListRangeSelectionSurvivesRepeatedAndReversedMovement(t *testing.T) {
 }
 
 func TestListNumericJumps(t *testing.T) {
-	h := newTUIHarness(t, helpClickTestModel(15))
+	h := newTUIHarness(t, numberedListTestModel(15))
 	h.Key("2").Wait("❯ 2 ").Assert("  1 ")
 	h.Key("1").Key("5").Wait("❯ 15 ")
 	h.Key("1").Wait("❯ 1 ")
@@ -1184,7 +1188,7 @@ func testViewportScrollbar(t *testing.T, m tuiModel, first, last string) {
 }
 
 func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
-	m := plainConfirmModel()
+	m := listTUIModel(approvalTestPR(1))
 	m.confirmAction = tuiActionInfo
 	m.confirmPrompt = "First message\n" + strings.Repeat("Message\n", 50) + "Last message"
 	m.syncConfirmDialog()

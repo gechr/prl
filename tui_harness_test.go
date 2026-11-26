@@ -43,6 +43,14 @@ func waitCellStyle(
 	}, steep.DefaultTimeout, 10*time.Millisecond, "style at (%d, %d)", at.X, at.Y)
 }
 
+func numberedListTestModel(count int) tuiModel {
+	prs := make([]PullRequest, count)
+	for i := range prs {
+		prs[i] = approvalTestPR(i + 1)
+	}
+	return listTUIModel(prs...)
+}
+
 func listTUIModel(prs ...PullRequest) tuiModel {
 	m := approvalTestModel("", prs...)
 	m.cfg = &Config{}
