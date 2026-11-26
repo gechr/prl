@@ -337,22 +337,25 @@ type actionMsg struct {
 
 // detailFetchedMsg is sent when PR detail has been fetched.
 type detailFetchedMsg struct {
-	id     int
-	from   fx.Direction
-	index  int
-	key    prKey // stable lookup after refresh
+	reviewStamp
+
+	key    prKey
 	detail PRDetail
 	err    error
 }
 
 // diffFetchedMsg is sent when a diff has been fetched.
 type diffFetchedMsg struct {
-	gen              int // diff session generation; stale replies are dropped
 	index            int
 	key              prKey // stable lookup after refresh
 	diff             string
 	headSHA          string
+	visited          bool
+	fetchedAt        time.Time
 	requestedHeadSHA string // head known when the fetch started
+	baseRef          string
+	headGen          int
+	updatedAt        time.Time
 	err              error
 }
 
@@ -459,6 +462,10 @@ type tuiModel struct {
 	detailView           viewport.Model
 	detailRefreshID      int
 	detailLoading        bool
+	detailAwaitKey       prKey
+	detailAwaitFrom      fx.Direction
+	detailCache          map[prKey]detailFetchedMsg
+	detailInFlight       prKeys
 	flash                flash.State
 	actions              *ActionRunner
 	width                int
@@ -485,6 +492,7 @@ type tuiModel struct {
 	// Successful mutations awaiting a targeted read when review ends.
 	changedPRs             prKeys
 	prChangeGen            map[prKey]int
+	prEventGen             map[prKey]int
 	changedRefreshInFlight bool
 
 	// Optimistic approvals: sent but not yet confirmed. approvalGen bumps on
@@ -506,9 +514,10 @@ type tuiModel struct {
 	diffLoading    bool
 	diffAwaitKey   prKey                    // diff the view is waiting to show
 	diffAwaitFrom  fx.Direction             // slide direction for that request
-	diffGen        int                      // bumps per diff session; drops stale fetches
-	diffPrefetch   map[prKey]diffFetchedMsg // fetched diffs for upcoming queue entries
-	diffInFlight   prKeys                   // diff fetches not yet returned
+	diffCache      map[prKey]diffFetchedMsg // completed foreground and prefetched diffs
+	diffHeadGen    map[prKey]int
+	diffStatus     map[prKey]reviewStamp
+	diffInFlight   prKeys // diff fetches not yet returned
 
 	// Empty overlay dismissed (esc to dismiss, then esc again to quit).
 	dismissedEmpty bool
@@ -542,15 +551,18 @@ type tuiModel struct {
 	scrollDrag         scrollbarDragState
 
 	// Background auto-refresh.
-	eventStreams    *eventStreams
-	eventTargets    eventTargets
-	eventAttachGen  int
-	eventsPending   bool
-	autoRefresh     bool
-	refreshing      bool      // true while a background refresh is in-flight
-	lastInteraction time.Time // tracks last user keypress for idle-based refresh decay
-	lastRefreshAt   time.Time // last accepted membership check
-	confirmed       confirmedPRList
+	eventStreams           *eventStreams
+	eventTargets           eventTargets
+	eventAttachGen         int
+	pendingEvents          prEvents
+	nextEventListRead      time.Time
+	eventListReadScheduled bool
+	streamFailed           bool
+	autoRefresh            bool
+	refreshing             bool      // true while a background refresh is in-flight
+	lastInteraction        time.Time // tracks last user keypress for idle-based refresh decay
+	lastRefreshAt          time.Time // last accepted membership check
+	confirmed              confirmedPRList
 	// showRefreshStatus is true when the in-flight refresh was triggered by
 	// applying options and should show a temporary "Refreshing..." status.
 	showRefreshStatus  bool
@@ -856,54 +868,20 @@ func (m tuiModel) scheduleDetailRefresh() tea.Cmd {
 	})
 }
 
-// refetchDetail re-fetches the currently displayed detail view (e.g. after
-// an action like update-branch changes PR state).
-func (m *tuiModel) refetchDetail() tea.Cmd {
-	idx := m.resolveIndex(m.detailKey, -1)
-	if idx < 0 || m.detailLoading {
-		return nil
-	}
-	return m.fetchDetailCmd(idx, 0)
-}
-
-func (m *tuiModel) openDetail(idx int, from fx.Direction) tea.Cmd {
-	m.stopDetailRefresh(false)
-	m.detailLoading = true
-	flashPending(m, "Fetching", &m.rows[idx].Item.PR)
-	return m.fetchDetailCmd(idx, from)
-}
-
-func (m *tuiModel) fetchDetailCmd(idx int, from fx.Direction) tea.Cmd {
-	pr := m.rows[idx].Item.PR
-	id, actions := m.detailRefreshID, m.actions
-	return m.trackRead(func() tea.Msg {
-		owner, repo := prOwnerRepo(pr)
-		detail, err := actions.fetchPRDetail(owner, repo, pr.Number, pr.NodeID)
-		return detailFetchedMsg{
-			id:     id,
-			from:   from,
-			index:  idx,
-			key:    makePRKey(pr),
-			detail: detail,
-			err:    err,
-		}
-	})
-}
-
 func (m tuiModel) isStaleDetailRefresh(id int, key prKey) bool {
 	return id != m.detailRefreshID || key != m.detailKey || m.view != tuiViewDetail || m.diffLoading
 }
 
 func (m *tuiModel) stopDetailRefresh(clearKey bool) {
 	m.detailRefreshID++
+	m.detailAwaitKey, m.detailAwaitFrom = "", 0
 	if clearKey {
 		m.detailLoading = false
 		m.detailKey = ""
 	}
 }
 
-// clearDiffState resets the diff queue and starts a new diff session, so
-// fetches still in flight from the old one are dropped.
+// clearDiffState ends navigation. In-flight reads can still populate the cache.
 func (m *tuiModel) clearDiffState() {
 	m.diffQueue = nil
 	m.diffHistory = nil
@@ -913,9 +891,6 @@ func (m *tuiModel) clearDiffState() {
 	m.diffLoading = false
 	m.diffKey = ""
 	m.diffAwaitKey = ""
-	m.diffGen++
-	m.diffPrefetch = nil
-	m.diffInFlight = nil
 }
 
 func (m *tuiModel) startRefresh(showStatus bool) tea.Cmd {
@@ -1286,41 +1261,15 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prStatusMsg:
 		m.applyPRStatus(msg)
+		if m.view == tuiViewDiff && msg.key == m.diffKey && !m.diffLoading && msg.err == nil {
+			cmd := m.refreshCachedDiff(msg.key)
+			return m, cmd
+		}
 		return m, nil
 
 	case detailFetchedMsg:
-		if msg.id != m.detailRefreshID {
-			return m, nil
-		}
-		m.detailLoading = false
-		if msg.err != nil {
-			return m, tea.Batch(
-				flashResult(&m, "Detail failed:", fmt.Sprintf("%v", msg.err), "", true),
-				m.scheduleDetailRefresh(),
-			)
-		}
-		idx := m.resolveIndex(msg.key, msg.index)
-		if idx < 0 {
-			m.flash.Msg = ""
-			return m, m.scheduleDetailRefresh()
-		}
-		m.refreshTerminalSize()
-		var slide tea.Cmd
-		if msg.from != 0 && m.view == tuiViewDetail && m.detailKey != msg.key {
-			slide = m.startPRSlide(msg.from, m.detailView, m.detailRenderLines)
-			m.cursor = idx
-			m.offset = m.scrolledOffset()
-		}
-		m.applyDetailMergeStatus(msg.key, msg.detail.MergeStatus)
-		m.detailKey = msg.key
-		m.detail = msg.detail
-		m.contentRevision++
-		m.detailLines = m.renderDetailContent()
-		m.syncDetailView()
-		m.detailView.GotoTop()
-		m.view = tuiViewDetail
-		m.flash.Msg = ""
-		return m, tea.Batch(slide, m.scheduleDetailRefresh())
+		cmd := m.handleDetailFetched(msg)
+		return m, cmd
 
 	case detailRefreshTickMsg:
 		if m.isStaleDetailRefresh(msg.id, msg.key) {
@@ -1352,6 +1301,10 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.scheduleDetailRefresh()
 		}
 		m.detail.Checks = msg.checks
+		if cached, ok := m.detailCache[msg.key]; ok {
+			cached.detail.Checks = msg.checks
+			m.detailCache[msg.key] = cached
+		}
 		m.contentRevision++
 		m.detailLines = m.renderDetailContent()
 		m.syncDetailView()
@@ -1416,11 +1369,16 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case eventListReadTickMsg:
+		m.eventListReadScheduled = false
+		return m, nil
+
 	case prEventsMsg:
-		m.eventsPending = true
-		return m, m.eventStreams.wait
+		cmd := m.queueReviewEvents()
+		return m, tea.Batch(cmd, m.eventStreams.wait)
 
 	case eventStreamFailureMsg:
+		m.streamFailed = true
 		if m.autoRefresh {
 			return m, m.eventStreams.wait
 		}
@@ -1428,7 +1386,8 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			"Event stream unavailable for a PR (press R for periodic refresh)", true))
 
 	case changedPRsMsg:
-		return m, m.applyChangedPRs(msg)
+		cmd := m.applyChangedPRs(msg)
+		return m, tea.Batch(cmd, m.refreshOpenReview())
 
 	case tea.FocusMsg:
 		m.touchInteraction()
@@ -1489,7 +1448,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		header, rows, widths := m.rerender()
 		m = m.mergeRefresh(rows)
 		m.header, m.colWidths = header, widths
-		return m, tea.Batch(m.rescheduleRefresh(), m.startHeadValidation(msg.items))
+		return m, tea.Batch(m.rescheduleRefresh(), m.startHeadValidation(msg.items), m.refreshOpenReview())
 
 	case headValidationMsg:
 		if msg.queryGen != m.queryGen {
@@ -2124,7 +2083,11 @@ func (m tuiModel) viewDiff() tea.View {
 			headerLine += styleDim.Render(dotSeparator) + xansi.Force().Hyperlink(author.URL,
 				m.p.authorStyle(author).Render(author.Display))
 		}
-		header = m.alignHeader(headerLine, m.renderPRStatusLine(pr))
+		status := m.renderPRStatusLine(pr)
+		if m.reviewOutdated() {
+			status = "Diff outdated"
+		}
+		header = m.alignHeader(headerLine, status)
 	}
 	return m.renderFullScreenView(
 		header,

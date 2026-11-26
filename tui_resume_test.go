@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,7 +88,14 @@ func TestResumeCachedBrowser(t *testing.T) {
 			require.Equal(t, m.cursor, restored.cursor)
 			require.Equal(t, m.offset, restored.offset)
 			require.Equal(t, m.selected, restored.selected)
-			require.Equal(t, m.View().Content, restored.View().Content)
+			before, after := m.View().Content, restored.View().Content
+			if tc.view == tuiViewDiff {
+				// The restored header marks the saved patch outdated until its live read.
+				require.True(t, restored.reviewOutdated())
+				_, before, _ = strings.Cut(before, nl)
+				_, after, _ = strings.Cut(after, nl)
+			}
+			require.Equal(t, before, after)
 			require.Equal(t, m.diffQueue, restored.diffQueue)
 			require.Equal(t, m.diffHistory, restored.diffHistory)
 			require.Equal(t, m.detailView.YOffset(), restored.detailView.YOffset())
@@ -211,4 +219,86 @@ func TestPruneSessionsPreservesLiveBrowser(t *testing.T) {
 	require.NoError(t, session.lock.Close())
 	pruneSessions(root)
 	require.NoDirExists(t, session.dir)
+}
+
+func TestResumedReviewWaitsForLiveContent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		view tuiView
+	}{
+		{"diff", tuiViewDiff}, {"detail", tuiViewDetail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := approvalTestPR(1)
+			pr.NodeID = ""
+			key := makePRKey(pr)
+			m := resumeTestModel([]PullRequest{pr})
+			m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(req.URL.Path, "/reviews") || strings.HasSuffix(req.URL.Path, "/files") {
+					return jsonResponse(req, http.StatusOK, "[]"), nil
+				}
+				return jsonResponse(req, http.StatusOK, `{"head":{"sha":"current"},"body":"Live description"}`), nil
+			})
+			m.actions.diffClient = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+				return jsonResponse(req, http.StatusOK, "+live patch"), nil
+			}).rest
+			saved := savedSession{
+				Active: key, View: tc.view,
+				Diff: "+saved patch", Detail: PRDetail{Body: "Saved description"},
+			}
+			saved.restore(&m)
+			require.True(t, m.reviewOutdated())
+			start := m.Init()
+			require.NotNil(t, start)
+			for _, binding := range []string{tuiKeybindApproveNoConfirm, tuiKeybindMerge} {
+				m, _ = pressKey(t, m, binding)
+				require.Equal(t, tc.view, m.view)
+				require.Zero(t, m.actionsInFlight)
+				require.Empty(t, m.confirmAction)
+				require.Equal(t, 1, m.readsInFlight)
+			}
+			m, _ = updateModel(t, m, start())
+			require.False(t, m.reviewOutdated())
+			switch tc.view {
+			case tuiViewDiff:
+				require.Equal(t, "+live patch"+nl, cansi.Strip(m.diff))
+			case tuiViewDetail:
+				require.Equal(t, "Live description", m.detail.Body)
+			case tuiViewList:
+			}
+			m, _ = pressKey(t, m, tuiKeybindApproveNoConfirm)
+			require.Equal(t, 1, m.actionsInFlight)
+		})
+	}
+}
+
+func TestFailedResumeReadRetriesBeforeApproval(t *testing.T) {
+	pr := approvalTestPR(1)
+	key := makePRKey(pr)
+	m := resumeTestModel([]PullRequest{pr})
+	saved := savedSession{View: tuiViewDiff, Active: key, Diff: "+saved"}
+	saved.restore(&m)
+	m, _ = updateModel(t, m, readDoneMsg{msg: diffFetchedMsg{key: key, err: errApproveTest}})
+	require.False(t, m.diffInFlight[key])
+	m, _ = pressKey(t, m, tuiKeybindApproveNoConfirm)
+	require.Equal(t, tuiViewDiff, m.view)
+	require.Zero(t, m.actionsInFlight)
+	require.True(t, m.diffInFlight[key])
+}
+
+func TestFailedNavigationPreservesLiveResumedDetail(t *testing.T) {
+	pr, next := approvalTestPR(1), approvalTestPR(2)
+	key := makePRKey(pr)
+	m := resumeTestModel([]PullRequest{pr, next})
+	saved := savedSession{View: tuiViewDetail, Active: key, Detail: PRDetail{Body: "Saved description"}}
+	saved.restore(&m)
+	m.openDetail(m.resolveIndex(makePRKey(next), -1), 0)
+	m, _ = updateModel(t, m, detailFetchedMsg{
+		key: key, reviewVersion: m.reviewVersion(pr), detail: PRDetail{Body: "Live description"},
+	})
+	m, _ = updateModel(t, m, detailFetchedMsg{
+		key: makePRKey(next), reviewVersion: m.reviewVersion(next), err: errApproveTest,
+	})
+	require.Equal(t, key, m.detailKey)
+	require.Equal(t, "Live description", m.detail.Body)
 }

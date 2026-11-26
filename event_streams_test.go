@@ -77,12 +77,12 @@ func TestTUIQueuesEventsDuringRefresh(t *testing.T) {
 	m.eventStreams.listeners[key] = func() {}
 	m.eventStreams.pending[key] = eventStatus
 	m, _ = updateModel(t, m, prEventsMsg{})
-	require.True(t, m.eventsPending)
+	require.NotEmpty(t, m.pendingEvents)
 	require.Zero(t, m.queryGen)
 
 	m.refreshing = false
 	cmd := m.refreshFromEvents()
-	require.False(t, m.eventsPending)
+	require.Empty(t, m.pendingEvents)
 	require.NotNil(t, cmd)
 	msg, ok := cmd().(changedPRsMsg)
 	require.True(t, ok)
@@ -220,11 +220,11 @@ func TestTUIReviewPreservesPendingHeadProbe(t *testing.T) {
 	m.eventStreams.pending[key] = eventStatus | eventFirstHeadProbe
 	m.view = tuiViewDetail
 	m, _ = updateModel(t, m, prEventsMsg{})
-	require.True(t, m.eventsPending)
+	require.NotEmpty(t, m.pendingEvents)
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	require.Equal(t, tuiViewList, m.view)
 	require.False(t, canceled)
-	require.Equal(t, prEvents{key: eventStatus | eventFirstHeadProbe}, m.eventStreams.takeChanges())
+	require.Equal(t, prEvents{key: eventStatus | eventFirstHeadProbe}, m.pendingEvents)
 }
 
 func TestTUIKeepsListeningAfterStreamFailure(t *testing.T) {
@@ -744,5 +744,46 @@ func TestEventBackoffRetriesAndCancellation(t *testing.T) {
 		err = backoff.wait(ctx, &url.Error{Op: "GET", Err: io.ErrUnexpectedEOF})
 		require.ErrorIs(t, err, context.Canceled)
 		require.Equal(t, time.Second, time.Since(start))
+	})
+}
+
+func TestReviewSubscribesToPRBeyondViewport(t *testing.T) {
+	m := numberedListTestModel(maxEventStreams + 2)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.syncVisibleEventStreams(nil)
+	last := m.rows[len(m.rows)-1].Item.PR
+	key := makePRKey(last)
+	require.NotContains(t, m.eventTargets, key)
+	m.view, m.diffKey = tuiViewDiff, key
+	m.syncVisibleEventStreams(nil)
+	require.Len(t, m.eventTargets, maxEventStreams)
+	require.Contains(t, m.eventTargets, key)
+}
+
+func TestTUIDeferredEventReadsObserveMinimumInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		pr := approvalTestPR(1)
+		key := makePRKey(pr)
+		m := approvalTestModel("", pr)
+		m.gql = eventTestClient(t, mergedEventNode, eventStatus)
+		m.eventStreams = newEventStreams(true, nil)
+		defer m.eventStreams.close()
+		m.eventStreams.listeners[key] = func() {}
+		m.eventStreams.pending[key] = eventStatus
+		m.queueReviewEvents()
+		time.Sleep(watchMinInterval)
+		require.NotNil(t, m.refreshFromEvents())
+		m.changedRefreshInFlight = false
+		m.eventStreams.queue(t.Context(), key, eventReviews)
+		time.Sleep(eventBatchDelay)
+		synctest.Wait()
+		m.queueReviewEvents()
+		wake := m.refreshFromEvents()
+		require.False(t, m.changedRefreshInFlight)
+		require.NotNil(t, wake)
+		require.Nil(t, m.refreshFromEvents(), "one wake suffices for the pending batch")
+		m, _ = updateModel(t, m, wake())
+		require.True(t, m.changedRefreshInFlight)
 	})
 }

@@ -44,6 +44,9 @@ func (m *tuiModel) recordChangedPRs(msg tea.Msg) {
 		if msg.action != tuiActionOpened &&
 			(msg.action != tuiActionApproved || msg.outcome == approvePosted) {
 			m.markPRChanged(msg.key)
+			if msg.action == tuiActionBranchUpdated {
+				m.invalidateDiffHead(msg.key)
+			}
 		}
 	case batchActionMsg:
 		for _, approval := range msg.approvals {
@@ -55,6 +58,9 @@ func (m *tuiModel) recordChangedPRs(msg tea.Msg) {
 			if msg.action != tuiActionOpened &&
 				(msg.action != tuiActionApproved || msg.outcomes[key] == approvePosted) {
 				m.markPRChanged(key)
+				if msg.action == tuiActionBranchUpdated {
+					m.invalidateDiffHead(key)
+				}
 			}
 		}
 	}
@@ -149,7 +155,7 @@ func (m *tuiModel) applyChangedPRs(msg changedPRsMsg) tea.Cmd {
 	for _, item := range msg.items {
 		key := makePRKey(item.PR)
 		if msg.gens[key] != m.prChangeGen[key] {
-			continue // a later action already queued another read
+			continue // a later mutation already queued an authoritative read
 		}
 		pr := m.confirmed.get(key)
 		display := m.itemForKey(key)
@@ -213,13 +219,22 @@ func (m *tuiModel) syncVisibleEventStreams(msg tea.Msg) tea.Cmd {
 	if m.eventStreams == nil {
 		return nil
 	}
-	if m.view != tuiViewList || m.height == 0 {
-		// Preserve listeners and queued probes during review. Reconcile the
-		// visible rows when the list returns, even if a timer fired meanwhile.
-		m.eventTargets = nil
+	if m.height == 0 {
 		return nil
 	}
 	wanted := make(eventTargets)
+	// The review queue can extend beyond the list viewport.
+	switch m.view {
+	case tuiViewDetail:
+		if pr := m.prForKey(m.detailKey); pr != nil {
+			wanted.add(*pr)
+		}
+	case tuiViewDiff:
+		if pr := m.prForKey(m.diffKey); pr != nil {
+			wanted.add(*pr)
+		}
+	case tuiViewList:
+	}
 	for _, line := range m.viewportLines() {
 		if line.row >= 0 && line.header == "" {
 			wanted.add(m.rows[line.row].Item.PR)
@@ -243,21 +258,95 @@ func (m *tuiModel) syncVisibleEventStreams(msg tea.Msg) tea.Cmd {
 	return scheduleTick(eventAttachDelay, eventAttachMsg{gen: m.eventAttachGen})
 }
 
-// Fetch the status fields of notified PRs from their confirmed rows. The list
-// query and local actions have priority over stream reads.
-func (m *tuiModel) refreshFromEvents() tea.Cmd {
-	if !m.eventsPending || m.view != tuiViewList || m.refreshing ||
-		m.changedRefreshInFlight || m.actionsInFlight > 0 || m.gql == nil {
-		return nil
+func (m *tuiModel) invalidateDiffHead(key prKey) {
+	if m.diffHeadGen == nil {
+		m.diffHeadGen = make(map[prKey]int)
 	}
-	m.eventsPending = false
+	m.diffHeadGen[key]++
+}
+
+// Invalidate review content as events arrive. The list still reconciles its
+// rows after review, coalescing all pending scopes for each PR.
+func (m *tuiModel) queueReviewEvents() tea.Cmd {
 	changed := m.eventStreams.takeChanges()
 	if len(changed) == 0 {
 		return nil
 	}
+	if m.pendingEvents == nil {
+		m.pendingEvents = make(prEvents)
+	}
+	if m.prEventGen == nil {
+		m.prEventGen = make(map[prKey]int)
+	}
+	for key, scope := range changed {
+		m.pendingEvents[key] |= scope
+		m.prEventGen[key]++
+		if scope&eventNewHead != 0 {
+			m.invalidateDiffHead(key)
+		}
+	}
+	if changed[m.detailKey] != 0 || changed[m.diffKey] != 0 {
+		return m.refreshOpenReview()
+	}
+	return nil
+}
+
+// Disk snapshots have no live cache entry until the first successful read.
+func (m tuiModel) reviewOutdated() bool {
+	switch m.view {
+	case tuiViewDiff:
+		cached, ok := m.diffCache[m.diffKey]
+		if !ok {
+			return m.resumeRefreshPending || m.diffHeadGen[m.diffKey] != 0
+		}
+		pr := m.prForKey(m.diffKey)
+		return pr == nil || !m.diffCurrent(*pr, cached)
+	case tuiViewDetail:
+		_, ok := m.detailCache[m.detailKey]
+		return m.resumeRefreshPending && !ok
+	case tuiViewList:
+	}
+	return false
+}
+
+func (m *tuiModel) refreshOpenReview() tea.Cmd {
+	switch m.view {
+	case tuiViewDetail:
+		pr := m.prForKey(m.detailKey)
+		cached, ok := m.detailCache[m.detailKey]
+		if pr != nil && (!ok || !m.reviewFresh(*pr, cached.reviewStamp)) {
+			return m.refetchDetail()
+		}
+	case tuiViewDiff:
+		if !m.diffLoading {
+			return tea.Batch(m.statusCmd(m.diffKey), m.refreshCachedDiff(m.diffKey))
+		}
+	case tuiViewList:
+	}
+	return nil
+}
+
+type eventListReadTickMsg struct{}
+
+// Fetch the status fields of notified PRs from their confirmed rows. The list
+// query and local actions have priority over stream reads.
+func (m *tuiModel) refreshFromEvents() tea.Cmd {
+	if len(m.pendingEvents) == 0 || m.view != tuiViewList || m.refreshing ||
+		m.changedRefreshInFlight || m.actionsInFlight > 0 || m.gql == nil {
+		return nil
+	}
+	// Event delivery can precede a list read by the entire time spent in review.
+	if delay := time.Until(m.nextEventListRead); delay > 0 {
+		if m.eventListReadScheduled {
+			return nil
+		}
+		m.eventListReadScheduled = true
+		return scheduleTick(delay, eventListReadTickMsg{})
+	}
+	changed := m.pendingEvents
+	m.pendingEvents = nil
 	gens := make(map[prKey]int, len(changed))
 	for key := range changed {
-		m.bumpPRGeneration(key)
 		gens[key] = m.prChangeGen[key]
 	}
 	prs := eventPRs(m.confirmed.prs, changed)
@@ -265,6 +354,7 @@ func (m *tuiModel) refreshFromEvents() tea.Cmd {
 		return nil
 	}
 	m.changedRefreshInFlight = true
+	m.nextEventListRead = time.Now().Add(watchMinInterval)
 	gql, resolver := m.gql, m.resolver
 	owner := singleOwner(m.cli.Owner.Values)
 	gen := m.queryGen

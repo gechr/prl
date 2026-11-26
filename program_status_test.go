@@ -86,9 +86,9 @@ func TestProgramStatusRedirectedOutput(t *testing.T) {
 }
 
 func TestBackgroundReadStatusLifecycle(t *testing.T) {
-	m := tuiModel{diffGen: 2, queryGen: 2}
+	m := tuiModel{queryGen: 2}
 	require.Nil(t, m.trackRead(nil))
-	first := m.trackRead(func() tea.Msg { return diffFetchedMsg{gen: 1} })
+	first := m.trackRead(func() tea.Msg { return diffFetchedMsg{key: "repo#2"} })
 	second := m.trackRead(func() tea.Msg { return headValidationMsg{queryGen: 1} })
 	state, _ := m.programStatus()
 	require.Equal(t, clog.ProgramStateWorking, state)
@@ -103,8 +103,9 @@ func TestBackgroundReadStatusLifecycle(t *testing.T) {
 	require.Equal(t, clog.ProgramStateIdle, state, "stale results still settle their reads")
 	require.Zero(t, m.readsInFlight)
 
+	m.detailLoading, m.detailAwaitKey = true, "repo#1"
 	failed := m.trackRead(func() tea.Msg {
-		return detailFetchedMsg{err: errors.New("read failed")}
+		return detailFetchedMsg{key: m.detailAwaitKey, err: errors.New("read failed")}
 	})
 	m, _ = updateModel(t, m, failed())
 	state, _ = m.programStatus()

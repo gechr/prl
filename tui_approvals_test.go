@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
@@ -530,17 +531,17 @@ func diffTestModel(prs ...PullRequest) tuiModel {
 }
 
 func (m *tuiModel) cacheDiffForTest(key prKey, headSHA string) {
-	if m.diffPrefetch == nil {
-		m.diffPrefetch = make(map[prKey]diffFetchedMsg)
+	if m.diffCache == nil {
+		m.diffCache = make(map[prKey]diffFetchedMsg)
 	}
-	m.diffPrefetch[key] = diffFetchedMsg{gen: m.diffGen, index: -1, key: key, headSHA: headSHA}
+	m.diffCache[key] = diffFetchedMsg{index: -1, key: key, headSHA: headSHA, fetchedAt: time.Now()}
 }
 
 func TestDiffApproveAdvancesInstantlyToPrefetchedDiff(t *testing.T) {
 	first, second := approvalTestPR(1), approvalTestPR(2)
 	m := diffTestModel(first, second)
 	key := makePRKey(second)
-	m.diffPrefetch = map[prKey]diffFetchedMsg{key: {key: key, diff: "+next change"}}
+	m.diffCache = map[prKey]diffFetchedMsg{key: {key: key, diff: "+next change", fetchedAt: time.Now()}}
 	pending, release := holdTUIRequest()
 	defer release()
 	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
@@ -610,7 +611,7 @@ func TestDiffAdvanceWaitsForInFlightFetch(t *testing.T) {
 	require.True(t, m.diffLoading)
 	require.Equal(t, k2, m.diffAwaitKey)
 
-	m, _ = updateModel(t, m, diffFetchedMsg{gen: m.diffGen, index: -1, key: k2})
+	m, _ = updateModel(t, m, diffFetchedMsg{index: -1, key: k2})
 	require.Equal(t, k2, m.diffKey)
 	require.False(t, m.diffLoading)
 }
@@ -654,7 +655,6 @@ func TestDiffAwaitedPrefetchWithChangedHeadRefetches(t *testing.T) {
 	m, _ = pressKey(t, m, tuiKeybindNext)
 
 	m, cmd := updateModel(t, m, diffFetchedMsg{
-		gen:              m.diffGen,
 		index:            -1,
 		key:              k2,
 		headSHA:          "old",
@@ -678,7 +678,7 @@ func TestDiffFetchAcceptsHeadAheadOfUnchangedRow(t *testing.T) {
 	_ = m.openDiff(key, 0)
 
 	m, _ = updateModel(t, m, diffFetchedMsg{
-		gen: m.diffGen, index: -1, key: key, headSHA: "new", requestedHeadSHA: "old",
+		index: -1, key: key, headSHA: "new", requestedHeadSHA: "old",
 	})
 
 	require.False(t, m.diffLoading)
@@ -687,18 +687,18 @@ func TestDiffFetchAcceptsHeadAheadOfUnchangedRow(t *testing.T) {
 	require.Empty(t, m.diffInFlight)
 }
 
-func TestDiffFetchFromDismissedSessionIsDropped(t *testing.T) {
+func TestDiffFetchAfterExitCachesWithoutReopening(t *testing.T) {
 	m := diffTestModel(approvalTestPR(1), approvalTestPR(2))
 	k2 := makePRKey(approvalTestPR(2))
-	oldGen := m.diffGen
 	m, _ = pressKey(t, m, tuiKeybindNext) // waiting on k2
 	m, _ = pressKey(t, m, "q")            // leave the diff view
 	require.Equal(t, tuiViewList, m.view)
 
-	m, _ = updateModel(t, m, diffFetchedMsg{gen: oldGen, index: -1, key: k2})
+	m, _ = updateModel(t, m, diffFetchedMsg{index: -1, key: k2})
 
 	require.Equal(t, tuiViewList, m.view)
-	require.Empty(t, m.diffPrefetch)
+	require.Contains(t, m.diffCache, k2)
+	require.Empty(t, m.diffAwaitKey)
 }
 
 func TestDiffPrevRecordsOutgoingKeyInHistory(t *testing.T) {
@@ -962,7 +962,8 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 	m := diffTestModel(first, second)
 	k2 := makePRKey(second)
 	m.diff = "+first change"
-	m.diffPrefetch = map[prKey]diffFetchedMsg{k2: {key: k2, diff: "+second change"}}
+	m.diffCache = map[prKey]diffFetchedMsg{k2: {key: k2, diff: "+second change", fetchedAt: time.Now()}}
+	var reads atomic.Int32
 	firstFetch, release := holdTUIRequest()
 	defer release()
 	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
@@ -971,10 +972,12 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 	m.actions.diffClient = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/repos/owner/repo/pulls/1":
+			reads.Add(1)
 			<-firstFetch
 			return jsonResponse(req, http.StatusOK, "+reloaded first change"), nil
 		case "/repos/owner/repo/pulls/2":
-			return jsonResponse(req, http.StatusOK, "+reloaded second change"), nil
+			t.Error("refetched a cached diff")
+			return jsonResponse(req, http.StatusBadRequest, ""), nil
 		default:
 			return jsonResponse(req, http.StatusNotFound, `{}`), nil
 		}
@@ -985,7 +988,9 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 	h.KeyLeft().Wait("Diffing " + first.Ref()).Assert("+second change")
 	release()
 	h.Wait("[1/2] " + first.Ref()).Wait("+reloaded first change")
-	h.KeyRight().Wait("[2/2] " + second.Ref()).Wait("+reloaded second change")
+	h.KeyRight().Wait("[2/2] " + second.Ref()).Wait("+second change")
+	h.KeyLeft().Wait("[1/2] " + first.Ref()).Wait("+reloaded first change")
+	require.EqualValues(t, 1, reads.Load())
 }
 
 func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {

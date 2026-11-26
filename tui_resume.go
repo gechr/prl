@@ -358,9 +358,11 @@ func (s *savedSession) restore(m *tuiModel) {
 		m.detailLines = m.renderDetailContent()
 		m.syncDetailView()
 		m.detailView.SetYOffset(s.ViewOffset)
-		m.initCmd = tea.Batch(m.initCmd, m.scheduleDetailRefresh())
 	case tuiViewList:
+		return
 	}
+	// The saved view is immediately readable. Validate it even with polling and streams off.
+	m.initCmd = tea.Batch(m.initCmd, m.refreshOpenReview())
 }
 
 // Superseded or abandoned records have no terminal callback for cleanup.

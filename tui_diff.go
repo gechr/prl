@@ -2,17 +2,17 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"bloomfx.dev/bloom/fx"
 	tea "charm.land/bubbletea/v2"
 	"github.com/gechr/primer/layout"
 )
 
-// fetchDiffCmd fetches key's diff in the background, tagged with the current
-// diff session so replies from a dismissed session are dropped.
+// fetchDiffCmd shares a single outstanding read per PR across review queues.
 func (m *tuiModel) fetchDiffCmd(key prKey) tea.Cmd {
 	idx := m.resolveIndex(key, -1)
-	if idx < 0 {
+	if idx < 0 || m.diffInFlight[key] {
 		return nil
 	}
 	if m.diffInFlight == nil {
@@ -21,12 +21,14 @@ func (m *tuiModel) fetchDiffCmd(key prKey) tea.Cmd {
 	m.diffInFlight[key] = true
 	pr := m.rows[idx].Item.PR
 	actions := m.actions
-	gen := m.diffGen
+	headGen := m.diffHeadGen[key]
 	return m.trackRead(func() tea.Msg {
 		owner, repo := prOwnerRepo(pr)
 		diff, headSHA, err := actions.fetchDiff(owner, repo, pr.Number)
 		return diffFetchedMsg{
-			gen:              gen,
+			headGen:          headGen,
+			baseRef:          pr.BaseRefName,
+			updatedAt:        pr.UpdatedAt,
 			index:            idx,
 			key:              key,
 			diff:             diff,
@@ -37,32 +39,43 @@ func (m *tuiModel) fetchDiffCmd(key prKey) tea.Cmd {
 	})
 }
 
-// openDiff shows key's diff: straight away from the prefetch cache when it is
-// still current, otherwise once its (possibly already running) fetch returns.
+// Revisits show the last viewed diff while revalidating it. A speculative
+// prefetch must still match the known head before it is shown for the first time.
 func (m *tuiModel) openDiff(key prKey, from fx.Direction) tea.Cmd {
 	pr := m.prForKey(key)
 	if pr == nil {
 		return nil
 	}
-	if cached, ok := m.diffPrefetch[key]; ok {
-		delete(m.diffPrefetch, key)
-		if prefetchIsCurrent(*pr, cached) {
-			return m.showDiff(cached, from)
-		}
+	if cached, ok := m.diffCache[key]; ok && (cached.visited || m.diffCurrent(*pr, cached)) {
+		show := m.showDiff(cached, from)
+		return tea.Batch(show, m.refreshCachedDiff(key))
 	}
 	m.diffAwaitKey, m.diffAwaitFrom = key, from
 	m.diffLoading = true
 	flashPending(m, statusDiffing, pr)
-	if m.diffInFlight[key] {
-		return nil
-	}
 	return m.fetchDiffCmd(key)
 }
 
-// prefetchIsCurrent reports whether a prefetched diff still matches the PR's
-// head commit.
-func prefetchIsCurrent(pr PullRequest, cached diffFetchedMsg) bool {
-	return pr.HeadSHA == "" || cached.headSHA == "" || pr.HeadSHA == cached.headSHA
+func (m tuiModel) diffCurrent(pr PullRequest, cached diffFetchedMsg) bool {
+	if cached.headGen != m.diffHeadGen[cached.key] || pr.BaseRefName != cached.baseRef {
+		return false
+	}
+	if pr.HeadSHA == "" {
+		return cached.updatedAt.Equal(pr.UpdatedAt)
+	}
+	return pr.HeadSHA == cached.requestedHeadSHA || pr.HeadSHA == cached.headSHA
+}
+
+func (m *tuiModel) refreshCachedDiff(key prKey) tea.Cmd {
+	pr := m.prForKey(key)
+	if pr == nil {
+		return nil
+	}
+	if cached, ok := m.diffCache[key]; ok && m.diffCurrent(*pr, cached) &&
+		m.reviewReadFresh(key, cached.fetchedAt) {
+		return nil
+	}
+	return m.fetchDiffCmd(key)
 }
 
 // showDiff switches the view to a fetched diff, then refreshes the PR's status
@@ -83,17 +96,22 @@ func (m *tuiModel) showDiff(msg diffFetchedMsg, from fx.Direction) tea.Cmd {
 	if m.view == tuiViewDetail {
 		m.stopDetailRefresh(true)
 	}
+	msg.visited = true
+	m.diffCache[msg.key] = msg
 	m.diffKey = msg.key
 	m.diffQueuePos = m.diffQueueTotal - len(m.diffQueue)
-	pr := m.rows[idx].Item.PR
-	m.contentRevision++
-	m.diff = highlightDiff(msg.diff, pr.URL, msg.headSHA)
-	m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
-	m.syncDiffView()
+	m.setDiffContent(msg.diff)
 	m.diffView.GotoTop()
 	m.view = tuiViewDiff
 	m.flash.Msg = ""
 	return tea.Batch(slide, m.statusCmd(msg.key), m.prefetchNext())
+}
+
+func (m *tuiModel) setDiffContent(diff string) {
+	m.contentRevision++
+	m.diff = diff
+	m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
+	m.syncDiffView()
 }
 
 // prefetchNext starts fetching the next queued diff unless it is already
@@ -103,10 +121,7 @@ func (m *tuiModel) prefetchNext() tea.Cmd {
 		if m.resolveIndex(key, -1) < 0 {
 			continue
 		}
-		if _, ok := m.diffPrefetch[key]; ok || m.diffInFlight[key] {
-			return nil
-		}
-		return m.fetchDiffCmd(key)
+		return m.refreshCachedDiff(key)
 	}
 	return nil
 }
@@ -114,16 +129,32 @@ func (m *tuiModel) prefetchNext() tea.Cmd {
 // handleDiffFetched routes a fetched diff: the one the view is waiting for is
 // shown, anything else is kept for later.
 func (m tuiModel) handleDiffFetched(msg diffFetchedMsg) (tea.Model, tea.Cmd) {
-	if msg.gen != m.diffGen {
-		return m, nil // stale fetch from a dismissed diff session
-	}
 	delete(m.diffInFlight, msg.key)
-	if msg.key != m.diffAwaitKey {
-		if msg.err == nil {
-			if m.diffPrefetch == nil {
-				m.diffPrefetch = make(map[prKey]diffFetchedMsg)
-			}
-			m.diffPrefetch[msg.key] = msg
+	pr := m.prForKey(msg.key)
+	awaited := msg.key == m.diffAwaitKey
+	visible := m.view == tuiViewDiff && msg.key == m.diffKey
+	if pr != nil && !m.diffCurrent(*pr, msg) {
+		if awaited || (visible && !m.diffLoading) {
+			cmd := m.fetchDiffCmd(msg.key)
+			return m, cmd
+		}
+		return m, nil
+	}
+	if msg.err == nil && pr != nil {
+		if m.diffCache == nil {
+			m.diffCache = make(map[prKey]diffFetchedMsg)
+		}
+		msg.fetchedAt = time.Now()
+		msg.diff = highlightDiff(msg.diff, pr.URL, msg.headSHA)
+		msg.visited = visible || m.diffCache[msg.key].visited
+		m.diffCache[msg.key] = msg
+		if visible && !awaited {
+			m.setDiffContent(msg.diff)
+		}
+	}
+	if !awaited {
+		if visible && !m.diffLoading && msg.err != nil {
+			return m, flashResult(&m, "Diff refresh failed:", msg.err.Error(), "", true)
 		}
 		return m, nil
 	}
@@ -140,13 +171,6 @@ func (m tuiModel) handleDiffFetched(msg diffFetchedMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(flashCmd, m.scheduleDetailRefresh())
 		}
 		return m, flashCmd
-	}
-	// A refresh may learn about a push while a prefetch is in flight. If
-	// promoted to the foreground, that fetch must still pass the head check.
-	// A fresh response ahead of the dispatch-time row is allowed through.
-	if pr := m.prForKey(msg.key); pr != nil && pr.HeadSHA != msg.requestedHeadSHA &&
-		!prefetchIsCurrent(*pr, msg) {
-		return m, m.openDiff(msg.key, from)
 	}
 	return m, m.showDiff(msg, from)
 }

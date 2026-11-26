@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/gechr/clog"
@@ -28,6 +29,7 @@ type prStatusMsg struct {
 	key       prKey
 	gen       int
 	changeGen int
+	stamp     reviewStamp
 	pr        PullRequest
 	err       error
 }
@@ -262,19 +264,37 @@ func (m *tuiModel) statusCmd(key prKey) tea.Cmd {
 	if pr == nil || m.gql == nil {
 		return nil
 	}
+	if stamp, ok := m.diffStatus[key]; ok && m.reviewFresh(*pr, stamp) {
+		return nil
+	}
+	if m.diffStatus == nil {
+		m.diffStatus = make(map[prKey]reviewStamp)
+	}
+	stamp := reviewStamp{reviewVersion: m.reviewVersion(*pr), fetchedAt: time.Now()}
+	m.diffStatus[key] = stamp
 	gql := m.gql
 	prCopy := *pr
 	gen := m.approvalGen[key]
 	changeGen := m.prChangeGen[key]
 	return m.trackRead(func() tea.Msg {
 		fresh, err := fetchPRStatus(gql, prCopy)
-		return prStatusMsg{key: key, gen: gen, changeGen: changeGen, pr: fresh, err: err}
+		return prStatusMsg{key: key, gen: gen, changeGen: changeGen, stamp: stamp, pr: fresh, err: err}
 	})
 }
 
 // applyPRStatus merges a fetched status into the row. Viewer approval is only
 // taken from responses requested after the key's last approval change.
 func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
+	if !msg.stamp.fetchedAt.IsZero() {
+		pr := m.prForKey(msg.key)
+		if m.diffStatus[msg.key] != msg.stamp {
+			return
+		}
+		delete(m.diffStatus, msg.key)
+		if pr == nil || msg.stamp.reviewVersion != m.reviewVersion(*pr) {
+			return
+		}
+	}
 	if msg.changeGen != m.prChangeGen[msg.key] {
 		return
 	}
@@ -305,6 +325,9 @@ func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
 			pr.viewerIsAuthor = fresh.viewerIsAuthor
 		}
 	})
+	if !msg.stamp.fetchedAt.IsZero() {
+		m.diffStatus[msg.key] = reviewStamp{reviewVersion: m.reviewVersion(*m.prForKey(msg.key)), fetchedAt: time.Now()}
+	}
 	m.reconcileVisibility(msg.key)
 	m.rerenderList()
 	m.resyncCursorAndOffset()

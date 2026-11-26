@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,8 +43,8 @@ func TestDiffSlideKeepsFrameStationary(t *testing.T) {
 	m.diff = strings.Repeat(oldLine+nl, 30)
 	m.applyWindowSize(bodyWidth+1, 12)
 	dest := makePRKey(second)
-	m.diffPrefetch = map[prKey]diffFetchedMsg{
-		dest: {key: dest, diff: strings.Repeat(newLine+nl, 30)},
+	m.diffCache = map[prKey]diffFetchedMsg{
+		dest: {key: dest, diff: strings.Repeat(newLine+nl, 30), fetchedAt: time.Now()},
 	}
 
 	m, _ = pressKey(t, m, tuiKeybindNext)
@@ -65,14 +66,17 @@ func TestDiffSlideKeepsFrameStationary(t *testing.T) {
 
 func TestDetailNavigationFollowsFilteredList(t *testing.T) {
 	first, hidden, last := approvalTestPR(1), approvalTestPR(2), approvalTestPR(3)
+	var firstReads, lastReads atomic.Int32
 	first.Title, hidden.Title, last.Title = "Visible A", "Hidden B", "Visible C"
 	m := listTUIModel(first, hidden, last)
 	m.sortColumn, m.sortAsc = colTitle, true
 	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/repos/owner/repo/pulls/1":
+			firstReads.Add(1)
 			return jsonResponse(req, http.StatusOK, `{"body":"First description"}`), nil
 		case "/repos/owner/repo/pulls/3":
+			lastReads.Add(1)
 			return jsonResponse(req, http.StatusOK, `{"body":"Last description"}`), nil
 		default:
 			if strings.HasSuffix(req.URL.Path, "/files") ||
@@ -92,6 +96,8 @@ func TestDetailNavigationFollowsFilteredList(t *testing.T) {
 	h.KeyLeft().KeyRight().Wait("Last description").WaitNot("First description")
 	h.Key("n").Key("p").Wait("First description").WaitNot("Last description")
 	h.Key("n").Wait("Last description").KeyEsc().Wait("❯ 2  Visible C").AssertNot(hidden.Title)
+	require.EqualValues(t, 1, firstReads.Load())
+	require.EqualValues(t, 1, lastReads.Load())
 }
 
 func TestDismissedDetailNavigationIgnoresLateReply(t *testing.T) {
@@ -99,7 +105,7 @@ func TestDismissedDetailNavigationIgnoresLateReply(t *testing.T) {
 	m := listTUIModel(first, second)
 	m.view, m.detailKey, m.detailView = tuiViewDetail, makePRKey(first), newScrollView()
 	m.openDetail(m.resolveIndex(makePRKey(second), -1), fx.Right)
-	late := detailFetchedMsg{id: m.detailRefreshID, key: makePRKey(second), from: fx.Right}
+	late := detailFetchedMsg{reviewVersion: m.reviewVersion(second), key: makePRKey(second)}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	m, _ = updateModel(t, m, late)
 	require.Equal(t, tuiViewList, m.view)
@@ -183,4 +189,145 @@ func TestMissingAwaitedDiffClearsLoadingStatus(t *testing.T) {
 	require.False(t, m.diffLoading)
 	require.Empty(t, m.flash.Msg)
 	require.False(t, m.slide.progress.Animating())
+}
+
+func TestDetailRefreshAfterEventKeepsCachedNavigation(t *testing.T) {
+	m := listTUIModel(approvalTestPR(1), approvalTestPR(2))
+	first, second := m.rows[0].Item.PR, m.rows[1].Item.PR
+	k1, k2 := makePRKey(first), makePRKey(second)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.eventStreams.listeners[k1] = func() {}
+	result := func(pr PullRequest, body string) detailFetchedMsg {
+		return detailFetchedMsg{
+			reviewVersion: m.reviewVersion(pr), fetchedAt: time.Now(),
+			key: makePRKey(pr), detail: PRDetail{Body: body},
+		}
+	}
+	m.openDetail(m.resolveIndex(k1, -1), 0)
+	m, _ = updateModel(t, m, result(first, "First body"))
+	require.True(t, m.detailInFlight[k2], "next detail was prefetched")
+	m.openDetail(m.resolveIndex(k2, -1), fx.Right)
+	m, _ = updateModel(t, m, result(second, "Second body"))
+	m.eventStreams.pending[k1] = eventReviews
+	m, _ = updateModel(t, m, prEventsMsg{})
+	m.openDetail(m.resolveIndex(k1, -1), fx.Left)
+	require.False(t, m.detailLoading)
+	require.Equal(t, "First body", m.detail.Body)
+	require.True(t, m.detailInFlight[k1])
+
+	// Another event arrives before the background read completes.
+	stale := result(first, "Superseded body")
+	m.eventStreams.pending[k1] = eventStatus
+	m, _ = updateModel(t, m, prEventsMsg{})
+	m, _ = updateModel(t, m, stale)
+	require.True(t, m.detailInFlight[k1])
+	require.Equal(t, "First body", m.detail.Body)
+	m, _ = updateModel(t, m, result(first, "Current body"))
+	require.Equal(t, "Current body", m.detail.Body)
+	require.False(t, m.detailInFlight[k1])
+	m.exitDetailView()
+	m.openDetail(m.resolveIndex(k1, -1), 0)
+	require.Equal(t, "Current body", m.detail.Body)
+	require.False(t, m.detailInFlight[k1])
+}
+
+func TestDiffHeadEventRefreshesOnlyChangedContent(t *testing.T) {
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	m := diffTestModel(first, second)
+	k1, k2 := makePRKey(first), makePRKey(second)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.eventStreams.listeners[k1] = func() {}
+	m.openDiff(k1, 0)
+	m, _ = updateModel(t, m, diffFetchedMsg{key: k1, diff: "+first"})
+	m, _ = updateModel(t, m, diffFetchedMsg{key: k2, diff: "+second"})
+	m.eventStreams.pending[k1] = eventReviews
+	m, _ = updateModel(t, m, prEventsMsg{})
+	require.Empty(t, m.diffInFlight)
+
+	m.eventStreams.pending[k1] = eventNewHead
+	m, _ = updateModel(t, m, prEventsMsg{})
+	require.True(t, m.diffInFlight[k1])
+	require.False(t, m.diffLoading)
+	m, _ = pressKey(t, m, tuiKeybindNext)
+	m, _ = pressKey(t, m, tuiKeybindPrev)
+	require.Equal(t, k1, m.diffKey)
+	require.False(t, m.diffLoading)
+	require.Equal(t, "+first"+nl, ansi.Strip(m.diff))
+	m, _ = pressKey(t, m, tuiKeybindNext)
+	m, _ = updateModel(t, m, diffFetchedMsg{key: k1, headGen: m.diffHeadGen[k1], diff: "+updated"})
+	require.Equal(t, k2, m.diffKey)
+	m, _ = pressKey(t, m, tuiKeybindPrev)
+	require.Equal(t, "+updated"+nl, ansi.Strip(m.diff))
+	m.exitDiffView()
+	m.openDiff(k1, 0)
+	require.Equal(t, "+updated"+nl, ansi.Strip(m.diff))
+	require.Empty(t, m.diffInFlight)
+}
+
+func TestOutdatedDiffBlocksReviewActions(t *testing.T) {
+	for _, binding := range []string{
+		tuiKeybindApprove, tuiKeybindApproveNoConfirm, tuiKeybindMerge, tuiKeybindApproveMerge,
+	} {
+		t.Run(binding, func(t *testing.T) {
+			pr := approvalTestPR(1)
+			m := diffTestModel(pr)
+			key := makePRKey(pr)
+			m.openDiff(key, 0)
+			m, _ = updateModel(t, m, diffFetchedMsg{key: key, diff: "+initial"})
+			m.invalidateDiffHead(key)
+			m.openDiff(key, 0)
+			m, _ = pressKey(t, m, binding)
+			require.Zero(t, m.actionsInFlight)
+			require.Equal(t, tuiViewDiff, m.view)
+			require.True(t, m.diffInFlight[key])
+			m, _ = updateModel(t, m, diffFetchedMsg{key: key, headGen: m.diffHeadGen[key], err: errApproveTest})
+			m, _ = pressKey(t, m, binding)
+			require.Zero(t, m.actionsInFlight)
+			require.True(t, m.diffInFlight[key], "retry the failed refresh")
+			m, _ = updateModel(t, m, diffFetchedMsg{key: key, headGen: m.diffHeadGen[key], diff: "+current"})
+			m, _ = pressKey(t, m, binding)
+			require.Equal(t, 1, m.actionsInFlight)
+		})
+	}
+}
+
+func TestSubscribedReviewRevalidatesContentAfterQuietInterval(t *testing.T) {
+	pr := approvalTestPR(1)
+	pr.HeadSHA = "same"
+	key := makePRKey(pr)
+	m := listTUIModel(pr)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.eventStreams.listeners[key] = func() {}
+	old := time.Now().Add(-quietStatusInterval)
+	m.detailCache = map[prKey]detailFetchedMsg{key: {
+		reviewVersion: m.reviewVersion(pr), fetchedAt: old, detail: PRDetail{Body: "Earlier body"},
+	}}
+	m.openDetail(0, 0)
+	require.Equal(t, "Earlier body", m.detail.Body)
+	require.True(t, m.detailInFlight[key])
+	m.diffCache = map[prKey]diffFetchedMsg{key: {
+		key: key, headSHA: pr.HeadSHA, diff: "+earlier", fetchedAt: old, visited: true,
+	}}
+	m.openDiff(key, 0)
+	require.Equal(t, "+earlier", m.diff)
+	require.True(t, m.diffInFlight[key])
+}
+
+func TestFailedDiffNavigationKeepsRefreshedPatch(t *testing.T) {
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	m := diffTestModel(first, second)
+	active := makePRKey(first)
+	m.openDiff(active, 0)
+	m, _ = updateModel(t, m, diffFetchedMsg{key: active, diff: "+old"})
+	m.invalidateDiffHead(active)
+	m.refreshCachedDiff(active)
+	m, _ = pressKey(t, m, tuiKeybindNext)
+	m, _ = updateModel(t, m, diffFetchedMsg{key: active, headGen: m.diffHeadGen[active], diff: "+fresh"})
+	m, _ = updateModel(t, m, diffFetchedMsg{key: makePRKey(second), err: errApproveTest})
+	require.False(t, m.diffLoading)
+	require.Equal(t, active, m.diffKey)
+	require.Equal(t, "+fresh"+nl, ansi.Strip(m.diff))
 }

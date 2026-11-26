@@ -341,3 +341,42 @@ func TestStatusEventKeepsConfirmedApprovalAndHiddenRows(t *testing.T) {
 	require.True(t, m.filterHidden[key])
 	require.True(t, m.filterHidden[other])
 }
+
+func TestDiffStatusCacheFollowsEventCoverage(t *testing.T) {
+	pr := approvalTestPR(1)
+	key := makePRKey(pr)
+	m := diffTestModel(pr)
+	m.gql = eventTestClient(t, mergedEventNode, eventStatus)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.eventStreams.listeners[key] = func() {}
+	require.NotNil(t, m.statusCmd(key))
+	require.Nil(t, m.statusCmd(key), "reopening reuses the in-flight read")
+	old := m.diffStatus[key]
+	old.fetchedAt = time.Now().Add(-2 * visibleStatusInterval)
+	m.diffStatus[key] = old
+	require.Nil(t, m.statusCmd(key), "an unchanged subscribed PR stays current")
+	delete(m.eventStreams.listeners, key)
+	require.NotNil(t, m.statusCmd(key), "an uncovered PR revalidates in the background")
+	m.markPRChanged(key)
+	require.NotNil(t, m.statusCmd(key), "a local mutation invalidates the status")
+}
+
+func TestEventPreservesInFlightMutationRead(t *testing.T) {
+	pr := approvalTestPR(1)
+	key := makePRKey(pr)
+	m := approvalTestModel("", pr)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.eventStreams.listeners[key] = func() {}
+	m.markPRChanged(key)
+	gens := map[prKey]int{key: m.prChangeGen[key]}
+	clear(m.changedPRs)
+	m.eventStreams.pending[key] = eventReviews
+	m.queueReviewEvents()
+	pr.Title = "Updated title"
+	m.applyChangedPRs(changedPRsMsg{gens: gens, items: buildPRRowModels([]PullRequest{pr}, "", nil)})
+	require.Equal(t, pr.Title, m.prForKey(key).Title)
+	require.Empty(t, m.changedPRs)
+	require.Equal(t, eventReviews, m.pendingEvents[key])
+}
