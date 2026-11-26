@@ -4,14 +4,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/key"
-	"github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
 )
+
+func dismissalTestRunner(t *testing.T, dismiss func(path, reason string) int) *ActionRunner {
+	t.Helper()
+	return testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+		path := req.URL.Path
+		switch {
+		case req.Method == http.MethodGet && path == "/user":
+			return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
+		case req.Method == http.MethodGet && strings.HasSuffix(path, "/reviews"):
+			return jsonResponse(
+				req,
+				http.StatusOK,
+				`[{"id":11,"state":"APPROVED","user":{"login":"viewer"}}]`,
+			), nil
+		case req.Method == http.MethodPut && strings.HasSuffix(path, "/reviews/11/dismissals"):
+			var body struct {
+				Message string `json:"message"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			return jsonResponse(req, dismiss(path, body.Message), `{}`), nil
+		default:
+			return jsonResponse(req, http.StatusNotFound, `{}`), nil
+		}
+	})
+}
 
 func TestUnapproveFormSubmitsReasonAndSettles(t *testing.T) {
 	for _, view := range []tuiView{tuiViewList, tuiViewDetail, tuiViewDiff} {
@@ -19,58 +44,30 @@ func TestUnapproveFormSubmitsReasonAndSettles(t *testing.T) {
 			t.Run(fmt.Sprintf("%v/fail=%v", view, fail), func(t *testing.T) {
 				pr := approvalTestPR(1)
 				pr.viewerApproved = true
-				m := approvalTestModel("", pr)
-				key := makePRKey(pr)
-				m.view, m.detailKey, m.diffKey = view, key, key
-				var reasons []string
-				m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
-					if req.URL.Path == "/user" {
-						return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
+				m := actionViewTestModel(view, pr)
+				const reason = "Checking the revised change."
+				pending, release := holdTUIRequest()
+				defer release()
+				m.actions = dismissalTestRunner(t, func(path, message string) int {
+					if path != "/repos/owner/repo/pulls/1/reviews/11/dismissals" ||
+						message != reason {
+						t.Error("unexpected review dismissal request")
 					}
-					if req.Method == http.MethodGet {
-						return jsonResponse(
-							req,
-							http.StatusOK,
-							`[{"id":11,"state":"APPROVED","user":{"login":"viewer"}}]`,
-						), nil
-					}
-					require.Equal(t, http.MethodPut, req.Method)
-					require.Equal(
-						t,
-						"/repos/owner/repo/pulls/1/reviews/11/dismissals",
-						req.URL.Path,
-					)
-					var body map[string]string
-					require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
-					reasons = append(reasons, body["message"])
+					<-pending
 					if fail {
-						return jsonResponse(
-							req,
-							http.StatusForbidden,
-							`{"message":"forbidden"}`,
-						), nil
+						return http.StatusForbidden
 					}
-					return jsonResponse(req, http.StatusOK, `{}`), nil
+					return http.StatusOK
 				})
-				m, _ = pressKey(t, m, tuiKeybindApprove)
-				require.Equal(t, tuiActionUnapprove, m.confirmAction)
-				formDialog, ok := m.dialogs.Top().(*dialog.Form)
-				require.True(t, ok)
-				require.Equal(t, defaultUnapproveMessage, formDialog.Model().Value(0))
-				require.Empty(t, m.pendingApprovals)
-				formDialog.Model().SetValue(0, "Checking updated tests.")
-				m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
-				require.Empty(t, m.confirmAction)
-				require.True(t, m.pendingApprovals[key].remove)
-				require.False(t, isViewerApproved(*m.prForKey(key)))
-				completion := cmd()
-				require.Equal(t, []string{"Checking updated tests."}, reasons)
-				m, _ = updateModel(t, m, completion)
-				require.Empty(t, m.pendingApprovals)
-				require.Equal(t, fail, isViewerApproved(*m.prForKey(key)))
-				require.Equal(t, fail, m.flash.Err)
-				if !fail {
-					require.Equal(t, "Unapproved owner/repo#1", ansi.Strip(m.flash.Msg))
+				h := newTUIHarness(t, m)
+				h.Key("a").Wait("Unapprove " + pr.Ref() + "?").Assert(defaultUnapproveMessage).
+					Key("ctrl+a").Key("ctrl+k").Paste(reason).Wait(reason).
+					Key("alt+enter").Wait("Unapproving " + pr.Ref()).AssertNot(reason)
+				release()
+				if fail {
+					h.Wait("Unapprove failed:").Key("a").Wait("Unapprove " + pr.Ref() + "?")
+				} else {
+					h.Wait("Unapproved " + pr.Ref()).Assert(" approve ").AssertNot("unapprove")
 				}
 			})
 		}
@@ -103,8 +100,8 @@ func TestUnapproveHelpAndMixedSelection(t *testing.T) {
 	targets, _, remove := m.approvalToggleTargets()
 	require.False(t, remove)
 	require.Equal(t, []prKey{makePRKey(unapproved)}, targetKeys(targets))
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-	require.Equal(t, tuiActionApprove, m.confirmAction)
+	m.cfg = &Config{}
+	newTUIHarness(t, m).Key("a").Wait("Approve " + unapproved.Ref() + "?")
 }
 
 func TestPendingUnapprovalSurvivesRefreshAndRejectsStaleStatus(t *testing.T) {
@@ -125,69 +122,49 @@ func TestPendingUnapprovalSurvivesRefreshAndRejectsStaleStatus(t *testing.T) {
 
 func TestUnapproveBatchSettlesFailuresIndividually(t *testing.T) {
 	first, second := approvalTestPR(1), approvalTestPR(2)
+	first.Title, second.Title = "First change", "Second change"
 	first.viewerApproved, second.viewerApproved = true, true
-	m := approvalTestModel("", first, second)
-	firstKey, secondKey := makePRKey(first), makePRKey(second)
-	m.selected[firstKey], m.selected[secondKey] = true, true
-	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path == "/user" {
-			return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
+	m := listTUIModel(first, second)
+	m.sortColumn, m.sortAsc = colTitle, true
+	m.width = 160
+	const reason = "Revisiting both reviews."
+	pending, release := holdTUIRequest()
+	defer release()
+	m.actions = dismissalTestRunner(t, func(path, message string) int {
+		if message != reason {
+			t.Error("unexpected batch dismissal reason")
 		}
-		if req.Method == http.MethodGet {
-			return jsonResponse(
-				req,
-				http.StatusOK,
-				`[{"id":11,"state":"APPROVED","user":{"login":"viewer"}}]`,
-			), nil
+		<-pending
+		switch path {
+		case "/repos/owner/repo/pulls/1/reviews/11/dismissals":
+			return http.StatusOK
+		case "/repos/owner/repo/pulls/2/reviews/11/dismissals":
+			return http.StatusForbidden
+		default:
+			t.Error("unexpected batch dismissal path")
+			return http.StatusNotFound
 		}
-		var body map[string]string
-		require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
-		require.Equal(t, "Revisiting both reviews.", body["message"])
-		if req.URL.Path == "/repos/owner/repo/pulls/2/reviews/11/dismissals" {
-			return jsonResponse(req, http.StatusForbidden, `{"message":"forbidden"}`), nil
-		}
-		require.Equal(t, "/repos/owner/repo/pulls/1/reviews/11/dismissals", req.URL.Path)
-		return jsonResponse(req, http.StatusOK, `{}`), nil
 	})
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-	require.Equal(t, "Unapprove 2 PRs?", m.confirmPrompt)
-	formDialog, ok := m.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	formDialog.Model().SetValue(0, "Revisiting both reviews.")
-	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
-	require.Len(t, m.pendingApprovals, 2)
-	m, _ = updateModel(t, m, cmd())
-	require.Empty(t, m.pendingApprovals)
-	require.False(t, isViewerApproved(*m.prForKey(firstKey)))
-	require.True(t, isViewerApproved(*m.prForKey(secondKey)))
-	require.True(t, m.flash.Err)
+	h := newTUIHarness(t, m)
+	h.Key("shift+down").Wait("❯ 2 ").Key("a").Wait("Unapprove 2 PRs?").
+		Key("ctrl+a").Key("ctrl+k").Paste(reason).Wait(reason).
+		Key("alt+enter").Wait("Unapproving 2 PRs")
+	release()
+	h.Wait("Unapprove failed:").Assert(second.Ref() + ":").Assert("1/2 (1 failed)").KeyEsc()
+	h.Key("1").Wait("❯ 1 ").Key("a").Wait("Approve " + first.Ref() + "?").KeyEsc()
+	h.Key("2").Wait("❯ 2 ").Key("a").Wait("Unapprove " + second.Ref() + "?")
 }
 
 func TestUnapproveWithoutConfirmationUsesDefaultReason(t *testing.T) {
 	pr := approvalTestPR(1)
 	pr.viewerApproved = true
-	m := approvalTestModel("", pr)
-	var reason string
-	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path == "/user" {
-			return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
+	m := listTUIModel(pr)
+	m.actions = dismissalTestRunner(t, func(_, message string) int {
+		if message != defaultUnapproveMessage {
+			t.Error("unexpected default review dismissal reason")
 		}
-		if req.Method == http.MethodGet {
-			return jsonResponse(
-				req,
-				http.StatusOK,
-				`[{"id":11,"state":"APPROVED","user":{"login":"viewer"}}]`,
-			), nil
-		}
-		var body map[string]string
-		require.NoError(t, json.NewDecoder(req.Body).Decode(&body))
-		reason = body["message"]
-		return jsonResponse(req, http.StatusOK, `{}`), nil
+		return http.StatusOK
 	})
-	m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModAlt})
-	require.Empty(t, m.confirmAction)
-	require.True(t, m.pendingApprovals[makePRKey(pr)].remove)
-	m, _ = updateModel(t, m, cmd())
-	require.Equal(t, defaultUnapproveMessage, reason)
-	require.False(t, isViewerApproved(*m.prForKey(makePRKey(pr))))
+	h := newTUIHarness(t, m)
+	h.Key("alt+a").Wait("Unapproved " + pr.Ref()).AssertNot("unapprove")
 }

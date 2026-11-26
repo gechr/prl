@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,22 +64,40 @@ func TestUpdateListViewAltRBypassesConfirm(t *testing.T) {
 	require.Nil(t, altModel.confirmCmd)
 }
 
-func TestUpdateListViewCtrlRSinglePRBypassesConfirm(t *testing.T) {
-	pr := testReviewPullRequest()
-	m := tuiModel{
-		items:    []PRRowModel{{PR: pr}},
-		rows:     []TableRow{{Item: PRRowModel{PR: pr}}},
-		selected: make(prKeys),
+func TestCopilotReviewShortcut(t *testing.T) {
+	for _, view := range []tuiView{tuiViewList, tuiViewDetail} {
+		t.Run(fmt.Sprint(view), func(t *testing.T) {
+			pr := approvalTestPR(1)
+			m := actionViewTestModel(view, pr)
+			pending, release := holdTUIRequest()
+			defer release()
+			m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+				if req.Method == http.MethodPost &&
+					req.URL.Path == "/repos/owner/repo/pulls/1/requested_reviewers" {
+					<-pending
+					return jsonResponse(req, http.StatusCreated, `{}`), nil
+				}
+				if req.URL.Path == "/repos/owner/repo/pulls/1" {
+					return jsonResponse(
+						req,
+						http.StatusOK,
+						`{"body":"Updated review details"}`,
+					), nil
+				}
+				return jsonResponse(req, http.StatusOK, `[]`), nil
+			})
+			h := newTUIHarness(t, m)
+			h.Key("ctrl+r").
+				Wait("Requesting Copilot review " + pr.Ref()).
+				AssertNot("Request Copilot review for")
+			release()
+			if view == tuiViewDetail {
+				h.Wait("Updated review details")
+			} else {
+				h.Wait("Copilot review requested " + pr.Ref())
+			}
+		})
 	}
-
-	model, cmd := m.updateListView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	require.NotNil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Empty(t, bm.confirmAction)
-	require.Empty(t, bm.confirmPrompt)
-	require.Nil(t, bm.confirmCmd)
 }
 
 func TestUpdateListViewCtrlRMultiplePRsRequiresConfirm(t *testing.T) {
@@ -91,48 +110,12 @@ func TestUpdateDiffViewRLaunchesAIReview(t *testing.T) {
 	if !xos.IsDarwin() {
 		t.Skip("AI review requires macOS")
 	}
-
 	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
 	pr := testReviewPullRequest()
-	m := tuiModel{
-		rows:    []TableRow{{Item: PRRowModel{PR: pr}}},
-		view:    tuiViewDiff,
-		diffKey: makePRKey(pr),
-	}
-
-	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	require.Nil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, tuiViewDiff, bm.view)
-	require.Equal(t, tuiActionReview, bm.confirmAction)
-	require.Equal(t, &pr, bm.confirmReviewPR)
-	require.NotNil(t, bm.confirmCmdFn)
-}
-
-func TestUpdateDetailViewCtrlRRequestsCopilotReview(t *testing.T) {
-	pr := testReviewPullRequest()
-	m := tuiModel{
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		view:      tuiViewDetail,
-		detailKey: makePRKey(pr),
-		actions:   &ActionRunner{},
-	}
-
-	model, cmd := m.updateDetailView(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	require.NotNil(t, cmd)
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, tuiViewDetail, bm.view)
-	require.Empty(t, bm.confirmAction)
-	require.Equal(
-		t,
-		"Requesting Copilot review owner/repo#42…",
-		ansi.Strip(bm.flash.Msg),
-	)
+	h := newTUIHarness(t, actionViewTestModel(tuiViewDiff, pr))
+	h.Key("r").Wait("Launch AI review for " + pr.Ref() + "?").Assert("Provider")
+	h.KeyEsc().WaitNot("Launch AI review").Assert("+change")
 }
 
 func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {

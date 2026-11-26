@@ -2,6 +2,7 @@ package main
 
 import (
 	"image/color"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +54,28 @@ func listTUIModel(prs ...PullRequest) tuiModel {
 	return m
 }
 
+// holdTUIRequest lets the test observe the pending action before its HTTP response arrives.
+func holdTUIRequest() (<-chan struct{}, func()) {
+	pending := make(chan struct{})
+	return pending, sync.OnceFunc(func() { close(pending) })
+}
+
+func actionViewTestModel(view tuiView, pr PullRequest) tuiModel {
+	m := listTUIModel(pr)
+	m.view, m.width, m.height = view, 160, 30
+	switch view {
+	case tuiViewList:
+		return m
+	case tuiViewDetail:
+		m.detailKey, m.detailView = makePRKey(pr), newScrollView()
+		m.detailLines = m.renderDetailContent()
+	case tuiViewDiff:
+		m.diffKey, m.diffView = makePRKey(pr), newScrollView()
+		m.diff = "+change"
+	}
+	return m
+}
+
 func newTUIHarness(t *testing.T, m tuiModel) *steep.Harness {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -62,9 +85,7 @@ func newTUIHarness(t *testing.T, m tuiModel) *steep.Harness {
 		t,
 		m,
 		steep.WithWindowSize(m.width, m.height),
-		steep.WithColor(
-			steep.ColorTrueColor,
-		),
+		steep.WithColor(steep.ColorTrueColor),
 		steep.WithProgramOptions(tea.WithFilter(wheel.Filter)),
 	)
 	t.Cleanup(wheel.Stop)

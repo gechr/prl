@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -349,51 +348,45 @@ func TestPRStatusRespectsApprovalGeneration(t *testing.T) {
 func TestListApprovePromptsToUnapprove(t *testing.T) {
 	pr := approvalTestPR(1)
 	pr.viewerApproved = true
-	m := approvalTestModel("", pr)
-
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-
-	require.Equal(t, tuiActionUnapprove, m.confirmAction)
-	require.True(t, m.confirmHasInput)
-	require.Equal(t, defaultUnapproveMessage, m.confirmInputValue)
-	require.Empty(t, m.pendingApprovals)
+	h := newTUIHarness(t, listTUIModel(pr))
+	h.Key("a").
+		Wait("Unapprove " + pr.Ref() + "?").
+		Assert([]string{"Reason", defaultUnapproveMessage})
+	h.KeyEsc().WaitNot(defaultUnapproveMessage).Assert("unapprove")
 }
 
 func TestListApproveSkipsPending(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1))
-	m.beginApproval([]prKey{makePRKey(m.rows[0].Item.PR)})
-
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-
-	require.Empty(t, m.confirmAction)
-	require.Equal(t, "Approval pending owner/repo#1", ansi.Strip(m.flash.Msg))
+	pr := approvalTestPR(1)
+	m := listTUIModel(pr)
+	m.beginApproval([]prKey{makePRKey(pr)})
+	h := newTUIHarness(t, m)
+	h.Key("a").Wait("Approval pending " + pr.Ref()).AssertNot("Approve " + pr.Ref() + "?")
 }
 
 func TestListApproveWithUnloadedViewerStateStillApproves(t *testing.T) {
 	pr := approvalTestPR(1)
-	pr.viewerApprovalLoaded = false // e.g. a cached snapshot from an older run
-	m := approvalTestModel("", pr)
-
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-
-	require.Equal(t, tuiActionApprove, m.confirmAction)
+	pr.viewerApprovalLoaded = false
+	h := newTUIHarness(t, listTUIModel(pr))
+	h.Key("a").Wait("Approve " + pr.Ref() + "?").Assert([]string{"Yes", "No"})
 }
 
 func TestListApproveConfirmBeginsOnAccept(t *testing.T) {
-	m := approvalTestModel(valueReviewFilterSelfRequired, approvalTestPR(1), approvalTestPR(2))
-	key := makePRKey(m.rows[0].Item.PR)
-
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-	require.Equal(t, tuiActionApprove, m.confirmAction)
-	require.Empty(t, m.pendingApprovals)
-	require.False(t, m.filterHidden[key])
-
-	model, cmd := m.confirmAccept()
-	require.NotNil(t, cmd)
-	m, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Contains(t, m.pendingApprovals, key)
-	require.True(t, m.filterHidden[key])
+	pr, other := approvalTestPR(1), approvalTestPR(2)
+	pr.Title, other.Title = "First change", "Other change"
+	m := listTUIModel(pr, other)
+	m.sortColumn, m.sortAsc = colTitle, true
+	m.cli.Review = valueReviewFilterSelfRequired
+	pending, release := holdTUIRequest()
+	defer release()
+	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+		<-pending
+		return jsonResponse(req, http.StatusCreated, `{}`), nil
+	})
+	h := newTUIHarness(t, m)
+	h.Wait(pr.Title).Key("a").Wait("Approve " + pr.Ref() + "?").Assert(pr.Title)
+	h.Key("y").Wait("Approving " + pr.Ref()).AssertNot(pr.Title).Assert(other.Title)
+	release()
+	h.Wait("Approved " + pr.Ref()).AssertNot(pr.Title)
 }
 
 func TestBackgroundApprovalCompletionPreservesNewDiffQueue(t *testing.T) {
@@ -553,44 +546,49 @@ func (m *tuiModel) cacheDiffForTest(key prKey, headSHA string) {
 }
 
 func TestDiffApproveAdvancesInstantlyToPrefetchedDiff(t *testing.T) {
-	m := diffTestModel(approvalTestPR(1), approvalTestPR(2))
-	k1, k2 := makePRKey(approvalTestPR(1)), makePRKey(approvalTestPR(2))
-	m.cacheDiffForTest(k2, "")
-
-	m, cmd := pressKey(t, m, tuiKeybindApprove)
-
-	require.NotNil(t, cmd)
-	require.Equal(t, tuiViewDiff, m.view)
-	require.Equal(t, k2, m.diffKey)
-	require.False(t, m.diffLoading)
-	require.Equal(t, []prKey{k1}, m.diffHistory)
-	require.Contains(t, m.pendingApprovals, k1)
-	require.Empty(t, m.diffPrefetch)
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	m := diffTestModel(first, second)
+	key := makePRKey(second)
+	m.diffPrefetch = map[prKey]diffFetchedMsg{key: {key: key, diff: "+next change"}}
+	pending, release := holdTUIRequest()
+	defer release()
+	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.Path != "/repos/owner/repo/pulls/1/reviews" {
+			return jsonResponse(req, http.StatusNotFound, `{}`), nil
+		}
+		<-pending
+		return jsonResponse(req, http.StatusCreated, `{}`), nil
+	})
+	h := newTUIHarness(t, m)
+	h.Key("a").Wait("[2/2] " + second.Ref()).Assert("+next change")
+	release()
+	h.Wait("Approved " + first.Ref()).Assert("[2/2] " + second.Ref())
 }
 
 func TestDiffApproveOnApprovedPRPromptsWithoutAdvancing(t *testing.T) {
 	pr := approvalTestPR(1)
 	pr.viewerApproved = true
 	m := diffTestModel(pr, approvalTestPR(2))
-	k2 := makePRKey(approvalTestPR(2))
-	m.cacheDiffForTest(k2, "")
-
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-
-	require.Empty(t, m.pendingApprovals)
-	require.Equal(t, makePRKey(pr), m.diffKey)
-	require.Equal(t, tuiActionUnapprove, m.confirmAction)
-	require.True(t, m.confirmHasInput)
-	require.Equal(t, defaultUnapproveMessage, m.confirmInputValue)
+	m.cacheDiffForTest(makePRKey(approvalTestPR(2)), "")
+	h := newTUIHarness(t, m)
+	h.Key("a").Wait("Unapprove " + pr.Ref() + "?").Assert(defaultUnapproveMessage)
+	h.KeyEsc().WaitNot(defaultUnapproveMessage).Assert("[1/2] " + pr.Ref())
 }
 
 func TestDiffApproveOnLastPRReturnsToList(t *testing.T) {
-	m := diffTestModel(approvalTestPR(1))
-
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-
-	require.Equal(t, tuiViewList, m.view)
-	require.Contains(t, m.pendingApprovals, makePRKey(approvalTestPR(1)))
+	pr := approvalTestPR(1)
+	m := diffTestModel(pr)
+	m.cfg = &Config{}
+	pending, release := holdTUIRequest()
+	defer release()
+	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+		<-pending
+		return jsonResponse(req, http.StatusCreated, `{}`), nil
+	})
+	h := newTUIHarness(t, m)
+	h.Wait("[1/1] " + pr.Ref()).Key("a").Wait("All PRs ▾").AssertNot("[1/1]")
+	release()
+	h.Wait("Approved " + pr.Ref())
 }
 
 func TestDiffApproveCompletionDoesNotNavigate(t *testing.T) {
@@ -627,13 +625,17 @@ func TestDiffAdvanceWaitsForInFlightFetch(t *testing.T) {
 }
 
 func TestDiffKeysIgnoredWhileNextDiffLoads(t *testing.T) {
-	m := diffTestModel(approvalTestPR(1), approvalTestPR(2), approvalTestPR(3))
-	m, _ = pressKey(t, m, tuiKeybindNext)
-	require.True(t, m.diffLoading)
-
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-
-	require.Empty(t, m.pendingApprovals, "approve must not land on the previous diff")
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	m := diffTestModel(first, second)
+	m.cfg = &Config{}
+	m.diffInFlight = prKeys{makePRKey(second): true}
+	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+		t.Error("approval or duplicate fetch dispatched while loading the next diff")
+		return jsonResponse(req, http.StatusBadRequest, `{}`), nil
+	})
+	h := newTUIHarness(t, m)
+	h.Key("n").Wait("Diffing " + second.Ref()).Assert(first.Ref() + " »")
+	h.Key("a").KeyEsc().Wait("All PRs ▾").AssertNot("Approving")
 }
 
 func TestDiffPrefetchWithStaleHeadRefetches(t *testing.T) {
@@ -970,8 +972,7 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 	k2 := makePRKey(second)
 	m.diff = "+first change"
 	m.diffPrefetch = map[prKey]diffFetchedMsg{k2: {key: k2, diff: "+second change"}}
-	firstFetch := make(chan struct{})
-	release := sync.OnceFunc(func() { close(firstFetch) })
+	firstFetch, release := holdTUIRequest()
 	defer release()
 	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(req, http.StatusOK, `{"head":{"sha":"fixture"}}`), nil
