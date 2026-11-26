@@ -3789,14 +3789,7 @@ func runTui(
 		}
 	}
 	var program *tea.Program
-	resolve := func(m tea.Model) (wheelTarget, bool) {
-		tui, ok := m.(tuiModel)
-		if !ok {
-			return wheelTargetNone, false
-		}
-		return tui.wheelScrollTarget()
-	}
-	sw := scrollwheel.New(resolve, func(msg tea.Msg) {
+	sw := scrollwheel.New(resolveWheelTarget, func(msg tea.Msg) {
 		if program != nil {
 			program.Send(msg)
 		}

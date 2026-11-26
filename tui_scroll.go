@@ -38,6 +38,14 @@ type scrollbarDragState struct {
 	target scrollbarTarget
 }
 
+func resolveWheelTarget(model tea.Model) (wheelTarget, bool) {
+	tui, ok := model.(tuiModel)
+	if !ok {
+		return wheelTargetNone, false
+	}
+	return tui.wheelScrollTarget()
+}
+
 // wheelScrollTarget returns the scroll target for the current view state.
 // Used as the resolver callback for [scrollwheel.Coalescer].
 func (m tuiModel) wheelScrollTarget() (wheelTarget, bool) {

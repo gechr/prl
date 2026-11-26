@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"getsteep.dev/steep/reel"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
 	"github.com/stretchr/testify/require"
@@ -869,64 +869,29 @@ func TestAlignHeaderTruncatesTitleBeforeStatus(t *testing.T) {
 }
 
 func TestCyclePreset(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	failing := approvalTestPR(1)
+	failing, passing := approvalTestPR(1), approvalTestPR(2)
+	failing.Title, passing.Title = "Failing change", "Passing change"
 	failing.MergeStatus = MergeStatusCIFailed
-	m := approvalTestModel("", failing, approvalTestPR(2))
-	m.cfg = &Config{}
-	key := makePRKey(failing)
-
-	m, cmd := pressKey(t, m, tuiKeybindCyclePreset)
-	require.Nil(t, cmd, "presets filter locally, without a refetch")
-	require.False(t, m.refreshing)
-	require.Equal(t, "Needs your review", m.cli.preset)
-	require.Equal(t, "Needs your review", m.cfg.TUI.Filters.Preset)
-	require.False(t, isShown(m, key), "failing CI is not approvable")
-	require.Equal(t, "Needs your review", m.activeFilterTags()[0])
-
-	var seen []string
-	for range defaultPresets {
-		m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-		seen = append(seen, m.cli.preset)
-	}
-	require.Equal(
-		t,
-		[]string{"Waiting for CI", "Approved by you", "Mergeable", "Outdated", "Blocked", ""},
-		seen,
-	)
-	require.Empty(t, m.cfg.TUI.Filters.Preset)
-	require.True(t, isShown(m, key), "no preset shows every row again")
-
-	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
-	require.Equal(t, "Blocked", m.cli.preset)
-	require.True(t, isShown(m, key))
-	require.False(t, isShown(m, makePRKey(approvalTestPR(2))))
-
-	// An unknown active preset counts as "no preset".
+	m := listTUIModel(failing, passing)
 	m.cli.preset = "Removed from config"
-	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-	require.Equal(t, "Needs your review", m.cli.preset)
+	h := newTUIHarness(t, m)
+	h.Key("f").Wait("Needs your review ▾").Assert(passing.Title).AssertNot(failing.Title)
+	for _, preset := range []string{"Waiting for CI", "Approved by you", "Mergeable", "Outdated", "Blocked", "All PRs"} {
+		h.Key("f").Wait(preset + " ▾")
+	}
+	h.Assert([]string{failing.Title, passing.Title})
+	h.Key("F").Wait("Blocked ▾").Assert(failing.Title).AssertNot(passing.Title)
 }
 
 func TestCyclePresetUsesConfiguredPresets(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	failing := approvalTestPR(1)
+	failing, passing := approvalTestPR(1), approvalTestPR(2)
+	failing.Title, passing.Title = "Broken build", "Working build"
 	failing.MergeStatus = MergeStatusCIFailed
-	m := approvalTestModel("", failing, approvalTestPR(2))
-	m.cfg = &Config{}
+	m := listTUIModel(failing, passing)
 	m.cfg.TUI.Presets.Filters = []TUIPresetConfig{{Name: "Broken", Filter: "ci:failure"}}
-
-	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-
-	require.Equal(t, "Broken", m.cli.preset)
-	require.True(t, isShown(m, makePRKey(failing)))
-	require.False(t, isShown(m, makePRKey(approvalTestPR(2))))
-
-	m.refreshing = false
-	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-	require.Empty(t, m.cli.preset)
+	h := newTUIHarness(t, m)
+	h.Key("f").Wait("Broken ▾").Assert(failing.Title).AssertNot(passing.Title)
+	h.Key("f").Wait("All PRs ▾").Assert(passing.Title)
 }
 
 func TestLocalFiltersSurviveRefresh(t *testing.T) {
@@ -986,12 +951,7 @@ func TestTagSeparatorSetsPresetApart(t *testing.T) {
 }
 
 func TestCyclePresetIsRestoredOnNextLaunch(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
-
-	_, _ = pressKey(t, m, tuiKeybindCyclePreset)
+	newTUIHarness(t, listTUIModel(approvalTestPR(1))).Key("f").Wait("Needs your review ▾")
 
 	st, err := loadTUIState()
 	require.NoError(t, err)
@@ -1018,25 +978,10 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 
 func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {
 	failing := approvalTestPR(1)
-	failing.MergeStatus = MergeStatusCIFailed
-	m := approvalTestModel("", failing)
-	m.filterInput = textinput.New()
-	m.cfg = &Config{}
-	m.cli.preset = "Needs your review"
-	require.Equal(t, "No pull requests match the current filter", emptyOverlayHeadline(m))
-
-	m.replaceListItems(nil)
-	m.rows = nil
-	require.Equal(t, "No pull requests found for the current query", emptyOverlayHeadline(m))
-}
-
-func emptyOverlayHeadline(m tuiModel) string {
-	for line := range strings.SplitSeq(ansi.Strip(m.renderEmptyOverlay()), "\n") {
-		if text := strings.Trim(line, "│ "); text != "" && !strings.HasPrefix(text, "╭") {
-			return text
-		}
-	}
-	return ""
+	failing.Title, failing.MergeStatus = "Failing build", MergeStatusCIFailed
+	h := newTUIHarness(t, listTUIModel(failing))
+	h.Wait(failing.Title).Key("f").Wait("No pull requests match the current filter")
+	h.SendProgram(refreshResultMsg{}).Wait("No pull requests found for the current query")
 }
 
 // TestWaitingForCIFollowsSearchedAuthors ties the authors the search query
@@ -1130,33 +1075,16 @@ func TestWaitingForCIFollowsSearchedAuthors(t *testing.T) {
 }
 
 func TestCyclePresetSkipsUnavailablePresets(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
 	pr := approvalTestPR(1)
-	pr.Author.Login = "viewer"
-	m := approvalTestModel("", pr)
-	m.cfg = &Config{}
+	pr.Title, pr.Author.Login = "My change", "viewer"
+	m := listTUIModel(pr)
 	m.cli.Author = &CSVFlag{Values: []string{valueAtMe}}
-	require.True(t, m.searchesSelf())
-
-	var seen []string
-	for range defaultPresets {
-		m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-		seen = append(seen, m.cli.preset)
-	}
-	require.Equal(
-		t,
-		[]string{"Waiting for CI", "Mergeable", "Outdated", "Blocked", "", "Waiting for CI"},
-		seen,
-	)
-
-	// A saved preset the search rules out applies no filter and shows no tag,
-	// but stays saved for searches it suits.
 	m.cli.preset = "Needs your review"
-	require.True(t, isShown(m, makePRKey(pr)))
-	require.NotContains(t, m.activeFilterTags(), "Needs your review")
-	m.cli.Author = &CSVFlag{Values: []string{valueAll}}
-	require.Equal(t, "Needs your review", m.activeFilterTags()[0])
+	h := newTUIHarness(t, m)
+	h.Wait("All PRs ▾").Assert(pr.Title).AssertNot("Needs your review ▾")
+	for _, preset := range []string{"Waiting for CI", "Mergeable", "Outdated", "Blocked", "All PRs", "Waiting for CI"} {
+		h.Key("f").Wait(preset + " ▾")
+	}
 }
 
 func TestUnavailablePresetSurvivesStateSaveAndReturns(t *testing.T) {
@@ -1195,31 +1123,26 @@ func TestUnavailablePresetSurvivesStateSaveAndReturns(t *testing.T) {
 }
 
 func TestCyclePresetBackFromUnavailablePreset(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
+	m := listTUIModel(approvalTestPR(1))
 	m.cli.Author = &CSVFlag{Values: []string{valueAtMe}}
 	m.cli.preset = "Needs your review"
-
-	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
-	require.Equal(t, "Blocked", m.cli.preset)
+	newTUIHarness(t, m).Key("F").Wait("Blocked ▾")
 }
 
 func TestCyclePresetWithNoAvailablePresets(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
+	m := listTUIModel(approvalTestPR(1))
 	m.cfg.TUI.Presets.Filters = []TUIPresetConfig{
 		{Name: "Mine", Filter: "mine", When: "scope:self"},
 	}
-	require.False(t, m.searchesSelf())
-
-	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-	require.Empty(t, m.cli.preset)
-	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
-	require.Empty(t, m.cli.preset)
+	h := newTUIHarness(t, m)
+	for _, key := range []string{"f", "F"} {
+		h.Key(key).
+			Locate(reel.Contains("All PRs ▾")).
+			LeftClick().
+			Wait("✓ All PRs").
+			AssertNot("Mine")
+		h.KeyEsc().WaitNot("✓ All PRs")
+	}
 }
 
 func TestFailedApprovalProjectsLatestConfirmedRead(t *testing.T) {

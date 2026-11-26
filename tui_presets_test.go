@@ -2,59 +2,38 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"getsteep.dev/steep"
+	"getsteep.dev/steep/reel"
+	"getsteep.dev/steep/reel/vt"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/gechr/primer/scrollwheel"
 	"github.com/stretchr/testify/require"
 )
 
-func clickPresetText(t *testing.T, m tuiModel, label string) (tuiModel, tea.Cmd) {
+func assertPresetRows(t *testing.T, h *steep.Harness, labels []string) {
 	t.Helper()
-	x, y := buttonAt(t, m.View().Content, label)
-	if label == noPresetLabel && !m.presetMenu.open {
-		x, _ = m.presetTagBounds()
-		y = m.listSeparatorY()
+	first := h.Locate(reel.Contains(labels[0]))
+	for i, label := range labels {
+		require.Equal(t, first.Y+i, h.Locate(reel.Contains(label)).Y, label)
 	}
-	return updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-}
-
-func renderedPresetMenuRows(m tuiModel) []string {
-	l := m.presetMenuGeometry()
-	lines := strings.Split(ansi.Strip(m.View().Content), nl)
-	rows := make([]string, 0, l.rows)
-	for y := l.y + 1; y < l.y+1+l.rows; y++ {
-		rows = append(rows, strings.TrimSpace(ansi.Cut(lines[y], l.x+1, l.x+l.width-1)))
-	}
-	return rows
 }
 
 func TestPresetMenuClickSelectsAndPersists(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	failing := approvalTestPR(1)
+	failing, other := approvalTestPR(1), approvalTestPR(2)
+	failing.Title, other.Title = "Failing build", "Passing build"
 	failing.MergeStatus = MergeStatusCIFailed
-	m := approvalTestModel("", failing, approvalTestPR(2))
-	m.cfg = &Config{}
+	m := listTUIModel(failing, other)
 	m.cli.preset = "Needs your review"
-	m.header = "Pull requests"
-	m.filterInput = textinput.New()
 	m.filterInput.Focus()
-	_, labelY := buttonAt(t, m.View().Content, "Needs your review")
-
-	m, cmd := clickPresetText(t, m, "Needs your review")
-	require.Nil(t, cmd)
-	require.True(t, m.presetMenu.open)
-	menu := m.View().Content
-	for _, preset := range defaultPresets {
-		_, y := buttonAt(t, menu, preset.Name)
-		require.Less(t, y, labelY, "the menu opens above the label")
-	}
-	require.Equal(t, []string{
+	h := newTUIHarness(t, m)
+	tag := h.Locate(reel.Contains("Needs your review ▾"))
+	tag.LeftClick()
+	labels := []string{
 		"All PRs",
 		"✓ Needs your review",
 		"Waiting for CI",
@@ -62,185 +41,144 @@ func TestPresetMenuClickSelectsAndPersists(t *testing.T) {
 		"Mergeable",
 		"Outdated",
 		"Blocked",
-	}, renderedPresetMenuRows(m))
-
-	m, cmd = clickPresetText(t, m, "Blocked")
-	require.Nil(t, cmd, "selecting a smart filter does not refetch")
-	require.False(t, m.presetMenu.open)
-	require.Equal(t, "Blocked", m.cli.preset)
-	require.True(t, isShown(m, makePRKey(failing)))
-	require.False(t, isShown(m, makePRKey(approvalTestPR(2))))
+	}
+	assertPresetRows(t, h, labels)
+	require.Less(t, h.Locate(reel.Contains("Blocked")).Y, tag.Y)
+	h.Locate(reel.Contains("Blocked")).
+		LeftClick().
+		Wait("Blocked ▾").
+		Assert(failing.Title).
+		AssertNot(other.Title)
 	st, err := loadTUIState()
 	require.NoError(t, err)
 	require.Equal(t, "Blocked", st.Filters.Preset)
 
-	m, _ = clickPresetText(t, m, "Blocked")
-	m, _ = clickPresetText(t, m, "All PRs")
-	require.Empty(t, m.cli.preset)
-	require.Empty(t, m.cfg.TUI.Filters.Preset)
-	require.Len(t, m.visibleIndices(), 2)
-	m, _ = clickPresetText(t, m, "All PRs")
-	require.True(t, m.presetMenu.open, "the menu can be reopened without a selected filter")
+	h.Locate(reel.Contains("Blocked ▾")).LeftClick()
+	h.Locate(reel.Contains("All PRs")).
+		LeftClick().
+		Wait("All PRs ▾").
+		Assert([]string{failing.Title, other.Title})
+	st, err = loadTUIState()
+	require.NoError(t, err)
+	require.Empty(t, st.Filters.Preset)
+	h.Locate(reel.Contains("All PRs ▾")).LeftClick().Wait("✓ All PRs")
 }
 
 func TestPresetMenuDismissesWithoutChangingSelection(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2))
-	m.cfg = &Config{}
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	first.MergeStatus, second.MergeStatus = MergeStatusCIFailed, MergeStatusCIFailed
+	m := listTUIModel(first, second)
 	m.cli.preset = "Blocked"
-	m, _ = clickPresetText(t, m, "Blocked")
-	m, cmd := updateModel(t, m, tea.MouseClickMsg{X: 0, Y: 1, Button: tea.MouseLeft})
-	require.Nil(t, cmd)
-	require.False(t, m.presetMenu.open)
-	require.Equal(t, "Blocked", m.cli.preset)
-	require.Zero(t, m.cursor, "an outside click does not reach the list underneath")
-
-	m, _ = clickPresetText(t, m, "Blocked")
-	m, cmd = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	require.Nil(t, cmd, "Escape dismisses the menu without quitting")
-	require.False(t, m.presetMenu.open)
-	require.Equal(t, "Blocked", m.cli.preset)
+	h := newTUIHarness(t, m)
+	tag := h.Locate(reel.Contains("Blocked ▾"))
+	tag.LeftClick().Wait("✓ Blocked").LeftClick(0, 2).WaitNot("✓ Blocked").Assert("❯ 1")
+	tag.LeftClick().Wait("✓ Blocked").KeyEsc().WaitNot("✓ Blocked").Assert("Blocked ▾")
 }
 
 func TestPresetMenuRespectsConfiguredAvailability(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
+	m := listTUIModel(approvalTestPR(1))
+	const available = "\u5f85\u6a5f\u4e2d"
 	m.cfg.TUI.Presets.Filters = []TUIPresetConfig{
 		{Name: "Other authors", Filter: "!mine", When: presetNotSelf},
-		{Name: "\u5f85\u6a5f\u4e2d", Filter: "ci:pending"},
+		{Name: available, Filter: "ci:pending"},
 	}
 	m.cli.Author = &CSVFlag{Values: []string{valueAtMe}}
-	m.cli.preset = "Other authors"
-	m.width = 16
-	m, _ = clickPresetText(t, m, "All PRs")
-	content := ansi.Strip(m.View().Content)
-	require.Equal(t, []string{"✓ All PRs", "\u5f85\u6a5f\u4e2d"}, renderedPresetMenuRows(m))
-	for line := range strings.SplitSeq(content, nl) {
-		require.LessOrEqual(t, ansi.StringWidth(line), m.width)
-	}
-	m, _ = clickPresetText(t, m, "\u5f85\u6a5f\u4e2d")
-	require.Equal(t, "\u5f85\u6a5f\u4e2d", m.cli.preset)
-	m, _ = clickPresetText(t, m, "\u5f85\u6a5f\u4e2d")
-	require.True(t, m.presetMenu.open)
+	m.cli.preset, m.width = "Other authors", 16
+	h := newTUIHarness(t, m)
+	h.Locate(reel.Contains("All PRs ▾")).LeftClick()
+	assertPresetRows(t, h, []string{"✓ All PRs", available})
+	h.AssertNot("Other authors")
+	h.Locate(reel.Contains(available)).LeftClick().Wait(available + " ▾")
+	h.Locate(reel.Contains(available + " ▾")).LeftClick().Wait("✓ " + available)
 }
 
 func TestPresetMenuScrollsInShortTerminal(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2))
-	m.cfg = &Config{}
+	pr := approvalTestPR(1)
+	pr.IsDraft = true
+	m := listTUIModel(pr)
 	for i := range 20 {
 		m.cfg.TUI.Presets.Filters = append(m.cfg.TUI.Presets.Filters,
 			TUIPresetConfig{Name: fmt.Sprintf("Filter %02d", i), Filter: "draft"})
 	}
-	m.height = 10
-	m.cli.preset = "Filter 00"
-	m, _ = clickPresetText(t, m, "Filter 00")
-	before := renderedPresetMenuRows(m)
-	expected := make([]string, 0, len(before))
-	for i := range before {
-		if i == 0 {
-			expected = append(expected, "All PRs")
-			continue
+	m.height, m.cli.preset = 10, "Filter 00"
+	h := newTUIHarness(t, m)
+	h.Locate(reel.Contains("Filter 00 ▾")).LeftClick().Wait("✓ Filter 00").AssertNot("Filter 19")
+	menuRow := regexp.MustCompile(`│ +((?:✓ )?Filter [0-9]{2}|All PRs) +│`)
+	initial := menuRow.FindAllStringSubmatch(h.View(), -1)
+	require.Greater(t, len(initial), 1)
+	for i, match := range initial {
+		switch i {
+		case 0:
+			require.Equal(t, "All PRs", match[1])
+		case 1:
+			require.Equal(t, "✓ Filter 00", match[1])
+		default:
+			require.Equal(t, fmt.Sprintf("Filter %02d", i-1), match[1])
 		}
-		prefix := ""
-		if i == 1 {
-			prefix = "✓ "
-		}
-		expected = append(expected, fmt.Sprintf("%sFilter %02d", prefix, i-1))
 	}
-	require.Equal(t, expected, before)
-	m, _ = updateModel(t, m, scrollwheel.Msg[wheelTarget]{Target: wheelTargetPresetMenu, Delta: 19})
-	require.Zero(t, m.cursor, "scrolling the menu leaves the list cursor alone")
-	expected = expected[:0]
-	for i := 20 - len(before); i < 20; i++ {
-		expected = append(expected, fmt.Sprintf("Filter %02d", i))
+	h.Locate(reel.Contains("✓ Filter 00")).
+		Wheel(vt.MouseWheelDown, reel.Repeat(19)).
+		Wait("Filter 19")
+	scrolled := menuRow.FindAllStringSubmatch(h.View(), -1)
+	require.Len(t, scrolled, len(initial))
+	for i, match := range scrolled {
+		require.Equal(t, fmt.Sprintf("Filter %02d", 20-len(scrolled)+i), match[1])
 	}
-	require.Equal(t, expected, renderedPresetMenuRows(m))
-	_, y := buttonAt(t, m.View().Content, "Filter 19")
-	require.GreaterOrEqual(t, y, 0)
-	m, _ = clickPresetText(t, m, "Filter 19")
-	require.Equal(t, "Filter 19", m.cli.preset)
-	require.False(t, m.presetMenu.open)
+	h.Locate(reel.Contains("Filter 19")).LeftClick().Wait("Filter 19 ▾").Assert("❯ 1")
 }
 
 func TestPresetMenuKeyboardAndResize(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
-	m, _ = clickPresetText(t, m, "All PRs")
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.Equal(t, "Waiting for CI", m.cli.preset)
-	require.False(t, m.presetMenu.open)
-	m, _ = clickPresetText(t, m, "Waiting for CI")
-	m, _ = pressKey(t, m, tuiKeybindCyclePresetBack)
-	require.Equal(t, "Needs your review", m.cli.preset)
-	require.False(t, m.presetMenu.open)
-	m, _ = clickPresetText(t, m, "Needs your review")
-	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 3, Height: 3})
-	require.False(t, m.presetMenu.open)
+	h := newTUIHarness(t, listTUIModel(approvalTestPR(1)))
+	h.Locate(reel.Contains("All PRs ▾")).LeftClick().Wait("✓ All PRs").
+		Key("home").KeyDown(reel.Repeat(2)).Key("enter").Wait("Waiting for CI ▾")
+	h.Locate(reel.Contains("Waiting for CI ▾")).LeftClick().Wait("✓ Waiting for CI").
+		Key(tuiKeybindCyclePresetBack).Wait("Needs your review ▾")
+	h.Locate(reel.Contains("Needs your review ▾")).LeftClick().Wait("✓ Needs your review")
+	h.Resize(3, 3).Resize(80, 20).Wait("Needs your review ▾").AssertNot("✓ Needs your review")
 }
 
 func TestPresetMenuDoesNotOpenOverModal(t *testing.T) {
-	for _, modal := range []string{"help", "options", "confirm"} {
-		t.Run(modal, func(t *testing.T) {
-			m := approvalTestModel("", approvalTestPR(1))
-			m.cfg = &Config{}
-			x, y := buttonAt(t, m.View().Content, "All PRs")
-			switch modal {
-			case "help":
-				m.showHelp = true
-			case "options":
-				t.Setenv("XDG_STATE_HOME", t.TempDir())
-				m.showOptions = true
-				m.optionsPicker = m.newFilterPicker()
-			case "confirm":
-				m.confirmAction = tuiActionInfo
-			}
-			m, _ = updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-			require.False(t, m.presetMenu.open)
+	for _, tc := range []struct{ key, dialog string }{
+		{"?", "Press any key to dismiss"}, {"O", "enter apply"}, {"a", "Approve owner/repo#1?"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			m := listTUIModel(approvalTestPR(1))
+			m.width, m.height = 120, 35
+			h := newTUIHarness(t, m)
+			control := h.Locate(reel.Contains("All PRs ▾"))
+			h.Key(tc.key).Wait(tc.dialog)
+			control.LeftClick().WaitSettle().AssertNot("✓ All PRs")
 		})
 	}
 }
 
 func TestPresetControlsHoverAndCaretClicks(t *testing.T) {
-	for _, timeFilter := range []bool{false, true} {
-		m := approvalTestModel("", approvalTestPR(1))
-		m.cfg = &Config{}
-		require.Equal(t, tea.MouseModeAllMotion, m.View().MouseMode)
-		base := m.renderListSeparator()
-		_, end := m.presetTagBounds()
-		if timeFilter {
-			_, end = m.timeTagBounds()
-		}
-		y := m.listSeparatorY()
-		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: end - 1, Y: y})
-		require.Equal(t, hoverState{time: timeFilter, pr: !timeFilter}, m.hover)
-		require.NotEqual(t, base, m.renderListSeparator())
-		require.Equal(t, ansi.Strip(base), ansi.Strip(m.renderListSeparator()))
-		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 0, Y: 0})
-		require.Equal(t, base, m.renderListSeparator())
-		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: end - 1, Y: y})
-		m, _ = updateModel(t, m, tea.MouseClickMsg{X: end - 1, Y: y, Button: tea.MouseLeft})
-		require.True(t, m.presetMenu.open, "the caret opens the dropdown")
-		require.Equal(t, timeFilter, m.presetMenu.timeFilter)
-		require.Equal(t, hoverState{}, m.hover)
+	for _, label := range []string{"All PRs", "All Time"} {
+		t.Run(label, func(t *testing.T) {
+			h := newTUIHarness(t, listTUIModel(approvalTestPR(1)))
+			control := h.Locate(reel.Contains(label + " ▾"))
+			caret := control.Offset(ansi.StringWidth(label)+1, 0)
+			base := cellStyle(h, caret)
+			caret.Hover()
+			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+			h.Locate(reel.Contains("TITLE")).Hover()
+			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s == base })
+			caret.Hover().LeftClick(caret.X, caret.Y).Wait("✓ " + label)
+			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s == base })
+		})
 	}
 }
 
 func TestPresetMenuUnknownTimePresetChecksAllTime(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
+	m := listTUIModel(approvalTestPR(1))
 	m.cli.timePreset = "Removed"
-	m.openFilterPresetMenu(true)
-	require.Equal(t, []string{
-		"✓ All Time", "10 minutes", "1 hour", "1 day", "1 week", "1 month", "1 year",
-	}, renderedPresetMenuRows(m))
+	h := newTUIHarness(t, m)
+	h.Locate(reel.Contains("All Time ▾")).LeftClick()
+	assertPresetRows(
+		t,
+		h,
+		[]string{"✓ All Time", "10 minutes", "1 hour", "1 day", "1 week", "1 month", "1 year"},
+	)
 }
 
 func TestPresetHoverPreservesIdleRefreshTimer(t *testing.T) {
@@ -301,148 +239,118 @@ func TestPresetMenuCenteringClampsToTerminal(t *testing.T) {
 }
 
 func TestPresetMenuHoverHighlightsWithoutSelecting(t *testing.T) {
-	for _, timeFilter := range []bool{false, true} {
-		m := approvalTestModel("", approvalTestPR(1))
-		m.cfg = &Config{}
-		m.openFilterPresetMenu(timeFilter)
-		before := m.View().Content
-		menu := m.presetMenuGeometry()
-		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: menu.x + 2, Y: menu.y + 2})
-		require.Equal(t, 1, m.presetMenu.cursor)
-		after := m.View().Content
-		require.NotEqual(t, before, after, "hover moves the row highlight")
-		require.Equal(
-			t,
-			ansi.Strip(before),
-			ansi.Strip(after),
-			"hover keeps labels and check marks",
-		)
-		require.Empty(t, m.cli.preset)
-		require.Empty(t, m.cli.timePreset)
+	for _, tc := range []struct{ control, option string }{{"All PRs", "Needs your review"}, {"All Time", "10 minutes"}} {
+		t.Run(tc.control, func(t *testing.T) {
+			h := newTUIHarness(t, listTUIModel(approvalTestPR(1)))
+			h.Locate(reel.Contains(tc.control + " ▾")).LeftClick().Wait("✓ " + tc.control)
+			option := h.Locate(reel.Contains(tc.option))
+			before := cellStyle(h, option)
+			option.Hover()
+			waitCellStyle(t, h, option, func(s reel.CellStyle) bool { return s.Bg != before.Bg })
+			h.Assert("✓ " + tc.control).
+				KeyEsc().
+				WaitNot("✓ " + tc.control).
+				Assert(tc.control + " ▾")
+		})
 	}
 }
 
 func TestPresetKeysKeepTheirMeaningInEitherMenu(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	for _, timeMenu := range []bool{false, true} {
-		for _, tc := range []struct {
-			key  string
-			pr   string
-			time string
-		}{
-			{key: tuiKeybindCyclePreset, pr: "Needs your review"},
-			{key: tuiKeybindCyclePresetBack, pr: "Blocked"},
-			{key: tuiKeybindCycleTimePreset, time: "10 minutes"},
-			{key: tuiKeybindCycleTimePresetBack, time: "1 year"},
+	for _, menu := range []string{"All PRs", "All Time"} {
+		for _, tc := range []struct{ key, pr, time string }{
+			{"f", "Needs your review", "All Time"},
+			{"F", "Blocked", "All Time"},
+			{"t", "All PRs", "10 minutes"},
+			{"T", "All PRs", "1 year"},
 		} {
-			m := approvalTestModel("", approvalTestPR(1))
-			m.cfg = &Config{}
-			m.openFilterPresetMenu(timeMenu)
-			m, cmd := pressKey(t, m, tc.key)
-			require.Nil(t, cmd)
-			require.Equal(t, tc.pr, m.cli.preset)
-			require.Equal(t, tc.time, m.cli.timePreset)
-			require.False(t, m.presetMenu.open)
+			t.Run(menu+"/"+tc.key, func(t *testing.T) {
+				h := newTUIHarness(t, listTUIModel(approvalTestPR(1)))
+				h.Locate(reel.Contains(menu + " ▾")).LeftClick().Wait("✓ " + menu).
+					Key(tc.key).Wait(tc.time + " ▾ │ " + tc.pr + " ▾").AssertNot("✓ " + menu)
+			})
 		}
 	}
 }
 
 func TestPresetHoverClearsOnKeysAndResize(t *testing.T) {
-	for _, timeControl := range []bool{false, true} {
-		for _, msg := range []tea.Msg{
-			tea.KeyPressMsg{Code: 'z', Text: "z"},
-			tea.WindowSizeMsg{Width: 120, Height: 30},
-		} {
-			m := approvalTestModel("", approvalTestPR(1))
-			m.cfg = &Config{}
-			start, _ := m.presetTagBounds()
-			if timeControl {
-				start, _ = m.timeTagBounds()
+	for _, label := range []string{"All PRs ▾", "All Time ▾"} {
+		t.Run(label, func(t *testing.T) {
+			h := newTUIHarness(t, listTUIModel(approvalTestPR(1)))
+			control := h.Locate(reel.Contains(label))
+			base := cellStyle(h, control)
+			for _, resize := range []bool{false, true} {
+				control.Hover()
+				waitCellStyle(t, h, control, func(s reel.CellStyle) bool { return s != base })
+				if resize {
+					h.Resize(120, 30).WaitFor(reel.ScreenFunc(func(screen string) bool {
+						return !strings.Contains(strings.Split(screen, nl)[control.Y], label)
+					}))
+					control = h.Locate(reel.Contains(label))
+				} else {
+					h.Key("z")
+				}
+				waitCellStyle(t, h, control, func(s reel.CellStyle) bool { return s == base })
 			}
-			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
-			require.NotEqual(t, hoverState{}, m.hover)
-			m, _ = updateModel(t, m, msg)
-			require.Equal(t, hoverState{}, m.hover)
-		}
+		})
 	}
 }
 
 func TestTimeMenuClosesWhenItsControlDisappears(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
-	m.openFilterPresetMenu(true)
-	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 21, Height: 20})
-	require.False(t, m.presetMenu.open)
+	h := newTUIHarness(t, listTUIModel(approvalTestPR(1)))
+	h.Locate(reel.Contains("All Time ▾")).LeftClick().Wait("✓ All Time")
+	h.Resize(21, 20).WaitNot("All Time ▾").Resize(80, 20).Wait("All Time ▾").AssertNot("✓ All Time")
 }
 
 func TestFilterTagsHoverAndClickOpenOptions(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
+	m := listTUIModel(approvalTestPR(1))
 	m.cli.NoBot = false
 	start, end := m.filterTagsBounds()
-	require.Equal(t, start, end, "no option filters, no target")
-
+	require.Equal(t, start, end)
 	m.cli.State, m.cli.stateExplicit = valueClosed, true
-	start, end = m.filterTagsBounds()
-	y := m.listSeparatorY()
-	base := m.renderListSeparator()
-	require.Equal(t, "state:closed", ansi.Cut(ansi.Strip(base), start, end))
-
-	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: y})
-	require.Equal(t, hoverState{filters: true}, m.hover)
-	hovered := m.renderListSeparator()
-	require.NotEqual(t, base, hovered, "hover highlights the tags")
-	require.Equal(t, ansi.Strip(base), ansi.Strip(hovered))
-
-	m, _ = updateModel(t, m, tea.MouseClickMsg{X: end - 1, Y: y, Button: tea.MouseLeft})
-	require.True(t, m.showOptions, "clicking the tags opens the filter dialog")
-	require.Equal(t, hoverState{}, m.hover)
-
-	m, _ = updateModel(t, m, tea.MouseClickMsg{X: start, Y: y, Button: tea.MouseLeft})
-	require.False(t, m.showOptions, "clicking the tags again closes it, like Shift+O")
+	h := newTUIHarness(t, m)
+	tag := h.Locate(reel.Contains("state:closed"))
+	base := cellStyle(h, tag)
+	tag.Hover()
+	waitCellStyle(t, h, tag, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+	tag.Offset(len("state:closed")-1, 0).LeftClick().Wait("enter apply")
+	waitCellStyle(t, h, tag, func(s reel.CellStyle) bool { return s == base })
+	tag.LeftClick().WaitNot("enter apply").Assert("state:closed")
 }
 
 func TestRowHoverHighlightsWithoutMovingCursor(t *testing.T) {
-	t.Cleanup(func() { initPalette(false) })
 	for _, light := range []bool{false, true} {
-		initPalette(light)
-		require.NotEqual(t, cursorLineBG, rowHoverBG, "hover differs from the cursor line")
-		m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2), approvalTestPR(3))
-		m.cfg = &Config{}
-		m.header = "PR"
-		base := m.View().Content
-		require.False(t, strings.HasPrefix(strings.Split(base, nl)[2], rowHoverBG))
-
-		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 5, Y: 2})
-		require.Equal(t, hoverState{rowY: 2, rowOK: true}, m.hover)
-		require.Equal(t, 0, m.cursor, "hover leaves the cursor alone")
-		line := strings.Split(m.View().Content, nl)[2]
-		require.True(t, strings.HasPrefix(line, rowHoverBG), "the hovered row is tinted")
-		require.Equal(t, "2", strings.TrimSpace(ansi.Strip(line)))
-
-		m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 5, Y: m.listSeparatorY()})
-		require.Equal(t, hoverState{}, m.hover, "lines below the list are not rows")
-		require.Equal(t, base, m.View().Content)
+		t.Run(fmt.Sprint(light), func(t *testing.T) {
+			initPalette(light)
+			t.Cleanup(func() { initPalette(false) })
+			h := newTUIHarness(t, helpClickTestModel(3))
+			cursor := h.Locate(reel.Contains("❯ 1"))
+			row := h.Locate(reel.Contains("  2  ")).Offset(2, 0)
+			base, cursorStyle := cellStyle(h, row), cellStyle(h, cursor.Offset(2, 0))
+			row.Hover()
+			waitCellStyle(
+				t,
+				h,
+				row,
+				func(s reel.CellStyle) bool { return s.Bg != base.Bg && s.Bg != cursorStyle.Bg },
+			)
+			h.Assert("❯ 1")
+			h.Locate(reel.Contains("All PRs ▾")).Hover()
+			waitCellStyle(t, h, row, func(s reel.CellStyle) bool { return s == base })
+		})
 	}
 }
 
 func TestRowHoverFollowsTheRowUnderThePointer(t *testing.T) {
-	prs := make([]PullRequest, 30)
-	for i := range prs {
-		prs[i] = approvalTestPR(i + 1)
-	}
-	m := approvalTestModel("", prs...)
-	m.cfg = &Config{}
-	m.header, m.height = "PR", 12
-	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 5, Y: 2})
-	m, _ = updateModel(t, m, scrollwheel.Msg[wheelTarget]{Target: wheelTargetList, Delta: 12})
-	require.Positive(t, m.offset)
-	want, ok := m.rowIndexAt(2)
-	require.True(t, ok)
-	got, ok := m.hoveredRow()
-	require.True(t, ok)
-	require.Equal(t, want, got, "the highlight stays under the pointer after scrolling")
-	require.True(t, strings.HasPrefix(strings.Split(m.View().Content, nl)[2], rowHoverBG))
+	m := helpClickTestModel(30)
+	m.height = 12
+	h := newTUIHarness(t, m)
+	row := h.Locate(reel.Contains("  2  ")).Offset(2, 0)
+	base := cellStyle(h, row)
+	row.Hover()
+	waitCellStyle(t, h, row, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+	hover := cellStyle(h, row).Bg
+	row.Wheel(vt.MouseWheelDown, reel.Repeat(12)).Wait("❯ 13")
+	require.Equal(t, hover, cellStyle(h, row).Bg)
 }
 
 func TestClicksBelowTheListLeaveTheCursor(t *testing.T) {

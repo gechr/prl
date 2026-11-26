@@ -10,7 +10,6 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"getsteep.dev/steep"
 	"getsteep.dev/steep/reel"
-	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/dialog"
 	"github.com/gechr/x/ansi"
 	"github.com/stretchr/testify/require"
@@ -36,19 +35,6 @@ func openPlainConfirm(t *testing.T, m tuiModel) tuiModel {
 	require.NotNil(t, m.dialogs)
 	require.True(t, m.dialogs.Active())
 	return m
-}
-
-// buttonAt locates label in the rendered screen and returns a screen cell
-// inside it, so click tests hit the button wherever the modal centered.
-func buttonAt(t *testing.T, content, label string) (int, int) {
-	t.Helper()
-	for y, line := range strings.Split(ansi.Strip(content), "\n") {
-		if before, _, ok := strings.Cut(line, label); ok {
-			return cansi.StringWidth(before), y
-		}
-	}
-	t.Fatalf("button %q not rendered", label)
-	return 0, 0
 }
 
 func TestPlainConfirmDialogYAccepts(t *testing.T) {

@@ -1424,14 +1424,7 @@ func TestRenderViewportContentUsesCachedLinesWithScrollbar(t *testing.T) {
 
 func TestTUIWheelFilterCoalescesMouseWheelInput(t *testing.T) {
 	ch := make(chan tea.Msg, 1)
-	resolve := func(m tea.Model) (wheelTarget, bool) {
-		tui, ok := m.(tuiModel)
-		if !ok {
-			return wheelTargetNone, false
-		}
-		return tui.wheelScrollTarget()
-	}
-	sw := scrollwheel.New(resolve, func(msg tea.Msg) { ch <- msg },
+	sw := scrollwheel.New(resolveWheelTarget, func(msg tea.Msg) { ch <- msg },
 		scrollwheel.WithDelay(time.Millisecond))
 	defer sw.Stop()
 
@@ -1452,14 +1445,7 @@ func TestTUIWheelFilterCoalescesMouseWheelInput(t *testing.T) {
 }
 
 func TestTUIWheelFilterPassesNonWheelMessages(t *testing.T) {
-	resolve := func(m tea.Model) (wheelTarget, bool) {
-		tui, ok := m.(tuiModel)
-		if !ok {
-			return wheelTargetNone, false
-		}
-		return tui.wheelScrollTarget()
-	}
-	sw := scrollwheel.New(resolve, nil, scrollwheel.WithDelay(time.Millisecond))
+	sw := scrollwheel.New(resolveWheelTarget, nil, scrollwheel.WithDelay(time.Millisecond))
 	defer sw.Stop()
 
 	model := tuiModel{view: tuiViewDiff}

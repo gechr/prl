@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"getsteep.dev/steep"
 	"getsteep.dev/steep/reel"
+	"github.com/gechr/primer/scrollwheel"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,17 +49,24 @@ func listTUIModel(prs ...PullRequest) tuiModel {
 	m.cli.Columns.Values = []string{colTitle, colRef}
 	m.filterInput = textinput.New()
 	m.replaceListItems(buildPRRowModels(prs, "", m.resolver))
-	m.rerenderList()
+	m.header, m.rows, m.colWidths = m.rerender()
 	return m
 }
 
 func newTUIHarness(t *testing.T, m tuiModel) *steep.Harness {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	return steep.NewHarness(
+	var h *steep.Harness
+	wheel := scrollwheel.New(resolveWheelTarget, func(msg tea.Msg) { h.SendProgram(msg) })
+	h = steep.NewHarness(
 		t,
 		m,
 		steep.WithWindowSize(m.width, m.height),
-		steep.WithColor(steep.ColorTrueColor),
+		steep.WithColor(
+			steep.ColorTrueColor,
+		),
+		steep.WithProgramOptions(tea.WithFilter(wheel.Filter)),
 	)
+	t.Cleanup(wheel.Stop)
+	return h
 }

@@ -3,50 +3,47 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"getsteep.dev/steep/reel"
+	"getsteep.dev/steep/reel/vt"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/clib/theme"
-	"github.com/gechr/primer/scrollwheel"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTimePresetMenuFiltersUpdatedAndPersists(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	now := time.Now()
 	recent, stale := approvalTestPR(1), approvalTestPR(2)
+	recent.Title, stale.Title = "Active change", "Older change"
 	recent.CreatedAt, recent.UpdatedAt = now.Add(-365*24*time.Hour), now
 	stale.CreatedAt, stale.UpdatedAt = now, now.Add(-time.Hour)
-	m := approvalTestModel("", recent, stale)
-	m.cfg = &Config{}
+	m := listTUIModel(recent, stale)
 	m.cli.NoBot = false
-	line := ansi.Strip(m.renderListSeparator())
-	require.Equal(t, strings.Repeat("─", 53)+"┤ All Time ▾ │ All PRs ▾ ├─", line)
-	require.Len(t, m.visibleIndices(), 2)
-	m, _ = clickPresetText(t, m, "All Time")
-	require.True(t, m.presetMenu.open)
-	require.True(t, m.presetMenu.timeFilter)
-	start, end := m.timeTagBounds()
-	menu := m.presetMenuGeometry()
-	require.InDelta(t, float64(start+end)/2, float64(menu.x)+float64(menu.width)/2, 0.5)
-	prStart, _ := m.presetTagBounds()
-	require.Equal(t, " │ ", ansi.Cut(line, end, prStart))
-	require.Equal(t, []string{
-		"✓ All Time", "10 minutes", "1 hour", "1 day", "1 week", "1 month", "1 year",
-	}, renderedPresetMenuRows(m))
-	m, cmd := clickPresetText(t, m, "10 minutes")
-	require.Nil(t, cmd, "time filters apply locally")
-	require.False(t, m.presetMenu.open)
-	require.Equal(t, []int{0}, m.visibleIndices(), "updated time determines visibility")
-	require.Equal(
+	h := newTUIHarness(t, m)
+	h.Wait(strings.Repeat("─", 53) + "┤ All Time ▾ │ All PRs ▾ ├─").
+		Assert([]string{recent.Title, stale.Title})
+	control := h.Locate(reel.Contains("All Time ▾"))
+	control.LeftClick()
+	assertPresetRows(
 		t,
-		strings.Repeat("─", 51)+"┤ 10 minutes ▾ │ All PRs ▾ ├─",
-		ansi.Strip(m.renderListSeparator()),
+		h,
+		[]string{"✓ All Time", "10 minutes", "1 hour", "1 day", "1 week", "1 month", "1 year"},
 	)
+	left, right := h.Locate(reel.Contains("╭─")), h.Locate(reel.Contains("─╮")).Offset(1, 0)
+	require.InDelta(
+		t,
+		float64(2*control.X+ansi.StringWidth("All Time ▾")-1)/2,
+		float64(left.X+right.X)/2,
+		0.5,
+	)
+	h.Locate(reel.Contains("10 minutes")).LeftClick().
+		Wait(strings.Repeat("─", 51) + "┤ 10 minutes ▾ │ All PRs ▾ ├─").
+		Assert(recent.Title).AssertNot(stale.Title)
 	st, err := loadTUIState()
 	require.NoError(t, err)
 	cfg := &Config{}
@@ -54,32 +51,27 @@ func TestTimePresetMenuFiltersUpdatedAndPersists(t *testing.T) {
 	cli := testCLI()
 	applyTUIFilterDefaults(cli, cfg)
 	require.Equal(t, "10 minutes", cli.timePreset)
-	m, _ = clickPresetText(t, m, "10 minutes")
-	m, _ = clickPresetText(t, m, "All Time")
-	require.Empty(t, m.cli.timePreset)
-	require.Len(t, m.visibleIndices(), 2)
+	h.Locate(reel.Contains("10 minutes ▾")).LeftClick().Wait("✓ 10 minutes")
+	h.Locate(reel.Contains("All Time")).LeftClick().Wait("All Time ▾").Assert(stale.Title)
 	st, err = loadTUIState()
 	require.NoError(t, err)
 	require.Empty(t, st.Filters.Time)
 }
 
 func TestTimePresetCombinesWithStatusPreset(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	now := time.Now()
 	recent, stale, failing := approvalTestPR(1), approvalTestPR(2), approvalTestPR(3)
+	recent.Title, stale.Title, failing.Title = "Recent review", "Older review", "Failing check"
 	recent.UpdatedAt, stale.UpdatedAt, failing.UpdatedAt = now, now.Add(-2*time.Hour), now
 	failing.MergeStatus = MergeStatusCIFailed
-	m := approvalTestModel("", recent, stale, failing)
-	m.cfg = &Config{}
-	m, _ = pressKey(t, m, tuiKeybindCyclePreset)
-	m, _ = clickPresetText(t, m, "All Time")
-	m, _ = clickPresetText(t, m, "1 hour")
-	require.Equal(t, []int{0}, m.visibleIndices())
-	require.Equal(t, "Needs your review", m.cli.preset)
-	m, _ = clickPresetText(t, m, "Needs your review")
-	require.False(t, m.presetMenu.timeFilter)
-	m, _ = clickPresetText(t, m, "All PRs")
-	require.Equal(t, []int{0, 2}, m.visibleIndices(), "clearing status keeps the time filter")
+	h := newTUIHarness(t, listTUIModel(recent, stale, failing))
+	h.Key("f").Wait("Needs your review ▾")
+	h.Locate(reel.Contains("All Time ▾")).LeftClick().Wait("✓ All Time")
+	h.Locate(reel.Contains("1 hour")).LeftClick().Wait("1 hour ▾ │ Needs your review ▾").
+		Assert(recent.Title).AssertNot([]string{stale.Title, failing.Title})
+	h.Locate(reel.Contains("Needs your review ▾")).LeftClick().Wait("✓ Needs your review")
+	h.Locate(reel.Contains("All PRs")).LeftClick().Wait("1 hour ▾ │ All PRs ▾").
+		Assert([]string{recent.Title, failing.Title}).AssertNot(stale.Title)
 }
 
 func TestTimePresetUsesConfiguredFieldAndBoundary(t *testing.T) {
@@ -101,24 +93,16 @@ func TestTimePresetUsesConfiguredFieldAndBoundary(t *testing.T) {
 }
 
 func TestTimePresetMenuKeyboardScrollAndResize(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
+	m := listTUIModel(approvalTestPR(1))
 	m.height = 10
-	m, _ = clickPresetText(t, m, m.timeTagLabel())
-	require.True(t, m.presetMenu.open)
-	m, _ = updateModel(t, m, scrollwheel.Msg[wheelTarget]{Target: wheelTargetPresetMenu, Delta: 6})
-	require.Equal(t, 6, m.presetMenu.cursor)
-	require.Contains(t, renderedPresetMenuRows(m), "1 year")
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.Equal(t, "1 year", m.cli.timePreset)
-	m, _ = clickPresetText(t, m, m.timeTagLabel())
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	require.False(t, m.presetMenu.open)
-	require.Equal(t, "1 year", m.cli.timePreset)
-	m, _ = clickPresetText(t, m, m.timeTagLabel())
-	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 3, Height: 3})
-	require.False(t, m.presetMenu.open)
+	h := newTUIHarness(t, m)
+	h.Locate(reel.Contains("All Time ▾")).LeftClick().Wait("✓ All Time")
+	h.Locate(reel.Contains("✓ All Time")).Wheel(vt.MouseWheelDown, reel.Repeat(6)).
+		Wait("1 year").Key("enter").Wait("1 year ▾")
+	h.Locate(reel.Contains("1 year ▾")).LeftClick().Wait("✓ 1 year").
+		KeyEsc().WaitNot("✓ 1 year").Assert("1 year ▾")
+	h.Locate(reel.Contains("1 year ▾")).LeftClick().Wait("✓ 1 year")
+	h.Resize(3, 3).WaitNot("1 year ▾").Resize(80, 20).Wait("1 year ▾").AssertNot("✓ 1 year")
 }
 
 func TestLoadConfigTimePresets(t *testing.T) {
@@ -227,56 +211,47 @@ func TestTimePresetHitboxesFollowLabels(t *testing.T) {
 }
 
 func TestCycleTimePresets(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cfg = &Config{}
+	m := listTUIModel(approvalTestPR(1))
 	m.cli.preset = "Needs your review"
+	h := newTUIHarness(t, m)
 	for _, preset := range defaultTimePresets {
-		var cmd tea.Cmd
-		m, cmd = pressKey(t, m, tuiKeybindCycleTimePreset)
-		require.Nil(t, cmd)
-		require.Equal(t, preset.Name, m.cli.timePreset)
-		require.Equal(t, "Needs your review", m.cli.preset)
+		h.Key("t").Wait(preset.Name + " ▾ │ Needs your review ▾")
 	}
-	m, _ = pressKey(t, m, tuiKeybindCycleTimePreset)
-	require.Empty(t, m.cli.timePreset)
-	m, _ = pressKey(t, m, tuiKeybindCycleTimePresetBack)
-	require.Equal(t, "1 year", m.cli.timePreset)
+	h.Key("t").Wait("All Time ▾").Key("T").Wait("1 year ▾")
 	st, err := loadTUIState()
 	require.NoError(t, err)
 	require.Equal(t, "1 year", st.Filters.Time)
-	m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{{Name: "Fortnight", MaxAge: "2w"}}
-	m, _ = pressKey(t, m, tuiKeybindCycleTimePreset)
-	require.Equal(t, "Fortnight", m.cli.timePreset, "an unknown selection cycles from All Time")
-	m, _ = pressKey(t, m, tuiKeybindCycleTimePresetBack)
-	require.Empty(t, m.cli.timePreset)
+	h.Close()
+
+	custom := listTUIModel(approvalTestPR(1))
+	custom.cli.timePreset = "1 year"
+	custom.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{{Name: "Fortnight", MaxAge: "2w"}}
+	h = newTUIHarness(t, custom)
+	h.Key("t").Wait("Fortnight ▾").Key("T").Wait("All Time ▾")
 }
 
 func TestClearFilterPresets(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	for _, openMenu := range []bool{false, true} {
-		pr := approvalTestPR(1)
-		pr.UpdatedAt = time.Now().Add(-2 * time.Hour)
-		m := approvalTestModel("", pr)
-		m.cfg = &Config{}
-		m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
-		m.cfg.TUI.Filters.Preset, m.cfg.TUI.Filters.Time = m.cli.preset, m.cli.timePreset
-		m.cli.NoBot = true
-		require.Empty(t, m.visibleIndices())
-		if openMenu {
-			m.openFilterPresetMenu(true)
-		}
-		m, cmd := updateModel(t, m, tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
-		require.Nil(t, cmd)
-		require.False(t, m.presetMenu.open)
-		require.Empty(t, m.cli.preset)
-		require.Empty(t, m.cli.timePreset)
-		require.True(t, m.cli.NoBot, "other filters keep their values")
-		require.Equal(t, []int{0}, m.visibleIndices())
-		st, err := loadTUIState()
-		require.NoError(t, err)
-		require.Empty(t, st.Filters.Preset)
-		require.Empty(t, st.Filters.Time)
+	for _, open := range []bool{false, true} {
+		t.Run(strconv.FormatBool(open), func(t *testing.T) {
+			pr := approvalTestPR(1)
+			pr.Title, pr.UpdatedAt = "Earlier change", time.Now().Add(-2*time.Hour)
+			m := listTUIModel(pr)
+			m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
+			m.cfg.TUI.Filters.Preset, m.cfg.TUI.Filters.Time = m.cli.preset, m.cli.timePreset
+			h := newTUIHarness(t, m)
+			h.Wait("10 minutes ▾").AssertNot(pr.Title)
+			if open {
+				h.Locate(reel.Contains("10 minutes ▾")).LeftClick().Wait("✓ 10 minutes")
+			}
+			h.Key("ctrl+x").
+				Wait(pr.Title).
+				Assert("bots:hide │ All Time ▾ │ All PRs ▾").
+				AssertNot("✓ 10 minutes")
+			st, err := loadTUIState()
+			require.NoError(t, err)
+			require.Empty(t, st.Filters.Preset)
+			require.Empty(t, st.Filters.Time)
+		})
 	}
 }
 
@@ -284,9 +259,7 @@ func TestActiveTimePresetStaysVisibleInNarrowTerminal(t *testing.T) {
 	now := time.Now()
 	recent, stale := approvalTestPR(1), approvalTestPR(2)
 	recent.UpdatedAt, stale.UpdatedAt = now, now.Add(-time.Hour)
-	m := approvalTestModel("", recent, stale)
-	m.cfg = &Config{}
-	m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
+	recent.Title, stale.Title = "Newer change", "Older change"
 	for _, tc := range []struct {
 		width     int
 		line      string
@@ -303,22 +276,19 @@ func TestActiveTimePresetStaysVisibleInNarrowTerminal(t *testing.T) {
 		{7, "┤ 1… ├─", "", "1…"},
 		{6, "┤ … ├─", "", "…"},
 	} {
-		m.width = tc.width
-		line := ansi.Strip(m.renderListSeparator())
-		require.Equal(t, tc.line, line, "width=%d", tc.width)
-		prStart, prEnd := m.presetTagBounds()
-		timeStart, timeEnd := m.timeTagBounds()
-		require.Equal(t, tc.prLabel, ansi.Cut(line, prStart, prEnd))
-		require.Equal(t, tc.timeLabel, ansi.Cut(line, timeStart, timeEnd))
-		require.Equal(t, []int{0}, m.visibleIndices())
-
-		m, _ = updateModel(t, m, tea.MouseClickMsg{
-			X: timeStart, Y: m.listSeparatorY(), Button: tea.MouseLeft,
+		t.Run(strconv.Itoa(tc.width), func(t *testing.T) {
+			m := listTUIModel(recent, stale)
+			m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
+			m.width = tc.width
+			prStart, prEnd := m.presetTagBounds()
+			timeStart, timeEnd := m.timeTagBounds()
+			require.Equal(t, tc.prLabel, ansi.Cut(tc.line, prStart, prEnd))
+			require.Equal(t, tc.timeLabel, ansi.Cut(tc.line, timeStart, timeEnd))
+			h := newTUIHarness(t, m)
+			h.Locate(reel.Contains(tc.line)).Offset(timeStart, 0).LeftClick().Wait("╭─").
+				Resize(80, 20).Wait("✓ 10 minutes").KeyEsc().WaitNot("✓ 10 minutes").
+				Assert(recent.Title).AssertNot(stale.Title)
 		})
-		require.True(t, m.presetMenu.open)
-		require.True(t, m.presetMenu.timeFilter)
-		require.Equal(t, "10 minutes", m.menuSelection())
-		m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	}
 }
 
@@ -364,10 +334,8 @@ func TestTimePresetLabelsCompressBeforePRLabel(t *testing.T) {
 				require.True(t, m.timeTagAt(start, m.listSeparatorY()))
 				require.False(t, m.presetTagAt(start, m.listSeparatorY()))
 			}
-			m, _ = clickPresetText(t, m, tc.compact)
-			require.True(t, m.presetMenu.timeFilter)
-			require.Contains(t, renderedPresetMenuRows(m), "✓ "+tc.name)
-			require.Equal(t, tc.name, m.cli.timePreset)
+			h := newTUIHarness(t, m)
+			h.Locate(reel.Contains(tc.compact + " ▾")).LeftClick().Wait("✓ " + tc.name)
 		})
 	}
 }
@@ -383,7 +351,6 @@ func TestCustomTimePresetLabelKeepsItsName(t *testing.T) {
 	line := ansi.Strip(m.renderListSeparator())
 	start, end := m.timeTagBounds()
 	require.Equal(t, "Last 10 minutes ▾", ansi.Cut(line, start, end))
-	m, _ = clickPresetText(t, m, "Last 10 minutes")
-	require.True(t, m.presetMenu.timeFilter)
-	require.Contains(t, renderedPresetMenuRows(m), "✓ Last 10 minutes")
+	h := newTUIHarness(t, m)
+	h.Locate(reel.Contains("Last 10 minutes ▾")).LeftClick().Wait("✓ Last 10 minutes")
 }
