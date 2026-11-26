@@ -126,26 +126,15 @@ func TestApprovalHelpMatchesViewerState(t *testing.T) {
 }
 
 func TestListApprovalHelpUsesSelectedTargets(t *testing.T) {
-	hasApprove := func(m tuiModel) bool {
-		return slices.ContainsFunc(m.listHelpPairs(), func(h key.Hint) bool {
-			return h.Key == tuiKeybindApprove && h.Desc == tuiHelpApprove
-		})
-	}
-	approved := approvalTestPR(1)
+	approved, unapproved := approvalTestPR(1), approvalTestPR(2)
 	approved.viewerApproved = true
-	unapproved := approvalTestPR(2)
-	m := approvalTestModel("", approved, unapproved)
-	m.selected[makePRKey(approved)] = true
-	m.selected[makePRKey(unapproved)] = true
-
-	require.True(t, hasApprove(m))
-
-	delete(m.selected, makePRKey(unapproved))
-	m.cursor = 1 // The cursor does not override the selection.
-	require.False(t, hasApprove(m))
-
-	clear(m.selected)
-	require.True(t, hasApprove(m))
+	approved.Title, unapproved.Title = "First change", "Second change"
+	m := listTUIModel(approved, unapproved)
+	m.width, m.sortColumn, m.sortAsc = 160, colTitle, true
+	h := newTUIHarness(t, m)
+	h.Wait(" unapprove ").Key("shift+down").Wait(" approve ").Assert("❯ 2 ")
+	h.Key("space").Wait(" unapprove ").Assert("❯ 2 ")
+	h.KeyUp().Wait("❯ 1 ").Key("space").KeyDown().Wait("❯ 2 ").Assert(" approve ")
 }
 
 func TestBeginApprovalHidesSelfRequiredRowImmediately(t *testing.T) {
@@ -440,18 +429,19 @@ func TestAlreadyApprovedResultSwapsStaleCache(t *testing.T) {
 }
 
 func TestApproveMergeKeepsApprovedButSkipsPending(t *testing.T) {
-	pr := approvalTestPR(1)
-	pr.viewerApproved = true
-	m := approvalTestModel("", pr)
-
-	got, _ := pressKey(t, m, tuiKeybindApproveMerge)
-	require.Equal(t, tuiActionApproveMerge, got.confirmAction)
-
-	m = approvalTestModel("", approvalTestPR(1))
-	m.beginApproval([]prKey{makePRKey(m.rows[0].Item.PR)})
-	got, _ = pressKey(t, m, tuiKeybindApproveMerge)
-	require.Empty(t, got.confirmAction)
-	require.Equal(t, "Approval pending owner/repo#1", ansi.Strip(got.flash.Msg))
+	t.Run("already approved", func(t *testing.T) {
+		pr := approvalTestPR(1)
+		pr.viewerApproved = true
+		h := newTUIHarness(t, listTUIModel(pr))
+		h.Key("A").Wait("Approve & merge " + pr.Ref() + "?").Assert([]string{"No", "Yes"})
+	})
+	t.Run("pending", func(t *testing.T) {
+		pr := approvalTestPR(1)
+		m := listTUIModel(pr)
+		m.beginApproval([]prKey{makePRKey(pr)})
+		h := newTUIHarness(t, m)
+		h.Key("A").Wait("Approval pending " + pr.Ref()).AssertNot("Approve & merge")
+	})
 }
 
 func TestApproveMergeBlocksAnotherApprovalUntilCompletion(t *testing.T) {

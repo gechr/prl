@@ -127,42 +127,20 @@ func TestRenderHelpOverlayIncludesAltRReviewShortcut(t *testing.T) {
 	t.Setenv("WT_SESSION", "")
 	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	m := tuiModel{styles: newTuiStyles()}
-
-	overlay := m.renderHelpOverlay()
-
-	lines := strings.Split(ansi.Strip(overlay), nl)
+	m := listTUIModel(testReviewPullRequest())
+	m.width, m.height = 120, 40
+	h := newTUIHarness(t, m)
+	h.Key("?").Wait("shift+↕  Extend selection")
 	if xos.IsDarwin() {
-		require.Equal(
-			t,
-			"│          D  Toggle draft                          r  Launch AI review                 │",
-			lines[15],
-		)
-		require.Equal(
-			t,
-			"│          m  Merge/Automerge PRs               alt+r  Launch AI review (no confirm)    │",
-			lines[16],
-		)
-		require.Equal(
-			t,
-			"│    shift+↕  Extend selection                      s  Send to Slack                    │",
-			lines[7],
-		)
-		require.Equal(
-			t,
-			"│          A  Approve/Merge PRs                   t/T  Cycle time presets               │",
-			lines[12],
-		)
-		require.Equal(
-			t,
-			"│      alt+a  Toggle approval (no confirm)     ctrl+x  Clear all presets                │",
-			lines[13],
-		)
+		h.Assert([]string{
+			"D  Toggle draft                          r  Launch AI review ",
+			"m  Merge/Automerge PRs               alt+r  Launch AI review (no confirm)",
+			"shift+↕  Extend selection                      s  Send to Slack",
+			"A  Approve/Merge PRs                   t/T  Cycle time presets",
+			"alt+a  Toggle approval (no confirm)     ctrl+x  Clear all presets",
+		})
 	} else {
-		// Without WSL or Herdr, non-darwin has no launcher, which gates the review
-		// shortcuts out of the help overlay.
-		require.Equal(t, aiReviewLauncherNone, currentAIReviewLauncher())
-		require.Contains(t, strings.Fields(strings.Join(lines, " ")), "shift+↕")
+		h.AssertNot("Launch AI review")
 	}
 }
 
@@ -1287,34 +1265,17 @@ func TestActionMsgRemovalRecomputesOffset(t *testing.T) {
 }
 
 func TestBatchActionFailuresSurfaceDetails(t *testing.T) {
-	pr := testReviewPullRequest()
-	msg := batchActionMsg{
+	pr := approvalTestPR(42)
+	h := newTUIHarness(t, listTUIModel(pr))
+	h.SendProgram(batchActionMsg{
 		action: tuiActionApproved,
 		count:  1,
 		failed: 1,
-		failures: []batchResult{{
-			key: makePRKey(pr),
-			ref: pr.Ref(),
-			url: pr.URL,
-			err: errors.New("boom"),
-		}},
-	}
-	m := tuiModel{
-		styles:   newTuiStyles(),
-		selected: make(prKeys),
-	}
-
-	model, cmd := m.Update(msg)
-
-	require.NotNil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, tuiActionInfo, bm.confirmAction)
-	require.Equal(
-		t,
-		"Approve failed:\n\nowner/repo#42: boom",
-		ansi.Strip(bm.confirmPrompt),
-	)
+		failures: []batchResult{
+			{key: makePRKey(pr), ref: pr.Ref(), url: pr.URL, err: errors.New("boom")},
+		},
+	}).Wait("Approve failed:").Assert(pr.Ref() + ": boom")
+	h.Locate(reel.Contains("OK")).LeftClick().WaitNot("Approve failed:").Assert("❯ 1 ")
 }
 
 func TestMergeRefreshKeepsKeyedStateAcrossReorder(t *testing.T) {

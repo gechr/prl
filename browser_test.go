@@ -13,11 +13,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func fakeDesktopCommands(t *testing.T) (string, string) {
+func fakeWSLDesktopCommands(t *testing.T) (string, string) {
 	t.Helper()
 	if !xos.IsLinux() {
 		t.Skip("WSL routing requires Linux")
 	}
+	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
+	t.Setenv("WSL_INTEROP", "")
+	t.Setenv("WT_SESSION", "")
+	return stubDesktopCommands(t)
+}
+
+func stubDesktopCommands(t *testing.T) (string, string) {
+	t.Helper()
 	binDir := t.TempDir()
 	argsFile := filepath.Join(t.TempDir(), "args")
 	inputFile := filepath.Join(t.TempDir(), "input")
@@ -32,21 +40,18 @@ if [ "$PRL_TEST_FAIL" = silent ]; then
   exit 7
 fi
 `
-	for _, name := range []string{"powershell.exe", "xdg-open", "open"} {
+	for _, name := range []string{"powershell.exe", "xdg-open", "open", "pbcopy"} {
 		require.NoError(t, os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o700))
 	}
 	t.Setenv("PATH", binDir)
 	t.Setenv("PRL_TEST_ARGS", argsFile)
 	t.Setenv("PRL_TEST_INPUT", inputFile)
 	t.Setenv("PRL_TEST_FAIL", "")
-	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
-	t.Setenv("WSL_INTEROP", "")
-	t.Setenv("WT_SESSION", "")
 	return argsFile, inputFile
 }
 
 func TestOpenBrowserWSL(t *testing.T) {
-	argsFile, inputFile := fakeDesktopCommands(t)
+	argsFile, inputFile := fakeWSLDesktopCommands(t)
 	urls := []string{
 		"https://github.com/owner/repo/pull/42",
 		"https://github.com/search?q=is%3Apr&text='quoted';$value&unicode=é",
@@ -64,7 +69,7 @@ func TestOpenBrowserWSL(t *testing.T) {
 }
 
 func TestOpenBrowserLinux(t *testing.T) {
-	argsFile, _ := fakeDesktopCommands(t)
+	argsFile, _ := fakeWSLDesktopCommands(t)
 	t.Setenv("WSL_DISTRO_NAME", "")
 	const url = "https://github.com/owner/repo/pull/42"
 	require.NoError(t, openBrowser(url))
@@ -74,14 +79,14 @@ func TestOpenBrowserLinux(t *testing.T) {
 }
 
 func TestOpenBrowserNoURLs(t *testing.T) {
-	argsFile, _ := fakeDesktopCommands(t)
+	argsFile, _ := fakeWSLDesktopCommands(t)
 	require.NoError(t, openBrowser())
 	_, err := os.Stat(argsFile)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestBrowserCommand(t *testing.T) {
-	argsFile, _ := fakeDesktopCommands(t)
+	argsFile, _ := fakeWSLDesktopCommands(t)
 	const url = "https://github.com/search?q=is%3Apr&text='quoted';$value"
 	powerShellArgs := []string{
 		"-NoLogo",
@@ -137,7 +142,7 @@ func TestBrowserCommand(t *testing.T) {
 }
 
 func TestBrowserCommandMissingPowerShell(t *testing.T) {
-	fakeDesktopCommands(t)
+	fakeWSLDesktopCommands(t)
 	t.Setenv("PATH", t.TempDir())
 	cmd, err := browserCommand("https://github.com/owner/repo/pull/42", xos.PlatformWindows, false)
 	require.Nil(t, cmd)
@@ -151,7 +156,7 @@ func TestBrowserCommandMissingPowerShell(t *testing.T) {
 }
 
 func TestCopyToClipboardWSL(t *testing.T) {
-	argsFile, inputFile := fakeDesktopCommands(t)
+	argsFile, inputFile := fakeWSLDesktopCommands(t)
 	const text = "PR #42: café \u4e16\u754c 🐱\nsecond line\n'\";$value & %PATH%"
 	require.NoError(t, copyToClipboard(text))
 	args, err := os.ReadFile(argsFile)
@@ -166,7 +171,7 @@ func TestCopyToClipboardWSL(t *testing.T) {
 }
 
 func TestDesktopWSLInteropDetection(t *testing.T) {
-	_, inputFile := fakeDesktopCommands(t)
+	_, inputFile := fakeWSLDesktopCommands(t)
 	t.Setenv("WSL_DISTRO_NAME", "")
 	t.Setenv("WSL_INTEROP", "/run/WSL/123_interop")
 	require.NoError(t, copyToClipboard("interop-only"))
@@ -211,7 +216,7 @@ func TestFindDesktopPowerShell(t *testing.T) {
 }
 
 func TestDesktopCommandFailures(t *testing.T) {
-	fakeDesktopCommands(t)
+	fakeWSLDesktopCommands(t)
 	t.Setenv("PRL_TEST_FAIL", "1")
 	for _, tc := range []struct {
 		name string
@@ -229,7 +234,7 @@ func TestDesktopCommandFailures(t *testing.T) {
 }
 
 func TestOpenBrowserStopsAfterFailure(t *testing.T) {
-	_, inputFile := fakeDesktopCommands(t)
+	_, inputFile := fakeWSLDesktopCommands(t)
 	t.Setenv("PRL_TEST_FAIL", "1")
 	const first = "https://github.com/owner/repo/pull/42"
 	err := openBrowser(first, "https://github.com/owner/repo/pull/43")
@@ -242,7 +247,7 @@ func TestOpenBrowserStopsAfterFailure(t *testing.T) {
 }
 
 func TestRunDesktopCommandSilentFailure(t *testing.T) {
-	fakeDesktopCommands(t)
+	fakeWSLDesktopCommands(t)
 	t.Setenv("PRL_TEST_FAIL", "silent")
 	cmd, err := desktopPowerShellCommand("Set-Clipboard -Value", "text", true)
 	require.NoError(t, err)
