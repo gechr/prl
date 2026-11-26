@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"getsteep.dev/steep/reel"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
 	"github.com/stretchr/testify/require"
@@ -294,16 +295,32 @@ func TestStatusReplyBeforeMutationCannotOverwriteChangedPR(t *testing.T) {
 	require.Equal(t, valueReviewApproved, m.prForKey(key).ReviewDecision)
 }
 
-func TestFetchedStatusRebuildsListCells(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cli.Columns.Values = []string{colStatus, colReview}
-	key := m.rowKeyAt(0)
-	fresh := approvalTestPR(1)
-	fresh.ReviewDecision = valueReviewApproved
-	fresh.MergeStatus = MergeStatusReady
-	m, _ = updateModel(t, m, prStatusMsg{key: key, pr: fresh})
-	require.Equal(t, valueReviewFilterApproved, m.rows[0].Item.Review)
-	require.Equal(t, "ready approved", rowFilterText(m.rows[0]))
+func TestListUpdatesRefreshSearchableCells(t *testing.T) {
+	pr, other := approvalTestPR(1), approvalTestPR(2)
+	pr.Title, other.Title = "First change", "Other change"
+	fresh := pr
+	fresh.MergeStatus, fresh.ReviewDecision = MergeStatusReady, valueReviewApproved
+	key := makePRKey(pr)
+	for _, tc := range []struct {
+		name    string
+		columns []string
+		msg     tea.Msg
+		query   string
+	}{
+		{"merge action", []string{colStatus, colState, colTitle}, actionMsg{key: key, action: tuiActionMerged}, "closed merged"},
+		{"status refresh", []string{colStatus, colReview, colTitle}, prStatusMsg{key: key, pr: fresh}, "ready approved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := listTUIModel(pr, other)
+			m.cli.State, m.cli.Columns.Values = valueAll, tc.columns
+			h := newTUIHarness(t, m)
+			h.Wait([]string{pr.Title, other.Title}).SendProgram(tc.msg)
+			h.Key("/").Paste(tc.query).Key("enter").Wait("/> " + tc.query).AssertNot(other.Title)
+			row := h.Locate(reel.Contains(pr.Title))
+			fields := strings.Fields(strings.Split(h.View(), nl)[row.Y])
+			require.Equal(t, "❯ 1 "+tc.query+" "+pr.Title, strings.Join(fields, " "))
+		})
+	}
 }
 
 func TestStatusEventKeepsConfirmedApprovalAndHiddenRows(t *testing.T) {

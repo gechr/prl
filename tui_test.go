@@ -1191,47 +1191,18 @@ func assertRenderedFullScreen(t *testing.T, content string, width, height int) {
 	}
 }
 
-func TestActionMsgRemovalRecomputesOffset(t *testing.T) {
-	prs := []PullRequest{
-		testReviewPullRequest(),
-		{Number: 43, Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"}},
-		{Number: 44, Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"}},
-		{Number: 45, Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"}},
-		{Number: 46, Repository: Repository{Name: "repo", NameWithOwner: "owner/repo"}},
+func TestClosingLastVisibleRowKeepsCursorOnScreen(t *testing.T) {
+	prs := make([]PullRequest, 5)
+	for i := range prs {
+		prs[i] = approvalTestPR(i + 1)
+		prs[i].Title = fmt.Sprintf("Change %d", i+1)
 	}
-	rows := make([]TableRow, len(prs))
-	for i, pr := range prs {
-		pr.State = valueOpen
-		rows[i] = TableRow{Item: PRRowModel{PR: pr}}
-	}
-	m := tuiModel{
-		cli:         testCLI(),
-		rows:        rows,
-		cursor:      len(rows) - 1,
-		offset:      len(rows) - 1,
-		height:      6,
-		width:       80,
-		styles:      newTuiStyles(),
-		filterInput: textinput.New(),
-		selected:    make(prKeys),
-	}
-
-	for _, row := range rows {
-		m.items = append(m.items, row.Item)
-	}
-	m.confirmed = newConfirmedPRList(m.items)
-	model, cmd := m.Update(actionMsg{
-		index:  len(rows) - 1,
-		key:    makePRKey(prs[len(prs)-1]),
-		action: tuiActionClosed,
-	})
-
-	require.NotNil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, isShown(bm, makePRKey(prs[len(prs)-1])))
-	require.Less(t, bm.offset, m.offset)
-	require.Equal(t, bm.scrolledOffset(), bm.offset)
+	m := listTUIModel(prs...)
+	m.height, m.sortColumn, m.sortAsc = 5, colTitle, true
+	h := newTUIHarness(t, m)
+	h.Key("G").Wait("❯ 5  Change 5").AssertNot("Change 4")
+	h.SendProgram(actionMsg{key: makePRKey(prs[4]), action: tuiActionClosed}).
+		Wait("❯ 4  Change 4").AssertNot("Change 5")
 }
 
 func TestBatchActionFailuresSurfaceDetails(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -167,14 +166,4 @@ func TestConfirmedActionExpiresOrLeavesResults(t *testing.T) {
 			require.Equal(t, !missing, isShown(m, key))
 		})
 	}
-}
-
-func TestActionRerendersRowCells(t *testing.T) {
-	m := approvalTestModel("", approvalTestPR(1))
-	m.cli.State = valueAll
-	key := m.rowKeyAt(0)
-	m, _ = updateModel(t, m, actionMsg{key: key, action: tuiActionMerged})
-	fields := strings.Fields(strings.ToLower(rowFilterText(m.rows[0])))
-	require.GreaterOrEqual(t, len(fields), 2)
-	require.Equal(t, []string{valueClosed, valueMerged}, fields[:2])
 }
