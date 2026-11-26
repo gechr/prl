@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
+	"getsteep.dev/steep/reel"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
 	"github.com/stretchr/testify/require"
@@ -29,28 +29,17 @@ func footerLines(m tuiModel) ([]string, int) {
 
 // Clicking anywhere on a "key desc" hint acts like pressing its key.
 func TestHelpHintClickPressesItsKey(t *testing.T) {
-	for _, tc := range []struct {
-		label string
-		check func(tuiModel) bool
-	}{
-		{"Options", func(m tuiModel) bool { return m.showOptions }},
-		{"? " + tuiHelpHelp, func(m tuiModel) bool { return m.showHelp }},
+	for _, tc := range []struct{ label, overlay string }{
+		{"Options", "Stacks"},
+		{"? " + tuiHelpHelp, "Press any key to dismiss"},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			m := helpClickTestModel(3)
-			lines, top := footerLines(m)
-			y, start := -1, 0
-			for i, line := range lines {
-				if before, _, ok := strings.Cut(line, tc.label); ok {
-					y, start = top+i, ansi.StringWidth(before)
-					break
-				}
-			}
-			require.NotEqual(t, -1, y, "hint is drawn")
-			for _, x := range []int{start, start + ansi.StringWidth(tc.label) - 1} {
-				after, _ := updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-				require.True(t, tc.check(after), "x=%d", x)
-				require.Equal(t, 0, after.cursor)
+			m.width, m.height = 120, 35
+			h := newTUIHarness(t, m)
+			for _, offset := range []int{0, ansi.StringWidth(tc.label) - 1} {
+				h.Locate(reel.Contains(tc.label)).Offset(offset, 0).LeftClick().Wait(tc.overlay)
+				h.KeyEsc().WaitNot(tc.overlay).Assert("❯ 1")
 			}
 		})
 	}
@@ -119,29 +108,13 @@ func screenLine(m tuiModel, y int) string {
 }
 
 func TestHelpHintHoverHighlightsTheHint(t *testing.T) {
-	m := helpClickTestModel(3)
-	lines, top := footerLines(m)
-	y, x := -1, 0
-	for i, line := range lines {
-		if before, _, ok := strings.Cut(line, "? "+tuiHelpHelp); ok {
-			y, x = top+i, ansi.StringWidth(before)
-			break
-		}
-	}
-	require.NotEqual(t, -1, y, "help hint is drawn")
-	base := m.View().Content
-
-	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: x + 2, Y: y})
-	require.Equal(t, hoverState{helpX: x + 2, helpY: y, helpOK: true}, m.hover)
-	i, ok := m.listHelpHintIndex(x, y)
-	require.True(t, ok)
-	hover := i
-	bar := m.helpBar(m.listHelpPairs())
-	bar.Renderer.Hover, bar.Renderer.HoverBG = &hover, cursorLineBG
-	require.Equal(t, bar.Render(), m.listHelpBar().Render(), "the hovered hint is painted")
-	require.NotEqual(t, base, m.View().Content, "the hovered view differs")
-	require.Equal(t, ansi.Strip(base), ansi.Strip(m.View().Content), "text is unchanged")
-
-	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 0, Y: 0})
-	require.Equal(t, base, m.View().Content, "moving away clears the highlight")
+	h := newTUIHarness(t, helpClickTestModel(3))
+	hint := h.Locate(reel.Contains("? "+tuiHelpHelp)).Offset(2, 0)
+	base := cellStyle(h, hint)
+	text := h.View()
+	hint.Hover()
+	waitCellStyle(t, h, hint, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+	require.Equal(t, text, h.View())
+	h.Locate(reel.Contains("TITLE")).Hover()
+	waitCellStyle(t, h, hint, func(s reel.CellStyle) bool { return s == base })
 }

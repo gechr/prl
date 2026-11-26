@@ -69,10 +69,6 @@ const (
 	reviewEffortOptionLabel   = "Effort"
 	reviewYoloOptionLabel     = "YOLO"
 
-	reviewProviderOptionRow = 0
-	reviewModelOptionRow    = 1
-	reviewEffortOptionRow   = 2
-
 	reviewYoloNo  = "no"
 	reviewYoloYes = "yes"
 

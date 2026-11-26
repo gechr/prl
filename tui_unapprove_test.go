@@ -80,17 +80,15 @@ func TestUnapproveFormSubmitsReasonAndSettles(t *testing.T) {
 func TestUnapproveFormRequiresReasonAndCanCancel(t *testing.T) {
 	pr := approvalTestPR(1)
 	pr.viewerApproved = true
-	m := approvalTestModel("", pr)
-	m, _ = pressKey(t, m, tuiKeybindApprove)
-	formDialog, ok := m.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	formDialog.Model().SetValue(0, "")
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
-	require.Equal(t, tuiActionUnapprove, m.confirmAction)
-	require.Empty(t, m.pendingApprovals)
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
-	require.Empty(t, m.confirmAction)
-	require.True(t, isViewerApproved(*m.prForKey(makePRKey(pr))))
+	h := newTUIHarness(t, listTUIModel(pr))
+	h.Key(tuiKeybindApprove).Wait(defaultUnapproveMessage).Key("ctrl+a").Key("ctrl+k").
+		WaitNot(defaultUnapproveMessage).
+		Key("alt+enter").Paste("Still editing").Wait("Still editing").Assert("Reason")
+	h.KeyEsc().
+		WaitNot("Still editing").
+		Key(tuiKeybindApprove).
+		Wait("Unapprove " + pr.Ref() + "?").
+		Assert("Still editing")
 }
 
 func TestUnapproveHelpAndMixedSelection(t *testing.T) {

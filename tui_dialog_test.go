@@ -1,11 +1,15 @@
 package main
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"getsteep.dev/steep"
+	"getsteep.dev/steep/reel"
 	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/dialog"
 	"github.com/gechr/x/ansi"
@@ -15,15 +19,12 @@ import (
 type confirmDoneMsg struct{}
 
 func plainConfirmModel() tuiModel {
-	m := tuiModel{
-		confirmAction:  tuiActionApprove,
-		confirmPrompt:  "Approve owner/repo#42?",
-		confirmSubject: "owner/repo#42",
-		confirmCmd:     func() tea.Msg { return confirmDoneMsg{} },
-		styles:         newTuiStyles(),
-		width:          80,
-		height:         24,
-	}
+	m := approvalTestModel("", testReviewPullRequest())
+	m.confirmAction = tuiActionApprove
+	m.confirmPrompt = "Approve owner/repo#42?"
+	m.confirmSubject = "owner/repo#42"
+	m.confirmCmd = func() tea.Msg { return confirmDoneMsg{} }
+	m.height = 24
 	return m
 }
 
@@ -51,78 +52,58 @@ func buttonAt(t *testing.T, content, label string) (int, int) {
 }
 
 func TestPlainConfirmDialogYAccepts(t *testing.T) {
-	bm := openPlainConfirm(t, plainConfirmModel())
-
-	model, cmd := bm.Update(tea.KeyPressMsg{Text: "y", Code: 'y'})
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.NotNil(t, cmd)
-	require.Equal(t, actionDoneMsg{msg: confirmDoneMsg{}}, cmd())
-	require.Empty(t, bm.confirmAction)
-	require.False(t, bm.dialogs.Active())
-	require.Equal(t, 1, strings.Count(ansi.Strip(bm.flash.Msg), "Approving"))
-	require.Equal(t, 1, bm.actionsInFlight)
+	m := plainConfirmModel()
+	started := make(chan int, 1)
+	m.confirmOnAccept = func(m *tuiModel) { started <- m.actionsInFlight }
+	ran := make(chan struct{})
+	m.confirmCmd = func() tea.Msg { close(ran); return confirmDoneMsg{} }
+	h := newTUIHarness(t, openPlainConfirm(t, m))
+	screen := h.Wait(m.confirmPrompt).Key("y").Wait("Approving").AssertNot(m.confirmPrompt).View()
+	require.Equal(t, 1, strings.Count(screen, "Approving"))
+	require.Len(t, started, 1)
+	require.Equal(t, 1, <-started)
+	select {
+	case <-ran:
+	case <-time.After(steep.DefaultTimeout):
+		t.Fatal("the confirmation command did not run")
+	}
 }
 
 func TestPlainConfirmDialogEscDismisses(t *testing.T) {
-	bm := openPlainConfirm(t, plainConfirmModel())
-
-	model, cmd := bm.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Nil(t, cmd)
-	require.Empty(t, bm.confirmAction)
-	require.False(t, bm.dialogs.Active())
-	require.Empty(t, bm.flash.Msg)
+	m := openPlainConfirm(t, plainConfirmModel())
+	h := newTUIHarness(t, m)
+	h.Wait(m.confirmPrompt).KeyEsc().WaitNot(m.confirmPrompt).AssertNot("Approving")
 }
 
 func TestPlainConfirmDialogEnterOnNoDeclines(t *testing.T) {
-	bm := openPlainConfirm(t, plainConfirmModel())
-
-	model, _ := bm.Update(tea.KeyPressMsg{Code: tea.KeyLeft}) // focus No
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	model, cmd := bm.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Nil(t, cmd)
-	require.Empty(t, bm.confirmAction)
+	m := openPlainConfirm(t, plainConfirmModel())
+	h := newTUIHarness(t, m)
+	h.Wait(m.confirmPrompt).KeyLeft().Key("enter").WaitNot(m.confirmPrompt).AssertNot("Approving")
 }
 
 func TestPlainConfirmDialogClickButtons(t *testing.T) {
-	bm := openPlainConfirm(t, plainConfirmModel())
-	x, y := buttonAt(t, bm.View().Content, "Yes")
-	model, cmd := bm.Update(tea.MouseClickMsg{X: x + 1, Y: y, Button: tea.MouseLeft})
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.NotNil(t, cmd)
-	require.Equal(t, actionDoneMsg{msg: confirmDoneMsg{}}, cmd())
-	require.Empty(t, bm.confirmAction)
-
-	bm = openPlainConfirm(t, plainConfirmModel())
-	x, y = buttonAt(t, bm.View().Content, "No")
-	model, cmd = bm.Update(tea.MouseClickMsg{X: x + 1, Y: y, Button: tea.MouseLeft})
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Nil(t, cmd)
-	require.Empty(t, bm.confirmAction)
-
-	// A click on the prompt row presses nothing: the confirm stays open.
-	bm = openPlainConfirm(t, plainConfirmModel())
-	x, y = buttonAt(t, bm.View().Content, "Approve owner/repo#42?")
-	model, _ = bm.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, tuiActionApprove, bm.confirmAction)
-	require.True(t, bm.dialogs.Active())
+	for _, button := range []string{"Yes", "No"} {
+		t.Run(button, func(t *testing.T) {
+			m := openPlainConfirm(t, plainConfirmModel())
+			h := newTUIHarness(t, m)
+			h.Locate(reel.Contains(m.confirmPrompt)).LeftClick()
+			h.Locate(reel.Contains(button)).Offset(1, 0).LeftClick().WaitNot(m.confirmPrompt)
+			if button == "Yes" {
+				h.Wait("Approving")
+			} else {
+				h.AssertNot("Approving")
+			}
+		})
+	}
 }
 
 func TestPlainConfirmDialogRendersPromptAndButtons(t *testing.T) {
-	bm := openPlainConfirm(t, plainConfirmModel())
-	content := ansi.Strip(bm.View().Content)
-	require.Equal(t, 1, strings.Count(content, "Approve owner/repo#42?"))
-	require.Equal(t, 1, strings.Count(content, "No"))
-	require.Equal(t, 1, strings.Count(content, "Yes"))
+	m := openPlainConfirm(t, plainConfirmModel())
+	h := newTUIHarness(t, m)
+	screen := h.Wait(m.confirmPrompt).View()
+	for _, label := range []string{m.confirmPrompt, "No", "Yes"} {
+		require.Equal(t, 1, strings.Count(screen, label), label)
+	}
 }
 
 func TestNerdConfirmDialogsRenderPillCapsWithoutShifting(t *testing.T) {
@@ -173,21 +154,12 @@ func TestInfoConfirmUsesDialog(t *testing.T) {
 }
 
 func TestInfoConfirmDialogQDismisses(t *testing.T) {
-	m := tuiModel{
-		confirmAction: tuiActionInfo,
-		confirmPrompt: "Approve failed",
-		styles:        newTuiStyles(),
-		width:         80,
-		height:        24,
-	}
+	m := plainConfirmModel()
+	m.confirmAction = tuiActionInfo
+	m.confirmPrompt = "Approve failed"
 	m.syncConfirmDialog()
-
-	model, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Nil(t, cmd)
-	require.Empty(t, bm.confirmAction)
-	require.False(t, bm.dialogs.Active())
+	h := newTUIHarness(t, m)
+	h.Wait(m.confirmPrompt).Key("q").WaitNot(m.confirmPrompt).Assert("Options")
 }
 
 func TestInputConfirmUsesFormDialog(t *testing.T) {
@@ -229,108 +201,63 @@ func TestInputConfirmDialogSubmitsTrimmedText(t *testing.T) {
 	m := plainConfirmModel()
 	m.confirmHasInput = true
 	m.confirmCmd = nil
-	var submission confirmSubmission
-	m.confirmCmdFn = func(got confirmSubmission) tea.Cmd {
-		submission = got
+	submitted := make(chan string, 1)
+	m.confirmCmdFn = func(s confirmSubmission) tea.Cmd {
+		submitted <- s.Input
 		return func() tea.Msg { return confirmDoneMsg{} }
 	}
 	m.syncConfirmDialog()
-	d, ok := m.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	d.Model().SetValue(0, "  line one\nline two  ")
-
-	model, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt})
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.NotNil(t, cmd)
-	require.Equal(t, "line one\nline two", submission.Input)
-	require.Empty(t, bm.confirmAction)
-	require.False(t, bm.dialogs.Active())
+	h := newTUIHarness(t, m)
+	h.Wait(m.confirmPrompt).Paste("  line one\nline two  ").
+		Wait("line two").Key("alt+enter").Wait("Approving").AssertNot(m.confirmPrompt)
+	require.Len(t, submitted, 1)
+	require.Equal(t, "line one\nline two", <-submitted)
 }
 
 func TestInputConfirmDialogRestoresCanceledDraftForSamePR(t *testing.T) {
-	open := func(m tuiModel, url string) tuiModel {
-		m.confirmAction = tuiActionClose
-		m.confirmPrompt = "Close owner/repo#42?"
-		m.confirmSubject = "owner/repo#42"
-		m.confirmURL = url
-		m.confirmHasInput = true
-		m.confirmCmdFn = func(confirmSubmission) tea.Cmd { return nil }
-		m.syncConfirmDialog()
-		return m
-	}
-
-	m := open(plainConfirmModel(), "https://example.com/owner/repo/pull/42")
-	d, ok := m.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	d.Model().SetValue(0, "half-written\ncomment")
-	model, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	m, ok = model.(tuiModel)
-	require.True(t, ok)
-
-	other := open(m, "https://example.com/owner/repo/pull/43")
-	d, ok = other.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	require.Empty(t, d.Model().Value(0))
-	model, _ = other.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	m, ok = model.(tuiModel)
-	require.True(t, ok)
-
-	m = open(m, "https://example.com/owner/repo/pull/42")
-	d, ok = m.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	require.Equal(t, "half-written\ncomment", d.Model().Value(0))
-
-	model, _ = m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
-	m, ok = model.(tuiModel)
-	require.True(t, ok)
-	_, saved := m.confirmDrafts[confirmDraftKey{
-		action: tuiActionClose,
-		url:    "https://example.com/owner/repo/pull/42",
-	}]
-	require.False(t, saved)
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	first.Title, second.Title = "First change", "Second change"
+	second.URL = "https://example.com/pulls/2"
+	m := listTUIModel(first, second)
+	m.actions = unapproveTestRunner(t, func(r *http.Request) (*http.Response, error) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/repos/owner/repo/issues/1/comments", r.URL.Path)
+		return jsonResponse(r, http.StatusCreated, "{}"), nil
+	})
+	h := newTUIHarness(t, m)
+	firstPrompt, secondPrompt := "Comment on "+first.Ref()+"?", "Comment on "+second.Ref()+"?"
+	h.Locate(reel.Contains(first.Title)).
+		LeftClick().
+		Key("c").
+		Wait(firstPrompt).
+		Paste("half-written\ncomment body").
+		Wait("comment body").
+		KeyEsc().
+		WaitNot(firstPrompt)
+	h.Locate(reel.Contains(second.Title)).
+		LeftClick().
+		Key("c").
+		Wait(secondPrompt).
+		AssertNot("half-written").
+		KeyEsc().
+		WaitNot(secondPrompt)
+	h.Locate(reel.Contains(first.Title)).
+		LeftClick().
+		Key("c").
+		Wait(firstPrompt).
+		Wait([]string{"half-written", "comment body"})
+	h.Key("ctrl+s").Wait("Commented").Key("c").Wait(firstPrompt).AssertNot("comment body")
 }
 
 func TestReviewConfirmDialogUpdatesDependentFields(t *testing.T) {
-	m := tuiModel{
-		styles: newTuiStyles(),
-	}
+	m := approvalTestModel("", testReviewPullRequest())
+	m.width, m.height = 120, 40
 	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
 	m.syncConfirmDialog()
-
-	model, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	d, ok := bm.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	require.Equal(t, string(reviewProviderGemini), d.Model().Value(0))
-	require.Equal(t, defaultReviewModel(nil, reviewProviderGemini), d.Model().Value(1))
-	require.Equal(
-		t,
-		defaultReviewEffort(
-			nil,
-			reviewProviderGemini,
-			defaultReviewModel(nil, reviewProviderGemini),
-		),
-		d.Model().Value(reviewEffortOptionRow),
-	)
-
-	model, cmd = bm.Update(tea.KeyPressMsg{Code: tea.KeyRight})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	d, ok = bm.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	require.Equal(t, string(reviewProviderClaude), d.Model().Value(0))
-	require.Equal(t, defaultReviewModel(nil, reviewProviderClaude), d.Model().Value(1))
-	require.Equal(
-		t,
-		defaultReviewEffort(
-			nil,
-			reviewProviderClaude,
-			defaultReviewModel(nil, reviewProviderClaude),
-		),
-		d.Model().Value(reviewEffortOptionRow),
-	)
+	h := newTUIHarness(t, m)
+	for _, provider := range []reviewProvider{reviewProviderGemini, reviewProviderClaude} {
+		model := defaultReviewModel(nil, provider)
+		h.KeyRight().
+			Wait([]string{string(provider), model, defaultReviewEffort(nil, provider, model)})
+	}
 }

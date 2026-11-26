@@ -14,10 +14,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	"getsteep.dev/steep"
 	"getsteep.dev/steep/reel"
 	cansi "github.com/charmbracelet/x/ansi"
-	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
@@ -247,73 +245,35 @@ func TestInlineHelpKeyEmbedsModifiedCtrlShiftChord(t *testing.T) {
 }
 
 func TestDoPasteRoutesToFocusedReviewPrompt(t *testing.T) {
-	m := tuiModel{
-		styles: newTuiStyles(),
-		view:   tuiViewList,
-	}
+	m := listTUIModel(testReviewPullRequest())
+	m.width, m.height = 120, 40
 	m = m.prepareAIReviewConfirm(testReviewPullRequest(), 0)
 	m.confirmInputValue = ""
 	m.syncConfirmDialog()
-	for range len(m.confirmOptions) {
-		model, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-		var ok bool
-		m, ok = model.(tuiModel)
-		require.True(t, ok)
-	}
-
-	model, _ := m.Update(tea.PasteMsg{Content: "line one\nline two"})
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	d, ok := bm.dialogs.Top().(*dialog.Form)
-	require.True(t, ok)
-	values := d.Model().Values()
-	require.Equal(t, "line one\nline two", values[len(values)-1])
+	h := newTUIHarness(t, m)
+	h.Key("tab", reel.Repeat(len(m.confirmOptions))).Paste("line one\nline two")
+	first := h.Locate(reel.Contains("line one"))
+	second := h.Locate(reel.Contains("line two"))
+	require.Equal(t, first.Y+1, second.Y)
+	require.Equal(t, first.X, second.X)
 }
 
 func TestDoPasteRoutesToFocusedFilter(t *testing.T) {
-	m := tuiModel{
-		filterInput: textinput.New(),
-		rows: []TableRow{
-			{Cells: []table.Cell{{Plain: "owner/repo alpha"}}},
-			{Cells: []table.Cell{{Plain: "owner/repo beta"}}},
-		},
-		view: tuiViewList,
-	}
-	m.filterInput.Focus()
-
-	model, _ := m.Update(tea.PasteMsg{Content: "beta"})
-
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, "beta", bm.filterInput.Value())
-	require.Equal(t, 1, bm.cursor)
+	alpha, beta := approvalTestPR(1), approvalTestPR(2)
+	alpha.Title, beta.Title = "alpha", "beta"
+	h := newTUIHarness(t, listTUIModel(alpha, beta))
+	h.Wait([]string{"alpha", "beta"}).Key("/").Paste("beta")
+	h.WaitNot("alpha").Assert("❯ 1  beta")
 }
 
 func TestRenderHelpOverlayAlignsExtendedSelectionKey(t *testing.T) {
-	m := tuiModel{styles: newTuiStyles()}
-
-	overlay := ansi.Strip(m.renderHelpOverlay())
-	lines := strings.Split(overlay, nl)
-
-	spaceLine := ""
-	shiftLine := ""
-	for _, line := range lines {
-		if strings.Contains(line, "Toggle selection") {
-			spaceLine = line
-		}
-		if strings.Contains(line, "Extend selection") {
-			shiftLine = line
-		}
-	}
-
-	require.NotEmpty(t, spaceLine)
-	require.NotEmpty(t, shiftLine)
-	require.Equal(
-		t,
-		lg.Width(strings.SplitN(spaceLine, "Toggle selection", 2)[0]),
-		lg.Width(strings.SplitN(shiftLine, "Extend selection", 2)[0]),
-	)
+	m := listTUIModel(testReviewPullRequest())
+	m.width, m.height = 120, 40
+	h := newTUIHarness(t, m)
+	h.Key("?")
+	space := h.Locate(reel.Contains("Toggle selection"))
+	shift := h.Locate(reel.Contains("Extend selection"))
+	require.Equal(t, space.X, shift.X)
 }
 
 func TestTuiTableRendererSuppressesIndexColumn(t *testing.T) {
@@ -1536,7 +1496,7 @@ func TestDetailScrollbar(t *testing.T) {
 
 func testViewportScrollbar(t *testing.T, m tuiModel, first, last string) {
 	t.Helper()
-	h := steep.NewHarness(t, m, steep.WithWindowSize(m.width, m.height))
+	h := newTUIHarness(t, m)
 	h.Wait(first).AssertNot(last)
 
 	top := h.Locate(reel.Contains("█"))
@@ -1551,26 +1511,16 @@ func testViewportScrollbar(t *testing.T, m tuiModel, first, last string) {
 }
 
 func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
-	m := tuiModel{
-		confirmAction: tuiActionInfo,
-		confirmPrompt: strings.TrimSuffix(strings.Repeat("line\n", 40), nl),
-		width:         80,
-		height:        18,
-		styles:        newTuiStyles(),
-	}
+	m := plainConfirmModel()
+	m.confirmAction = tuiActionInfo
+	m.confirmPrompt = "First message\n" + strings.Repeat("Message\n", 50) + "Last message"
 	m.syncConfirmDialog()
-	m.View()
-
-	hitbox, ok := m.scrollbarHitbox(scrollbarTargetConfirm)
-	require.True(t, ok)
-
-	require.True(t, m.handleScrollbarPress(tea.Mouse{
-		X:      hitbox.X,
-		Y:      hitbox.Y + hitbox.Height - 1,
-		Button: tea.MouseLeft,
-	}))
-
-	require.GreaterOrEqual(t, m.dialogs.ScrollPercent(), 0.9)
+	h := newTUIHarness(t, m)
+	h.Wait("First message").AssertNot("Last message")
+	h.Locate(reel.Nth(-1, reel.Contains("┃"))).
+		LeftClick().
+		Wait("Last message").
+		AssertNot("First message")
 }
 
 func TestWrapDiffLinesExpandsTabs(t *testing.T) {
