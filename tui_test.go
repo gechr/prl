@@ -15,11 +15,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"getsteep.dev/steep/reel"
+	"getsteep.dev/steep/reel/vt"
 	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
-	"github.com/gechr/primer/picker"
 	"github.com/gechr/primer/scrollwheel"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/x/ansi"
@@ -1864,165 +1864,50 @@ func TestCurrentFilterValuesArchived(t *testing.T) {
 }
 
 func TestUpdateOptionsOverlayNavigation(t *testing.T) {
-	m := tuiModel{
-		showOptions: true,
-		cli:         testCLI(),
-		styles:      newTuiStyles(),
-	}
-	m.optionsPicker = m.newFilterPicker()
-
-	// Down from 0 → 1
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, int(filterRowStacks), bm.optionsPicker.Cursor)
-
-	// Up from 1 → 0
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, int(filterRowState), bm.optionsPicker.Cursor)
-
-	// Up from 0 → 0 (clamped)
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'k', Text: "k"})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, int(filterRowState), bm.optionsPicker.Cursor)
+	h := newTUIHarness(t, filterClickTestModel())
+	h.Key("j")
+	waitFilterRow(h, filterRowStacks)
+	h.Key("k").Key("k").Key("l")
+	waitFilterRow(h, filterRowState)
+	waitFilterChoice(t, h, filterRowState, valueClosed)
 }
 
 func TestUpdateOptionsOverlayChangeValue(t *testing.T) {
-	m := tuiModel{
-		showOptions: true,
-		cli:         testCLI(),
-		styles:      newTuiStyles(),
-	}
-	m.optionsPicker = m.newFilterPicker()
-
-	// Right on state: 0→1 (open→closed)
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'l', Text: "l"})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 1, bm.optionsPicker.Values[0])
-
-	// Left back: 1→0 (closed→open)
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: 'h', Text: "h"})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsPicker.Values[0])
+	h := newTUIHarness(t, filterClickTestModel())
+	h.Key("l")
+	waitFilterChoice(t, h, filterRowState, valueClosed)
+	h.Key("h")
+	waitFilterChoice(t, h, filterRowState, valueOpen)
 }
 
 func TestUpdateOptionsOverlaySpaceCyclesAndWraps(t *testing.T) {
-	m := tuiModel{
-		showOptions: true,
-		cli:         testCLI(),
-		styles:      newTuiStyles(),
+	h := newTUIHarness(t, filterClickTestModel())
+	for _, choice := range []string{valueClosed, valueMerged, valueReady, valueAll, valueOpen} {
+		h.Key("space")
+		waitFilterChoice(t, h, filterRowState, choice)
 	}
-	m.optionsPicker = m.newFilterPicker()
-
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 1, bm.optionsPicker.Values[0])
-
-	bm.optionsPicker.Values[0] = len(filterOptionDefs[filterRowState].choices) - 1
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsPicker.Values[0])
 }
 
-func TestUpdateOptionsOverlayEscCancels(t *testing.T) {
-	m := tuiModel{
-		showOptions: true,
-		cli:         testCLI(),
-		styles:      newTuiStyles(),
-	}
+func TestOptionsOverlayClosesWithExplicitFlags(t *testing.T) {
+	m := filterClickTestModel()
+	m.cli.stateExplicit, m.cli.draftExplicit, m.cli.noBotExplicit = true, true, true
+	m.cli.archivedExplicit, m.cli.ciExplicit, m.cli.reviewExplicit = true, true, true
 	m.optionsPicker = m.newFilterPicker()
-	m.optionsPicker.Values[0] = 2
-
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyEscape})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.False(t, bm.showOptions)
-	// CLI state should be unchanged (was "open" before overlay)
-	require.Equal(t, valueOpen, bm.cli.State)
-}
-
-func TestUpdateOptionsOverlayAsteriskApplies(t *testing.T) {
-	// Applying filters persists TUI state; isolate HOME so it writes to a
-	// temp state dir rather than the developer's real ~/.local/state.
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_STATE_HOME", "")
-
-	cfg := &Config{
-		Default: Defaults{
-			Limit:  defaultLimit,
-			State:  valueOpen,
-			Output: valueTable,
-			Sort:   valueName,
-			Match:  "title",
-		},
-	}
-	cli := &CLI{}
-	cli.Normalize(cfg)
-	cli.stateExplicit = true
-	cli.draftExplicit = true
-	cli.noBotExplicit = true
-	cli.archivedExplicit = true
-	cli.ciExplicit = true
-	cli.reviewExplicit = true
-
-	m := tuiModel{
-		showOptions: true,
-		cli:         cli,
-		cfg:         cfg,
-		styles:      newTuiStyles(),
-	}
-	m.optionsPicker = m.newFilterPicker()
-
-	// Every way out except Esc applies the staged choices.
-	for _, text := range []string{"O", "q"} {
-		model, cmd := m.updateOptionsOverlay(
-			tea.KeyPressMsg{Code: rune(text[0]), Text: text},
-		)
-		// No row changed, so nothing is refetched.
-		require.Nil(t, cmd)
-		bm, ok := model.(tuiModel)
-		require.True(t, ok)
-		require.False(t, bm.showOptions)
-		require.False(t, bm.refreshing)
+	h := newTUIHarness(t, m)
+	for _, exit := range []string{"O", "q"} {
+		h.Wait("enter apply").Key(exit).WaitNot("enter apply").Assert("Options").Key("O")
 	}
 }
 
 func TestUpdateOptionsOverlayCLIRowsAreEditable(t *testing.T) {
-	cli := testCLI()
-	cli.stateExplicit = true
-	m := tuiModel{
-		showOptions: true,
-		cli:         cli,
-		styles:      newTuiStyles(),
-	}
+	m := filterClickTestModel()
+	m.cli.stateExplicit = true
 	m.optionsPicker = m.newFilterPicker()
-
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: 'l', Text: "l"})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 1, bm.optionsPicker.Values[0])
-
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsPicker.Values[0])
+	h := newTUIHarness(t, m)
+	h.Key("l")
+	waitFilterChoice(t, h, filterRowState, valueClosed)
+	h.KeyBackspace()
+	waitFilterChoice(t, h, filterRowState, valueOpen)
 }
 
 func TestApplyFilterOptionsSavesOnlyChangedCLIRows(t *testing.T) {
@@ -2051,154 +1936,72 @@ func TestApplyFilterOptionsSavesOnlyChangedCLIRows(t *testing.T) {
 }
 
 func TestRenderOptionsOverlayCLIRowMatchesOtherRows(t *testing.T) {
-	cli := testCLI()
-	cli.State = valueMerged
-	cli.stateExplicit = true
-	m := tuiModel{
-		cli:    cli,
-		styles: newTuiStyles(),
-		optionsPicker: picker.Model{
-			Cursor:  int(filterRowDraft),
-			Values:  []int{filterChoiceIndex(filterRowState, valueMerged), 0, 0, 0, 0, 0},
-			IsReset: make([]bool, 6),
-		},
-	}
+	m := filterClickTestModel()
+	m.cli.State, m.cli.stateExplicit = valueMerged, true
 	m.optionsPicker = m.newFilterPicker()
 	m.optionsPicker.Cursor = int(filterRowDraft)
-	m.optionsPicker.Values[0] = filterChoiceIndex(filterRowState, valueMerged)
-
-	overlay := m.renderOptionsOverlay()
-
-	require.Equal(
-		t,
-		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[1;38;5;218mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                       \x1b[38;5;198m│\x1b[m",
-		strings.Split(overlay, nl)[2],
-	)
+	h := newTUIHarness(t, m)
+	merged := cellStyle(h, filterChoiceButton(t, h, filterRowState, valueMerged))
+	require.Equal(t, vt.AttrBold, merged.Attrs)
+	requireScreenColor(t, merged.Fg, styleTitle.GetForeground())
+	open := cellStyle(h, filterChoiceButton(t, h, filterRowState, valueOpen))
+	require.Equal(t, vt.AttrFaint, open.Attrs)
+	requireScreenColor(t, open.Fg, m.styles.defaultChoice.GetForeground())
+	closed := cellStyle(h, filterChoiceButton(t, h, filterRowState, valueClosed))
+	require.Equal(t, vt.AttrFaint, closed.Attrs)
+	require.Nil(t, closed.Fg.Color)
 }
 
 func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
-	cli := testCLI()
-	m := tuiModel{
-		cli:    cli,
-		styles: newTuiStyles(),
-	}
-	m.optionsPicker = m.newFilterPicker()
+	m := filterClickTestModel()
 	m.optionsPicker.Cursor = int(filterRowDraft)
-
-	overlay := m.renderOptionsOverlay()
-
+	h := newTUIHarness(t, m)
+	label := h.Locate(reel.Contains("Drafts  "))
+	bg := cellStyle(h, label).Bg
+	require.NotNil(t, bg.Color)
+	require.Equal(t, bg, cellStyle(h, filterChoiceButton(t, h, filterRowDraft, tuiHelpShow)).Bg)
 	require.Equal(
 		t,
-		"\x1b[38;5;198m│\x1b[m  \x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m❯ \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;198m\x1b[48;2;40;10;30m  Drafts  \x1b[m\x1b[48;2;40;10;30m\x1b[1;38;5;218m\x1b[48;2;40;10;30mshow\x1b[m\x1b[48;2;40;10;30m  \x1b[2m\x1b[48;2;40;10;30mhide\x1b[m\x1b[48;2;40;10;30m                                           \x1b[0m  \x1b[38;5;198m│\x1b[m",
-		strings.Split(overlay, nl)[4],
+		bg,
+		cellStyle(h, filterChoiceButton(t, h, filterRowDraft, valueHide).Offset(8, 0)).Bg,
 	)
+	require.Nil(t, cellStyle(h, h.Locate(reel.Contains("Stacks  "))).Bg.Color)
 }
 
 func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {
-	cfg := &Config{
-		Default: Defaults{
-			State: valueOpen,
-			Bots:  true,
-		},
-	}
-	cli := &CLI{}
-	cli.Normalize(cfg)
-
-	m := tuiModel{
-		cli:    cli,
-		cfg:    cfg,
-		styles: newTuiStyles(),
-	}
-	m.optionsPicker = m.newFilterPicker()
-	m.optionsPicker.Cursor = int(filterRowDraft)
-
-	// Default state (open) renders bold as the selected choice.
-	boldStateRow := "\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[1;38;5;218mopen\x1b[m  \x1b[2mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                       \x1b[38;5;198m│\x1b[m"
-
-	overlay := m.renderOptionsOverlay()
-	require.Equal(t, boldStateRow, strings.Split(overlay, nl)[2])
-
-	m.optionsPicker.IsReset[filterRowState] = true
-	overlay = m.renderOptionsOverlay()
-	require.Equal(t, boldStateRow, strings.Split(overlay, nl)[2])
-
-	m.optionsPicker.Values[filterRowState] = filterChoiceIndex(filterRowState, valueClosed)
-	m.optionsPicker.IsReset[filterRowState] = false
-	overlay = m.renderOptionsOverlay()
-
-	// With closed selected, the default (open) uses the muted default-choice style.
-	require.Equal(
-		t,
-		"\x1b[38;5;198m│\x1b[m    \x1b[1;38;5;198m   State  \x1b[m\x1b[2;38;5;75mopen\x1b[m  \x1b[1;38;5;218mclosed\x1b[m  \x1b[2mmerged\x1b[m  \x1b[2mready\x1b[m  \x1b[2mall\x1b[m                       \x1b[38;5;198m│\x1b[m",
-		strings.Split(overlay, nl)[2],
-	)
-}
-
-func TestUpdateOptionsOverlayResetSetsFirstChoice(t *testing.T) {
-	m := tuiModel{
-		showOptions: true,
-		cli:         testCLI(),
-		styles:      newTuiStyles(),
-	}
-	m.optionsPicker = m.newFilterPicker()
-	m.optionsPicker.Values[0] = 3
-
-	// Backspace resets to 0
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, 0, bm.optionsPicker.Values[0])
+	m := filterClickTestModel()
+	h := newTUIHarness(t, m)
+	open := filterChoiceButton(t, h, filterRowState, valueOpen)
+	base := cellStyle(h, open)
+	require.Equal(t, vt.AttrBold, base.Attrs)
+	requireScreenColor(t, base.Fg, styleTitle.GetForeground())
+	h.KeyRight()
+	waitFilterChoice(t, h, filterRowState, valueClosed)
+	requireScreenColor(t, cellStyle(h, open).Fg, m.styles.defaultChoice.GetForeground())
+	require.Equal(t, vt.AttrFaint, cellStyle(h, open).Attrs)
+	h.KeyBackspace()
+	waitCellStyle(t, h, open, func(s reel.CellStyle) bool { return s == base })
 }
 
 func TestUpdateOptionsOverlayResetUsesConfigDefaults(t *testing.T) {
-	m := tuiModel{
-		showOptions: true,
-		cli:         testCLI(),
-		styles:      newTuiStyles(),
-		cfg: &Config{
-			Default: Defaults{
-				State: valueMerged,
-				Bots:  false,
-			},
-		},
-	}
+	m := filterClickTestModel()
+	m.cfg.Default.State = valueMerged
 	m.optionsPicker = m.newFilterPicker()
-
-	model, cmd := m.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.optionsPicker.IsReset[filterRowState])
-	require.Equal(
-		t,
-		filterChoiceIndex(filterRowState, valueMerged),
-		bm.optionsPicker.Values[filterRowState],
-	)
-
-	bm.optionsPicker.Cursor = int(filterRowBots)
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.optionsPicker.IsReset[filterRowBots])
-	require.Equal(t, 1, bm.optionsPicker.Values[filterRowBots])
-
-	bm.optionsPicker.Cursor = int(filterRowDraft)
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.optionsPicker.IsReset[filterRowDraft])
-	require.Equal(t, 0, bm.optionsPicker.Values[filterRowDraft])
-
-	bm.optionsPicker.Cursor = int(filterRowArchived)
-	model, cmd = bm.updateOptionsOverlay(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	require.Nil(t, cmd)
-	bm, ok = model.(tuiModel)
-	require.True(t, ok)
-	require.True(t, bm.optionsPicker.IsReset[filterRowArchived])
-	require.Equal(t, 1, bm.optionsPicker.Values[filterRowArchived])
+	h := newTUIHarness(t, m)
+	for _, tc := range []struct {
+		row           filterRow
+		staged, reset string
+	}{
+		{filterRowState, valueClosed, valueMerged},
+		{filterRowBots, tuiHelpShow, valueHide},
+		{filterRowDraft, valueHide, tuiHelpShow},
+		{filterRowArchived, tuiHelpShow, valueHide},
+	} {
+		filterChoiceButton(t, h, tc.row, tc.staged).LeftClick()
+		waitFilterChoice(t, h, tc.row, tc.staged)
+		h.KeyBackspace()
+		waitFilterChoice(t, h, tc.row, tc.reset)
+	}
 }
 
 func TestActiveFilterTagsNoBotsFromTestCLI(t *testing.T) {

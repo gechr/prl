@@ -1,6 +1,7 @@
 package main
 
 import (
+	"image/color"
 	"testing"
 	"time"
 
@@ -16,6 +17,15 @@ func cellStyle(h *steep.Harness, at steep.Location) reel.CellStyle {
 		return reel.CellStyle{}
 	}
 	return cell.Style
+}
+
+func requireScreenColor(t *testing.T, actual reel.ScreenColor, expected color.Color) {
+	t.Helper()
+	want, err := (reel.ScreenColor{Color: expected}).MarshalText()
+	require.NoError(t, err)
+	got, err := actual.MarshalText()
+	require.NoError(t, err)
+	require.Equal(t, string(want), string(got))
 }
 
 func waitCellStyle(
