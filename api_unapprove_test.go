@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func unapproveTestRunner(t *testing.T, transport roundTripFunc) *ActionRunner {
+func testActionRunner(t *testing.T, transport roundTripFunc) *ActionRunner {
 	t.Helper()
 	rest, err := api.NewRESTClient(api.ClientOptions{
 		AuthToken: "test", Host: "github.com", Transport: transport,
@@ -24,7 +24,7 @@ func TestUnapproveOnlyDismissesOwnApprovalsAcrossPages(t *testing.T) {
 	var dismissed []string
 	var pages []string
 	const message = "Rechecking the revised implementation."
-	actions := unapproveTestRunner(t, func(req *http.Request) (*http.Response, error) {
+	actions := testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.URL.Path == "/user":
 			return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
@@ -76,7 +76,7 @@ func TestUnapproveFailsWithoutWriting(t *testing.T) {
 	for _, scenario := range []string{"blank reason", "missing login", "login failure", "reviews failure", "later page failure", "no own approval"} {
 		t.Run(scenario, func(t *testing.T) {
 			requests := 0
-			actions := unapproveTestRunner(t, func(req *http.Request) (*http.Response, error) {
+			actions := testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 				requests++
 				require.Equal(t, http.MethodGet, req.Method)
 				if req.URL.Path == "/user" {

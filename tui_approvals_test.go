@@ -3,8 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -963,17 +965,35 @@ func TestCyclePresetIsRestoredOnNextLaunch(t *testing.T) {
 }
 
 func TestDiffArrowKeysNavigateQueue(t *testing.T) {
-	m := diffTestModel(approvalTestPR(1), approvalTestPR(2))
-	k1, k2 := makePRKey(approvalTestPR(1)), makePRKey(approvalTestPR(2))
-	m.cacheDiffForTest(k2, "")
-
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
-	require.Equal(t, k2, m.diffKey)
-	require.Equal(t, []prKey{k1}, m.diffHistory)
-
-	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
-	require.Empty(t, m.diffHistory)
-	require.Equal(t, k1, m.diffAwaitKey)
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	m := diffTestModel(first, second)
+	k2 := makePRKey(second)
+	m.diff = "+first change"
+	m.diffPrefetch = map[prKey]diffFetchedMsg{k2: {key: k2, diff: "+second change"}}
+	firstFetch := make(chan struct{})
+	release := sync.OnceFunc(func() { close(firstFetch) })
+	defer release()
+	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(req, http.StatusOK, `{"head":{"sha":"fixture"}}`), nil
+	})
+	m.actions.diffClient = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/repos/owner/repo/pulls/1":
+			<-firstFetch
+			return jsonResponse(req, http.StatusOK, "+reloaded first change"), nil
+		case "/repos/owner/repo/pulls/2":
+			return jsonResponse(req, http.StatusOK, "+reloaded second change"), nil
+		default:
+			return jsonResponse(req, http.StatusNotFound, `{}`), nil
+		}
+	}).rest
+	h := newTUIHarness(t, m)
+	h.Wait("[1/2] " + first.Ref()).Assert("+first change")
+	h.KeyRight().Wait("[2/2] " + second.Ref()).Assert("+second change").AssertNot("+first change")
+	h.KeyLeft().Wait("Diffing " + first.Ref()).Assert("+second change")
+	release()
+	h.Wait("[1/2] " + first.Ref()).Assert("+reloaded first change")
+	h.KeyRight().Wait("[2/2] " + second.Ref()).Assert("+reloaded second change")
 }
 
 func TestEmptyOverlayExplainsFilteredResults(t *testing.T) {

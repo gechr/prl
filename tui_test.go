@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -904,57 +903,25 @@ func TestRenderDetailContentStylesCheckIcons(t *testing.T) {
 }
 
 func TestViewDiffHandlesTinyViewport(t *testing.T) {
-	pr := testReviewPullRequest()
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diffKey:   makePRKey(pr),
-		diffLines: []string{"@@ -1 +1 @@", "+small"},
-		height:    2,
-		width:     20,
-		styles:    newTuiStyles(),
-	}
-
-	require.NotPanics(t, func() {
-		_ = m.viewDiff()
-	})
+	m := diffTestModel(approvalTestPR(1))
+	m.width, m.height = 20, 2
+	m.diff = "+small"
+	h := newTUIHarness(t, m)
+	h.Resize(80, 12).Wait("+small")
 }
 
 func TestUpdateDiffViewBottomUsesContentViewport(t *testing.T) {
-	pr := testReviewPullRequest()
-	diffLines := make([]string, 20)
-	for i := range diffLines {
-		diffLines[i] = fmt.Sprintf("line %d", i)
+	m := diffTestModel(approvalTestPR(1))
+	m.width, m.height = 250, 12
+	lines := make([]string, 20)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %02d", i+1)
 	}
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diffKey:   makePRKey(pr),
-		diffLines: diffLines,
-		diffView:  newScrollView(),
-		view:      tuiViewDiff,
-		height:    12,
-		width:     250,
-		styles:    newTuiStyles(),
-	}
-	m.syncDiffView()
-
-	vpHeight := m.diffView.Height()
-	topPct := int(math.Round(m.diffView.ScrollPercent() * 100))
-	topStatus := fmt.Sprintf("1-%d/%d (%d%%)", vpHeight, len(diffLines), topPct)
-	topFrame := ansi.Strip(m.viewDiff().Content)
-	require.Equal(t, topStatus, topFrame[len(topFrame)-len(topStatus):])
-
-	model, cmd := m.updateDiffView(tea.KeyPressMsg{Code: 'G', Text: "G"})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, len(diffLines)-vpHeight, bm.diffView.YOffset())
-	offset := bm.diffView.YOffset()
-	bottomStatus := fmt.Sprintf("%d-%d/%d (100%%)", offset+1, len(diffLines), len(diffLines))
-	bottomFrame := ansi.Strip(bm.viewDiff().Content)
-	require.Equal(t, bottomStatus, bottomFrame[len(bottomFrame)-len(bottomStatus):])
+	m.diff = strings.Join(lines, nl)
+	h := newTUIHarness(t, m)
+	h.Wait("1-8/20 (0%)").Assert([]string{"line 01", "line 08"}).AssertNot("line 09")
+	h.Key("G").Wait("13-20/20 (100%)").Assert([]string{"line 13", "line 20"}).AssertNot("line 12")
+	h.Key("g").Wait("1-8/20 (0%)").Assert("line 01")
 }
 
 func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
@@ -973,32 +940,13 @@ func TestWrapDiffLinesCreatesStandaloneANSIWrappedRows(t *testing.T) {
 }
 
 func TestWindowSizeMsgRewrapsDiffAndClampsScroll(t *testing.T) {
-	pr := testReviewPullRequest()
-	diff := styleDanger.Render("+abcdef")
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diff:      diff,
-		diffKey:   makePRKey(pr),
-		diffLines: layout.WrapLines(diff, 4),
-		diffView:  newScrollView(),
-		view:      tuiViewDiff,
-		height:    8,
-		width:     4,
-		styles:    newTuiStyles(),
-		cli:       testCLI(),
-	}
-	m.syncDiffView()
-	m.diffView.ScrollDown(1)
-
-	model, cmd := m.Update(tea.WindowSizeMsg{Width: 8, Height: 8})
-
-	require.Nil(t, cmd)
-	bm, ok := model.(tuiModel)
-	require.True(t, ok)
-	require.Equal(t, []string{"+abcdef"}, []string{ansi.Strip(bm.diffLines[0])})
-	require.Len(t, bm.diffLines, 1)
-	require.Zero(t, bm.diffView.YOffset())
+	m := diffTestModel(approvalTestPR(1))
+	m.width, m.height = 80, 8
+	line := "+start " + strings.Repeat("0123456789", 28) + " end"
+	m.diff = styleDanger.Render(line)
+	h := newTUIHarness(t, m)
+	h.Wait("+start ").Key("G").Wait(" end").AssertNot("+start ")
+	h.Resize(320, 12).Wait(line).AssertNot("100%")
 }
 
 func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
@@ -1009,29 +957,15 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 	t.Setenv("KITTY_WINDOW_ID", "")
 	t.Setenv(herdrEnvVar, "")
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	pr := testReviewPullRequest()
-	diff := styleDanger.Render("+" + strings.Repeat("a", 85))
-	width := 80
-	diffLines := layout.WrapLines(diff, width-tuiScrollbarWidth)
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diff:      diff,
-		diffKey:   makePRKey(pr),
-		diffLines: diffLines,
-		diffView:  newScrollView(),
-		height:    8,
-		width:     width,
-		styles:    newTuiStyles(),
-	}
-	m.syncDiffView()
-
-	out := ansi.Strip(m.viewDiff().Content)
-	lines := strings.Split(out, nl)
+	m := diffTestModel(testReviewPullRequest())
+	m.width, m.height, m.diffQueueTotal = 80, 8, 0
+	m.diff = styleDanger.Render("+" + strings.Repeat("a", 85))
+	h := newTUIHarness(t, m)
+	lines := strings.Split(h.Wait("+aaaa").View(), nl)
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " ")
 	}
-	out = strings.Join(lines, nl)
+	out := strings.Join(lines, nl)
 
 	// The "review" shortcut only renders where an AI-review launcher
 	// exists (darwin).
@@ -1069,23 +1003,6 @@ func TestViewDiffFillsTerminalRectangle(t *testing.T) {
 	assertRenderedFullScreen(t, m.viewDiff().Content, m.width, m.height)
 }
 
-func TestViewDiffEnablesMouseTracking(t *testing.T) {
-	pr := testReviewPullRequest()
-	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diffKey:   makePRKey(pr),
-		diffLines: []string{"+small"},
-		diffView:  newScrollView(),
-		height:    8,
-		width:     120,
-		styles:    newTuiStyles(),
-	}
-	m.syncDiffView()
-
-	require.Equal(t, tea.MouseModeCellMotion, m.viewDiff().MouseMode)
-}
-
 func TestViewDetailFillsTerminalRectangle(t *testing.T) {
 	m := tuiModel{
 		detailLines: []string{"title", "body"},
@@ -1097,19 +1014,6 @@ func TestViewDetailFillsTerminalRectangle(t *testing.T) {
 	m.syncDetailView()
 
 	assertRenderedFullScreen(t, m.viewDetail().Content, m.width, m.height)
-}
-
-func TestViewDetailEnablesMouseTracking(t *testing.T) {
-	m := tuiModel{
-		detailLines: []string{"title", "body"},
-		detailView:  newScrollView(),
-		height:      8,
-		width:       120,
-		styles:      newTuiStyles(),
-	}
-	m.syncDetailView()
-
-	require.Equal(t, tea.MouseModeCellMotion, m.viewDetail().MouseMode)
 }
 
 func TestAppendRightStatusDoesNotIncreaseFooterLineCount(t *testing.T) {
@@ -1282,6 +1186,8 @@ func testViewportScrollbar(t *testing.T, m tuiModel, first, last string) {
 	t.Helper()
 	h := newTUIHarness(t, m)
 	h.Wait(first).AssertNot(last)
+	require.Equal(t, cansi.ModeSet, h.ModeSetting(cansi.ModeMouseButtonEvent))
+	require.NotEqual(t, cansi.ModeSet, h.ModeSetting(cansi.ModeMouseAnyEvent))
 
 	top := h.Locate(reel.Contains("█"))
 	bottom := h.Locate(reel.Nth(-1, reel.Contains("┃")))

@@ -205,7 +205,7 @@ func TestInputConfirmDialogRestoresCanceledDraftForSamePR(t *testing.T) {
 	first.Title, second.Title = "First change", "Second change"
 	second.URL = "https://example.com/pulls/2"
 	m := listTUIModel(first, second)
-	m.actions = unapproveTestRunner(t, func(r *http.Request) (*http.Response, error) {
+	m.actions = testActionRunner(t, func(r *http.Request) (*http.Response, error) {
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Equal(t, "/repos/owner/repo/issues/1/comments", r.URL.Path)
 		return jsonResponse(r, http.StatusCreated, "{}"), nil

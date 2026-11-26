@@ -23,7 +23,7 @@ func TestUnapproveFormSubmitsReasonAndSettles(t *testing.T) {
 				key := makePRKey(pr)
 				m.view, m.detailKey, m.diffKey = view, key, key
 				var reasons []string
-				m.actions = unapproveTestRunner(t, func(req *http.Request) (*http.Response, error) {
+				m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 					if req.URL.Path == "/user" {
 						return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
 					}
@@ -129,7 +129,7 @@ func TestUnapproveBatchSettlesFailuresIndividually(t *testing.T) {
 	m := approvalTestModel("", first, second)
 	firstKey, secondKey := makePRKey(first), makePRKey(second)
 	m.selected[firstKey], m.selected[secondKey] = true, true
-	m.actions = unapproveTestRunner(t, func(req *http.Request) (*http.Response, error) {
+	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 		if req.URL.Path == "/user" {
 			return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
 		}
@@ -168,7 +168,7 @@ func TestUnapproveWithoutConfirmationUsesDefaultReason(t *testing.T) {
 	pr.viewerApproved = true
 	m := approvalTestModel("", pr)
 	var reason string
-	m.actions = unapproveTestRunner(t, func(req *http.Request) (*http.Response, error) {
+	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
 		if req.URL.Path == "/user" {
 			return jsonResponse(req, http.StatusOK, `{"login":"viewer"}`), nil
 		}
