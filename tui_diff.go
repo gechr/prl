@@ -79,6 +79,7 @@ func (m *tuiModel) showDiff(msg diffFetchedMsg) tea.Cmd {
 	m.refreshTerminalSize()
 	m.diffKey = msg.key
 	pr := m.rows[idx].Item.PR
+	m.contentRevision++
 	m.diff = highlightDiff(msg.diff, pr.URL, msg.headSHA)
 	m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
 	m.syncDiffView()

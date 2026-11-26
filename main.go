@@ -13,6 +13,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/kong"
 	"github.com/charmbracelet/colorprofile"
+	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clive"
 	"github.com/gechr/clive/notify"
@@ -131,6 +132,15 @@ func (c *CLI) run(app *conductor.Runtime) error {
 		return initConfig()
 	}
 
+	var terminalEnv []string
+	if cli.Interactive && !cli.Dry {
+		// Give only the renderer the terminal capability. Helpers and plugins
+		// started during query resolution or from the TUI inherit the scrubbed environment.
+		terminalEnv = os.Environ()
+		if err := os.Unsetenv(cansi.ProgramResumeTokenEnv); err != nil {
+			return err
+		}
+	}
 	tty := applyColorMode(cli.Color)
 
 	// Validate
@@ -157,10 +167,14 @@ func (c *CLI) run(app *conductor.Runtime) error {
 	// Apply output mode overrides based on action flags
 	cli.ApplyOutputOverrides()
 
-	// Build search query
-	params, err := buildSearchQuery(cli, cfg)
-	if err != nil {
-		return err
+	// The browser applies its saved filters before resolving the query.
+	var params *SearchParams
+	var err error
+	if !cli.Interactive || cli.Dry {
+		params, err = buildSearchQuery(cli, cfg)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Dry run mode
@@ -210,7 +224,7 @@ func (c *CLI) run(app *conductor.Runtime) error {
 		}
 		cli.setOutput(valueTable)
 		clog.SetLevel(clog.LevelFatal) // TUI manages its own notifications
-		return runTui(prl, clients, cli, cfg, tty, params, s)
+		return runTui(prl, clients, cli, cfg, tty, terminalEnv, s)
 	}
 
 	// Watch mode and the TUI handle interrupts themselves.

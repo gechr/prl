@@ -200,6 +200,7 @@ func (m tuiModel) renderTimeTag() string {
 
 func (m tuiModel) selectTimePreset(name string) (tea.Model, tea.Cmd) {
 	m.presetMenu.open = false
+	m.resumeTimeCutoff = nil
 	m.cli.timePreset = name
 	m.cfg.TUI.Filters.Time = name
 	if err := saveTUIState(m.cfg); err != nil {
@@ -229,6 +230,7 @@ func (m tuiModel) cycleTimePreset(dir int) (tea.Model, tea.Cmd) {
 
 func (m tuiModel) clearFilterPresets() (tea.Model, tea.Cmd) {
 	m.presetMenu.open = false
+	m.resumeTimeCutoff = nil
 	m.cli.preset, m.cli.timePreset = "", ""
 	m.cfg.TUI.Filters.Preset, m.cfg.TUI.Filters.Time = "", ""
 	if err := saveTUIState(m.cfg); err != nil {

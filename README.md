@@ -209,7 +209,7 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 - Auto-refresh keeps its idle backoff. Pending CI is checked each refresh. Settled status is reused for up to a minute on screen and three minutes off screen, subject to the refresh interval and rate limits.
 - Returning focus catches up when a refresh is due. Refreshes preserve the selected PR and its screen position when possible.
 - Cached startup results retain their original age, and successful review actions update only the affected PRs on return to the list.
-- View preferences are saved between sessions.
+- View preferences are saved between sessions. In terminals that support OSC 7577, restarting the terminal restores each browser from its own disk cache, including the PR list, selections, open detail or diff, and scroll position. The next refresh updates the list as usual. Quitting the browser clears its resume record.
 - `tui.presets` and `tui.review`: configure presets and AI reviews.
 - Reviews open in Herdr, Ghostty, iTerm2, Kitty, or Windows Terminal (WSL).
 - Reviews use read-only/plan mode. **YOLO** allows unrestricted commands and resets each time. `Alt+R` always uses restricted mode.

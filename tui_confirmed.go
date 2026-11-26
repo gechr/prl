@@ -24,6 +24,7 @@ func (l confirmedPRList) get(key prKey) *PullRequest {
 }
 
 func (m *tuiModel) replaceListItems(items []PRRowModel) {
+	m.contentRevision++
 	m.items = items
 	m.confirmed = newConfirmedPRList(items)
 	m.filterHidden = nil
@@ -35,6 +36,7 @@ func (m *tuiModel) projectPR(key prKey) {
 	if confirmed == nil || display == nil {
 		return
 	}
+	m.contentRevision++
 	pr := *confirmed
 	if pending, ok := m.pendingApprovals[key]; ok {
 		pr.viewerApproved = !pending.remove

@@ -82,8 +82,9 @@ type CLI struct {
 	Draft           *bool    `help:"Show only draft PRs"                                                    clib:"terse='Draft filter',group='Filters/6'"                                                                                                                                                                                                                                            negatable:""`
 
 	// Interactive flags
-	Interactive bool           `help:"Launch interactive TUI browser" short:"i" clib:"terse='TUI browser',group='Interactive/0'"`
-	Interval    *time.Duration "help:\"Override auto-refresh interval for `--interactive` or `--watch`\" clib:\"terse='Refresh interval',group='Interactive/0'\" placeholder:\"<duration>\""
+	ResumeSession string         `hidden:"" help:"Restore a cached interactive session"`
+	Interactive   bool           `          help:"Launch interactive TUI browser"       short:"i" clib:"terse='TUI browser',group='Interactive/0'"`
+	Interval      *time.Duration "help:\"Override auto-refresh interval for `--interactive` or `--watch`\" clib:\"terse='Refresh interval',group='Interactive/0'\" placeholder:\"<duration>\""
 
 	Approve      bool   `help:"Approve each PR"                                                 clib:"terse='Approve PRs',group='Interactive/1'"`
 	Close        bool   `help:"Close each PR"                                                   clib:"terse='Close PRs',group='Interactive/1'"`

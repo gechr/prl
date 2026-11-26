@@ -560,34 +560,34 @@ func (a *ActionRunner) fetchPRBody(owner, repo string, number int) (string, erro
 
 // PRDetail holds the full detail for a PR detail view.
 type PRDetail struct {
-	Body           string
-	MergeableState string // clean, dirty, unstable, behind, blocked, unknown
-	MergeStatus    *MergeStatus
-	Reviews        []PRReview
-	Checks         []PRCheck
-	Files          []PRFile
+	Body           string       `json:"body"`
+	MergeableState string       `json:"mergeableState"` // clean, dirty, unstable, behind, blocked, unknown
+	MergeStatus    *MergeStatus `json:"mergeStatus"`
+	Reviews        []PRReview   `json:"reviews"`
+	Checks         []PRCheck    `json:"checks"`
+	Files          []PRFile     `json:"files"`
 }
 
 // PRCheck holds a single CI check run.
 type PRCheck struct {
-	Name       string
-	Status     string // queued, in_progress, completed, waiting, requested, pending
-	Conclusion string // success, failure, neutral, cancelled, skipped, timed_out, action_required, stale
-	Duration   time.Duration
+	Name       string        `json:"name"`
+	Status     string        `json:"status"`     // queued, in_progress, completed, waiting, requested, pending
+	Conclusion string        `json:"conclusion"` // success, failure, neutral, cancelled, skipped, timed_out, action_required, stale
+	Duration   time.Duration `json:"duration"`
 }
 
 // PRReview holds a single review.
 type PRReview struct {
-	User  string
-	State string // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
+	User  string `json:"user"`
+	State string `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
 }
 
 // PRFile holds a changed file in a PR.
 type PRFile struct {
-	Filename  string
-	Status    string // added, modified, removed, renamed
-	Additions int
-	Deletions int
+	Filename  string `json:"filename"`
+	Status    string `json:"status"` // added, modified, removed, renamed
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
 }
 
 type detailPageInfo struct {

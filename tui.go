@@ -411,6 +411,7 @@ type screenCheckMsg struct{}
 
 // refreshResultMsg carries the result of a background data refresh.
 type refreshResultMsg struct {
+	params   *SearchParams
 	rows     []TableRow
 	items    []PRRowModel
 	err      error
@@ -427,33 +428,38 @@ type headValidationMsg struct {
 //
 //nolint:recvcheck // selection helpers use pointer receivers to mutate maps/fields in-place
 type tuiModel struct {
-	items             []PRRowModel // canonical data for rerender on resize/refresh
-	rows              []TableRow   // current rendered order; row.Item is the action target
-	header            string
-	colWidths         []int // visible column widths for header click hit-testing
-	sortColumn        string
-	sortAsc           bool
-	cursor            int
-	offset            int
-	view              tuiView
-	diff              string
-	diffLines         []string
-	diffRenderLines   []string
-	diffKey           prKey
-	diffView          viewport.Model
-	detail            PRDetail
-	detailLines       []string
-	detailRenderLines []string
-	detailKey         prKey
-	detailView        viewport.Model
-	detailRefreshID   int
-	detailLoading     bool
-	flash             flash.State
-	actions           *ActionRunner
-	width             int
-	height            int
-	styles            tuiStyles
-	selected          prKeys
+	session              *tuiSession
+	quitting             bool
+	contentRevision      int
+	resumeTimeCutoff     *time.Time
+	resumeRefreshPending bool
+	items                []PRRowModel // canonical data for rerender on resize/refresh
+	rows                 []TableRow   // current rendered order; row.Item is the action target
+	header               string
+	colWidths            []int // visible column widths for header click hit-testing
+	sortColumn           string
+	sortAsc              bool
+	cursor               int
+	offset               int
+	view                 tuiView
+	diff                 string
+	diffLines            []string
+	diffRenderLines      []string
+	diffKey              prKey
+	diffView             viewport.Model
+	detail               PRDetail
+	detailLines          []string
+	detailRenderLines    []string
+	detailKey            prKey
+	detailView           viewport.Model
+	detailRefreshID      int
+	detailLoading        bool
+	flash                flash.State
+	actions              *ActionRunner
+	width                int
+	height               int
+	styles               tuiStyles
+	selected             prKeys
 
 	// Filter options overlay.
 	showOptions     bool
@@ -680,6 +686,14 @@ func (r refreshSnapshot) fetchAndBuild() ([]PRRowModel, error) {
 // by the Update handler once the result is accepted as current, so a stale
 // refresh can never overwrite a newer snapshot.
 func (r refreshSnapshot) run() refreshResultMsg {
+	// A resumed session can paint its cached view before resolving teams or topics.
+	if r.params == nil {
+		params, err := buildSearchQuery(r.cli, r.cfg)
+		if err != nil {
+			return refreshResultMsg{err: err}
+		}
+		r.params = params
+	}
 	items, err := r.fetchAndBuild()
 	if err != nil {
 		return refreshResultMsg{err: err}
@@ -687,7 +701,7 @@ func (r refreshSnapshot) run() refreshResultMsg {
 	termWidth := max(0, r.width-tuiListPrefixWidth(len(items)))
 	renderer := r.p.newTableRenderer(r.cli, r.tty, termWidth, table.WithShowIndex(false))
 	_, rows, _ := renderTUITable(renderer, items, "", false, termWidth)
-	return refreshResultMsg{rows: rows, items: items}
+	return refreshResultMsg{rows: rows, items: items, params: r.params}
 }
 
 func choiceIndex(choices []filterChoice, value string) int {
@@ -987,6 +1001,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tm.refreshChangedPRs(),
 		tm.refreshFromEvents(),
 	)
+	if tm.resumeRefreshPending && tm.view == tuiViewList && !tm.quitting {
+		tm.resumeRefreshPending = false
+		if !tm.refreshing {
+			cmd = tea.Batch(cmd, tm.startRefresh(false))
+		}
+	}
 	tm.syncConfirmDialog()
 	if tm.presetMenu.open {
 		if tm.canKeepPresetMenuOpen() {
@@ -1002,6 +1022,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if state != previousState || kind != previousKind {
 		reportProgramStatus(state, kind)
 	}
+	tm.saveSession()
 	return tm, cmd
 }
 
@@ -1027,7 +1048,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
 		(keyMsg.String() == key.CtrlC || keyMsg.String() == key.CtrlD) &&
 		!m.filterInput.Focused() {
-		return m, tea.Quit
+		return m.quit()
 	}
 
 	// Dismiss help overlay on any keypress.
@@ -1046,6 +1067,17 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case tea.EnvMsg:
+		if !m.quitting && m.session == nil && msg.Getenv(cansi.ProgramResumeTokenEnv) != "" {
+			if root, err := sessionRoot(); err == nil {
+				if m.cli.ResumeSession == "" {
+					pruneSessions(root)
+				}
+				m.session = newTUISession(root, os.Args[1:], m.cli.ResumeSession)
+			}
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.applyWindowSize(msg.Width, msg.Height)
 		return m, nil
@@ -1230,6 +1262,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTerminalSize()
 		m.detailKey = msg.key
 		m.detail = msg.detail
+		m.contentRevision++
 		m.detailLines = m.renderDetailContent()
 		m.syncDetailView()
 		m.detailView.GotoTop()
@@ -1267,6 +1300,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.scheduleDetailRefresh()
 		}
 		m.detail.Checks = msg.checks
+		m.contentRevision++
 		m.detailLines = m.renderDetailContent()
 		m.syncDetailView()
 		return m, m.scheduleDetailRefresh()
@@ -1384,6 +1418,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flash.Msg = ""
 		}
 		m.lastRefreshAt = time.Now()
+		m.resumeTimeCutoff = nil
 		m.dismissedEmpty = false
 		// Saved here, once the result is accepted as current, so writes stay
 		// in order and a superseded refresh never overwrites a newer one.
@@ -1392,6 +1427,9 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// cursor/offset against the new rows.
 		// Render with the current stack/sort settings; a refresh may have
 		// captured settings from before the options menu was applied.
+		if msg.params != nil {
+			m.params = msg.params
+		}
 		m.replaceListItems(msg.items)
 		m.applyPendingActions()
 		m.saveSnapshot()
@@ -1578,7 +1616,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.detailLoading || m.diffLoading {
 		switch msg.String() {
 		case key.Esc, tuiKeybindQuit:
-			return m, tea.Quit
+			return m.quit()
 		default:
 			return m, nil
 		}
@@ -1615,10 +1653,10 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.dismissedEmpty = true
 			return m, nil
 		}
-		return m, tea.Quit
+		return m.quit()
 
 	case tuiKeybindQuit:
-		return m, tea.Quit
+		return m.quit()
 
 	case tuiKeybindFilter:
 		// The filter bar takes one row from the viewport; bump offset so the
@@ -1835,9 +1873,22 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m tuiModel) quit() (tea.Model, tea.Cmd) {
+	m.quitting = true
+	if m.session != nil {
+		_ = m.session.lock.Close()
+		_ = os.RemoveAll(m.session.dir)
+		m.session = nil
+	}
+	return m, tea.Quit
+}
+
 func (m tuiModel) View() tea.View {
 	v := m.renderView()
 	v.ReportFocus = true
+	if m.session != nil && m.session.lastPosition != nil {
+		v.ProgramResume = m.session.command
+	}
 	return v
 }
 
@@ -3557,7 +3608,7 @@ func runTui(
 	cli *CLI,
 	cfg *Config,
 	tty bool,
-	params *SearchParams,
+	terminalEnv []string,
 	s spinner,
 ) error {
 	// Overlay persisted TUI state (sort, filters, auto-refresh) onto config so
@@ -3569,7 +3620,17 @@ func runTui(
 	}
 
 	// Apply persisted TUI filter defaults before the initial fetch.
-	if applyTUIFilterDefaults(cli, cfg) {
+	var saved *savedSession
+	if cli.ResumeSession != "" {
+		if root, rootErr := sessionRoot(); rootErr == nil {
+			saved = loadSession(root, cli.ResumeSession)
+		}
+	}
+	var params *SearchParams
+	if saved != nil {
+		saved.applySettings(cli, cfg)
+	} else {
+		applyTUIFilterDefaults(cli, cfg)
 		var err error
 		params, err = buildSearchQuery(cli, cfg)
 		if err != nil {
@@ -3606,15 +3667,25 @@ func runTui(
 	// Old results are misleading during the background refresh (for example,
 	// already-closed PRs remain visible), so only seed the TUI from a recent
 	// snapshot.
-	cachedPRs, cachedAt, cachedErr := loadListResultSnapshot(
-		cli,
-		params,
-		tuiListResultCacheMaxAge,
-	)
-	cachedOK := !cachedAt.IsZero()
-	if cachedErr != nil {
-		clog.Debug().Err(cachedErr).Msg("list cache load failed")
+	var cachedPRs []PullRequest
+	var cachedAt time.Time
+	if saved != nil {
+		cachedAt = saved.LastRefresh
+		for _, pr := range saved.PRs {
+			cachedPRs = append(cachedPRs, pr.pullRequest())
+		}
+	} else {
+		var cachedErr error
+		cachedPRs, cachedAt, cachedErr = loadListResultSnapshot(
+			cli,
+			params,
+			tuiListResultCacheMaxAge,
+		)
+		if cachedErr != nil {
+			clog.Debug().Err(cachedErr).Msg("list cache load failed")
+		}
 	}
+	cachedOK := saved != nil || !cachedAt.IsZero()
 
 	var r fetchResult
 	if cachedOK {
@@ -3664,7 +3735,12 @@ func runTui(
 	fi.SetStyles(fiStyles)
 
 	// Resolve current user login eagerly so it's cached for View calls.
-	login, _ := getCurrentLogin(clients.rest)
+	var login string
+	if saved != nil {
+		login = saved.Login
+	} else {
+		login, _ = getCurrentLogin(clients.rest)
+	}
 
 	model := tuiModel{
 		rows:            r.rows,
@@ -3706,9 +3782,12 @@ func runTui(
 	}
 	if cachedOK {
 		model.lastRefreshAt = cachedAt
-		model.initCmd = model.startRefresh(false)
+		if saved != nil {
+			saved.restore(&model)
+		} else {
+			model.initCmd = model.startRefresh(false)
+		}
 	}
-
 	var program *tea.Program
 	resolve := func(m tea.Model) (wheelTarget, bool) {
 		tui, ok := m.(tuiModel)
@@ -3726,6 +3805,7 @@ func runTui(
 
 	program = tea.NewProgram(
 		model,
+		tea.WithEnvironment(terminalEnv),
 		tea.WithFPS(tuiRenderFPS),
 		tea.WithFilter(sw.Filter),
 	)

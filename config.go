@@ -105,23 +105,23 @@ type TUIAutoRefreshConfig struct {
 
 // TUISortConfig holds sort settings persisted between TUI runs.
 type TUISortConfig struct {
-	Key   string `koanf:"key"   yaml:"key"`
-	Order string `koanf:"order" yaml:"order"`
+	Key   string `json:"key"   koanf:"key"   yaml:"key"`
+	Order string `json:"order" koanf:"order" yaml:"order"`
 }
 
 // TUIFiltersConfig holds persisted filter overrides for TUI mode. The yaml tags
 // allow the same type to be marshalled into the state file as a mirror of the
 // config's tui.filters subtree (booleans as bools, "no filter" as null).
 type TUIFiltersConfig struct {
-	State    string `koanf:"state"    yaml:"state"`
-	Draft    *bool  `koanf:"draft"    yaml:"draft"`
-	Bots     *bool  `koanf:"bots"     yaml:"bots"`
-	Archived *bool  `koanf:"archived" yaml:"archived"`
-	CI       string `koanf:"ci"       yaml:"ci"`
-	Review   string `koanf:"review"   yaml:"review"`
+	State    string `json:"state"    koanf:"state"    yaml:"state"`
+	Draft    *bool  `json:"draft"    koanf:"draft"    yaml:"draft"`
+	Bots     *bool  `json:"bots"     koanf:"bots"     yaml:"bots"`
+	Archived *bool  `json:"archived" koanf:"archived" yaml:"archived"`
+	CI       string `json:"ci"       koanf:"ci"       yaml:"ci"`
+	Review   string `json:"review"   koanf:"review"   yaml:"review"`
 	// Preset is the name of the active preset from tui.presets.filters.
-	Preset string `koanf:"preset" yaml:"preset,omitempty"`
-	Time   string `koanf:"time"   yaml:"time,omitempty"`
+	Preset string `json:"preset" koanf:"preset" yaml:"preset,omitempty"`
+	Time   string `json:"time"   koanf:"time"   yaml:"time,omitempty"`
 }
 
 type TUIReviewProviderConfig struct {

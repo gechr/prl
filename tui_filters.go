@@ -542,6 +542,9 @@ func (m tuiModel) displayFilter() displayFilter {
 	if preset, ok := timePresetByName(m.cfg, m.cli.timePreset); ok {
 		if age, err := parseTimePresetAge(preset.MaxAge); err == nil {
 			df.cutoff = time.Now().Add(-age)
+			if m.resumeTimeCutoff != nil {
+				df.cutoff = *m.resumeTimeCutoff
+			}
 			df.timeField = configuredTimeField(m.cfg)
 		}
 	}
