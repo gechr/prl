@@ -1,6 +1,8 @@
 package main
 
 import (
+	"image"
+	"math"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,27 +31,25 @@ func (m *tuiModel) syncConfirmDialog() {
 			m.dialogs = dialog.New(m.newConfirmFrame())
 		}
 		if !m.dialogs.Active() {
+			m.dialogBar = newScrollbarLayer(m.reviewWidthMethod())
 			m.dialogs.Push(m.newConfirmDialog())
 		}
 		return
 	}
+	m.dialogBar = nil
 	for m.dialogs != nil && m.dialogs.Active() {
 		m.dialogs.Pop()
 	}
 }
 
-// newConfirmFrame gives every dialog the existing modal chrome and scrollbar
-// colors while primer owns sizing, clipping, and placement.
+// Primer reserves the column for the Bloom scrollbar and places the dialog.
 func (m *tuiModel) newConfirmFrame() dialog.Frame {
 	return dialog.NewFrame(dialog.FrameConfig{
+		Scrollbar: scrollbar.Config{ThumbSymbol: " ", HideTrack: true},
 		Styles: dialog.Styles{
 			Box:      m.styles.overlayBox.Padding(1, tuiConfirmPadX-1),
 			HintKey:  m.styles.helpKey,
 			HintText: m.styles.helpText,
-			Scrollbar: scrollbar.Styles{
-				Thumb: lg.NewStyle().Foreground(colorAccent),
-				Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
-			},
 		},
 	})
 }
@@ -476,5 +476,12 @@ func (m tuiModel) viewConfirmDialog(backdrop string) string {
 	if m.dialogs == nil {
 		return backdrop
 	}
-	return m.dialogs.View(backdrop, m.width, m.height)
+	frame := m.dialogs.View(backdrop, m.width, m.height)
+	if m.dialogBar == nil {
+		return frame
+	}
+	box, _ := m.dialogs.ScrollbarHitbox()
+	offset := int(math.Round(float64(box.TotalLines-box.Height) * m.dialogs.ScrollPercent()))
+	rect := image.Rect(box.X, box.Y, box.X+1, box.Y+box.Height)
+	return m.dialogBar.render(frame, m.width, m.height, rect, box.TotalLines, offset)
 }

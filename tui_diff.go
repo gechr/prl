@@ -6,7 +6,6 @@ import (
 
 	"bloomfx.dev/bloom/fx"
 	tea "charm.land/bubbletea/v2"
-	"github.com/gechr/primer/layout"
 )
 
 // fetchDiffCmd shares a single outstanding read per PR across review queues.
@@ -91,7 +90,7 @@ func (m *tuiModel) showDiff(msg diffFetchedMsg, from fx.Direction) tea.Cmd {
 	m.refreshTerminalSize()
 	var slide tea.Cmd
 	if m.view == tuiViewDiff && m.diffKey != msg.key {
-		slide = m.startPRSlide(from, m.diffView, m.diffRenderLines)
+		slide = m.startPRSlide(from, m.diffView)
 	}
 	if m.view == tuiViewDetail {
 		m.stopDetailRefresh(true)
@@ -101,7 +100,7 @@ func (m *tuiModel) showDiff(msg diffFetchedMsg, from fx.Direction) tea.Cmd {
 	m.diffKey = msg.key
 	m.diffQueuePos = m.diffQueueTotal - len(m.diffQueue)
 	m.setDiffContent(msg.diff)
-	m.diffView.GotoTop()
+	m.diffView.setOffset(0)
 	m.view = tuiViewDiff
 	m.flash.Msg = ""
 	return tea.Batch(slide, m.statusCmd(msg.key), m.prefetchNext())
@@ -110,7 +109,6 @@ func (m *tuiModel) showDiff(msg diffFetchedMsg, from fx.Direction) tea.Cmd {
 func (m *tuiModel) setDiffContent(diff string) {
 	m.contentRevision++
 	m.diff = diff
-	m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
 	m.syncDiffView()
 }
 

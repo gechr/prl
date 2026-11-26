@@ -25,12 +25,11 @@ func TestPRSlideMovesBothPages(t *testing.T) {
 		{fx.Left, "efghABCD"},
 	} {
 		s := prSlide{
-			root:     bloom.New(),
 			previous: "ABCDEFGH",
 			from:     tc.from,
 			progress: anim.NewValue(0.5),
 		}
-		require.Equal(t, tc.want, ansi.Strip(s.render(8, 1, "abcdefgh")))
+		require.Equal(t, tc.want, ansi.Strip(bloom.Render(8, 1, s.layout(8, 1, bloom.Text("abcdefgh")))))
 	}
 }
 
@@ -55,7 +54,7 @@ func TestDiffSlideKeepsFrameStationary(t *testing.T) {
 	end := strings.Split(ansi.Strip(m.View().Content), nl)
 
 	const bodyTop = 2 // diff header and separator
-	bodyEnd := bodyTop + m.diffView.Height()
+	bodyEnd := bodyTop + m.diffView.height
 	require.Equal(t, end[:bodyTop], mid[:bodyTop])
 	require.Equal(t, end[bodyEnd:], mid[bodyEnd:])
 	sharedBody := oldLine[:bodyWidth/2] + newLine + strings.Repeat(" ", bodyWidth/2-len(newLine))
@@ -103,7 +102,7 @@ func TestDetailNavigationFollowsFilteredList(t *testing.T) {
 func TestDismissedDetailNavigationIgnoresLateReply(t *testing.T) {
 	first, second := approvalTestPR(1), approvalTestPR(2)
 	m := listTUIModel(first, second)
-	m.view, m.detailKey, m.detailView = tuiViewDetail, makePRKey(first), newScrollView()
+	m.view, m.detailKey = tuiViewDetail, makePRKey(first)
 	m.openDetail(m.resolveIndex(makePRKey(second), -1), fx.Right)
 	late := detailFetchedMsg{reviewVersion: m.reviewVersion(second), key: makePRKey(second)}
 	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -115,21 +114,21 @@ func TestDismissedDetailNavigationIgnoresLateReply(t *testing.T) {
 }
 
 func TestPRSlideOddWidthHasNoGap(t *testing.T) {
-	s := prSlide{root: bloom.New(), previous: "ABCDEFGHI", progress: anim.NewValue(0.5)}
+	s := prSlide{previous: "ABCDEFGHI", progress: anim.NewValue(0.5)}
 	s.from = fx.Right
-	require.Equal(t, "FGHIabcde", ansi.Strip(s.render(9, 1, "abcdefghi")))
+	require.Equal(t, "FGHIabcde", ansi.Strip(bloom.Render(9, 1, s.layout(9, 1, bloom.Text("abcdefghi")))))
 	s.from = fx.Left
-	require.Equal(t, "efghiABCD", ansi.Strip(s.render(9, 1, "abcdefghi")))
+	require.Equal(t, "efghiABCD", ansi.Strip(bloom.Render(9, 1, s.layout(9, 1, bloom.Text("abcdefghi")))))
 }
 
 func TestPRSlideFrameRouting(t *testing.T) {
 	m := diffTestModel(approvalTestPR(1))
 	m.diff = strings.Repeat("line\n", 40)
 	m.applyWindowSize(80, 12)
-	oldFrame := m.startPRSlide(fx.Right, m.diffView, m.diffRenderLines)()
+	oldFrame := m.startPRSlide(fx.Right, m.diffView)()
 	m, _ = updateModel(t, m, scrollwheel.Msg[wheelTarget]{Target: wheelTargetDiff, Delta: 1})
 	require.False(t, m.slide.progress.Animating())
-	require.Positive(t, m.diffView.YOffset())
+	require.Positive(t, m.diffView.offset())
 
 	now := time.Unix(0, 0)
 	m.slide.progress = anim.NewValue(

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"image"
 	"image/color"
 	"math"
 	"os"
@@ -11,10 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"bloomfx.dev/bloom"
 	"bloomfx.dev/bloom/anim"
 	"bloomfx.dev/bloom/fx"
 	"charm.land/bubbles/v2/textinput"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	cansi "github.com/charmbracelet/x/ansi"
@@ -33,7 +34,6 @@ import (
 	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/scrollwheel"
 	"github.com/gechr/primer/table"
-	"github.com/gechr/primer/view"
 	xansi "github.com/gechr/x/ansi"
 	"github.com/gechr/x/human"
 	xterminal "github.com/gechr/x/terminal"
@@ -451,15 +451,12 @@ type tuiModel struct {
 	slide                prSlide
 	view                 tuiView
 	diff                 string
-	diffLines            []string
-	diffRenderLines      []string
 	diffKey              prKey
-	diffView             viewport.Model
+	diffView             *reviewViewport
 	detail               PRDetail
 	detailLines          []string
-	detailRenderLines    []string
 	detailKey            prKey
-	detailView           viewport.Model
+	detailView           *reviewViewport
 	detailRefreshID      int
 	detailLoading        bool
 	detailAwaitKey       prKey
@@ -548,7 +545,8 @@ type tuiModel struct {
 	confirmReviewPR    *PullRequest // selected PR when the dialog is for AI review
 	confirmDrafts      map[confirmDraftKey]string
 	dialogs            *dialog.Stack // primer stack for confirmations, information, and forms
-	scrollDrag         scrollbarDragState
+	dialogBar          *scrollbarLayer
+	listBar            *scrollbarLayer
 
 	// Background auto-refresh.
 	eventStreams           *eventStreams
@@ -989,17 +987,44 @@ func (m *tuiModel) exitDiffView() tea.Cmd {
 // Update runs the real update, then reconciles the dialog stack so a dialog
 // set up (or cleared) anywhere opens or closes before the next View.
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
+	switch e := msg.(type) {
 	case anim.FrameMsg:
 		cmd := m.slide.progress.Update(msg)
 		if !m.slide.progress.Animating() {
 			m.slide = prSlide{}
 		}
 		return m, cmd
+	case tea.MouseMotionMsg:
+		if e.Button != tea.MouseNone {
+			m.slide = prSlide{}
+		}
 	case tea.KeyMsg, tea.MouseMsg, scrollwheel.Msg[wheelTarget], tea.WindowSizeMsg, tea.BlurMsg:
 		m.slide = prSlide{}
 	}
 	previousState, previousKind := m.programStatus()
+	reader := m.activeReviewViewport()
+	var inputCmd tea.Cmd
+	switch {
+	case reader != nil:
+		inputCmd = reader.pointer.update(reader.root, msg)
+		if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == key.CtrlC {
+			if copyCmd := reader.root.CopySelection(); copyCmd != nil {
+				return m, tea.Batch(inputCmd, copyCmd)
+			}
+		}
+	case m.confirmUsesDialog() && m.dialogBar != nil:
+		var offset int
+		offset, inputCmd = m.dialogBar.update(msg)
+		if offset >= 0 {
+			m.dialogs.SetScrollOffset(offset)
+		}
+	case m.listScrollbarActive() && m.listBar != nil:
+		var offset int
+		offset, inputCmd = m.listBar.update(msg)
+		if offset >= 0 {
+			m.setListScrollOffset(offset)
+		}
+	}
 	m.recordChangedPRs(msg)
 	model, cmd := m.update(msg)
 	tm, ok := model.(tuiModel)
@@ -1007,7 +1032,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return model, cmd
 	}
 	cmd = tea.Batch(
-		cmd,
+		cmd, inputCmd,
 		tm.syncVisibleEventStreams(msg),
 		tm.refreshChangedPRs(),
 		tm.refreshFromEvents(),
@@ -1019,6 +1044,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	tm.syncConfirmDialog()
+	if tm.listScrollbarActive() && (tm.listBar == nil || !m.listScrollbarActive() || tm.reviewWidthMethod() != m.reviewWidthMethod()) {
+		tm.listBar = newScrollbarLayer(tm.reviewWidthMethod())
+	}
+	if reader != nil && reader != tm.activeReviewViewport() {
+		reader.resetInput()
+	}
 	if tm.view != m.view || tm.confirmUsesDialog() {
 		tm.slide = prSlide{}
 	}
@@ -1092,6 +1123,13 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case bloom.CopyMsg:
+		if msg.Err != nil {
+			cmd := tuiFlashMessage(&m, "System clipboard unavailable (sent to terminal clipboard)", true)
+			return m, cmd
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.applyWindowSize(msg.Width, msg.Height)
 		return m, nil
@@ -1124,14 +1162,14 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// content (translated into ClickMsg); other buttons are swallowed.
 		if m.confirmUsesDialog() && m.dialogs != nil {
 			if msg.Button == tea.MouseLeft {
-				if m.handleScrollbarPress(msg.Mouse()) {
+				if m.dialogBar.contains(msg.X, msg.Y) {
 					return m, nil
 				}
 				return m.updateConfirmDialog(msg)
 			}
 			return m, nil
 		}
-		if msg.Button == tea.MouseLeft && m.handleScrollbarPress(msg.Mouse()) {
+		if m.listScrollbarActive() && m.listBar.contains(msg.X, msg.Y) {
 			return m, nil
 		}
 		if m.view == tuiViewList && msg.Button == tea.MouseLeft && msg.Y == 0 {
@@ -1164,7 +1202,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				time:    m.timeTagAt(msg.X, msg.Y),
 				pr:      m.presetTagAt(msg.X, msg.Y),
 			}
-			if _, ok := m.rowIndexAt(msg.Y); ok {
+			if _, ok := m.rowIndexAt(msg.Y); ok && !m.listBar.contains(msg.X, msg.Y) {
 				m.hover.rowY, m.hover.rowOK = msg.Y, true
 			}
 			if _, ok := m.listHelpHintIndex(msg.X, msg.Y); ok {
@@ -1177,14 +1215,10 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.handleScrollbarMotion(msg.Mouse()) {
-			return m, nil
-		}
 		return m, nil
 
 	case tea.MouseReleaseMsg:
 		m.touchInteraction()
-		m.scrollDrag.Release()
 		return m, nil
 
 	case scrollwheel.Msg[wheelTarget]:
@@ -1928,9 +1962,20 @@ func (m tuiModel) viewList() tea.View {
 	var b strings.Builder
 	visible := m.listLines()
 	viewport := m.listViewport()
+	rowWidth := m.width
+	if len(visible) > viewport {
+		rowWidth = max(0, rowWidth-tuiScrollbarWidth)
+	}
 	indexWidth := m.listIndexWidth()
 	indexPad := strings.Repeat(" ", indexWidth)
 	indexGap := m.indexGap()
+	writeRow := func(line string) {
+		if rowWidth < m.width {
+			line = m.reviewWidthMethod().Truncate(line, rowWidth, valueEllipsis)
+		}
+		b.WriteString(line)
+		b.WriteString(nl)
+	}
 
 	// Column header line.
 	if m.header != "" {
@@ -1939,7 +1984,7 @@ func (m tuiModel) viewList() tea.View {
 			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
 			prefix = frame + " " + indexPad + indexGap
 		}
-		b.WriteString(prefix + m.header + nl)
+		writeRow(prefix + m.header)
 	}
 
 	// Determine visible slice based on offset.
@@ -1964,8 +2009,8 @@ func (m tuiModel) viewList() tea.View {
 			) + headerStyle.Render(
 				entry.header,
 			)
-			if m.width > 0 {
-				line = xansi.Truncate(line, m.width, valueEllipsis)
+			if rowWidth > 0 {
+				line = xansi.Truncate(line, rowWidth, valueEllipsis)
 			}
 			if idx == m.cursor {
 				line = m.styles.cursor.Render(
@@ -1974,11 +2019,11 @@ func (m tuiModel) viewList() tea.View {
 					line,
 					tuiNonCursorPrefix,
 				)
-				line = layout.PreserveBackgroundWidth(line, cursorLineBG, m.width)
+				line = layout.PreserveBackgroundWidth(line, cursorLineBG, rowWidth)
 			} else if hoverOK && idx == hoverIdx {
-				line = layout.PreserveBackgroundWidth(line, rowHoverBG, m.width)
+				line = layout.PreserveBackgroundWidth(line, rowHoverBG, rowWidth)
 			}
-			b.WriteString(line + nl)
+			writeRow(line)
 			continue
 		}
 		tree := entry.tree
@@ -1989,9 +2034,9 @@ func (m tuiModel) viewList() tea.View {
 		if idx != m.cursor {
 			line := m.rowGutter(idx) + display
 			if hoverOK && idx == hoverIdx {
-				line = layout.PreserveBackgroundWidth(line, rowHoverBG, m.width)
+				line = layout.PreserveBackgroundWidth(line, rowHoverBG, rowWidth)
 			}
-			b.WriteString(line + nl)
+			writeRow(line)
 			continue
 		}
 		line := m.rowCursor(idx) + display
@@ -2003,11 +2048,9 @@ func (m tuiModel) viewList() tea.View {
 			if m.selected[m.rowKeyAt(idx)] {
 				bg = cursorLineSelectedBG
 			}
-			b.WriteString(layout.PreserveBackgroundWidth(line, bg, m.width))
-		} else {
-			b.WriteString(line)
+			line = layout.PreserveBackgroundWidth(line, bg, rowWidth)
 		}
-		b.WriteString(nl)
+		writeRow(line)
 	}
 
 	// Pad to fill viewport.
@@ -2035,7 +2078,20 @@ func (m tuiModel) viewList() tea.View {
 	}
 	b.WriteString(m.appendRightStatus(help, m.listStatus(visible)))
 
-	v := tea.NewView(layout.ExpandTabs(b.String()))
+	content := layout.ExpandTabs(b.String())
+	if m.listBar != nil || len(visible) > viewport {
+		bar := m.listBar
+		if bar == nil {
+			bar = newScrollbarLayer(m.reviewWidthMethod())
+		}
+		top := 0
+		if m.header != "" {
+			top++
+		}
+		rect := image.Rect(m.width-1, top, m.width, top+viewport)
+		content = bar.render(content, m.width, m.height, rect, len(visible), m.offset)
+	}
+	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
 	m.applyRepaintMarker(&v)
@@ -2092,7 +2148,6 @@ func (m tuiModel) viewDiff() tea.View {
 	return m.renderFullScreenView(
 		header,
 		m.diffView,
-		m.diffRenderLines,
 		m.renderHelp(m.diffHelpPairs()),
 	)
 }
@@ -2290,73 +2345,51 @@ func (m tuiModel) viewDetail() tea.View {
 	return m.renderFullScreenView(
 		"",
 		m.detailView,
-		m.detailRenderLines,
 		m.renderHelp(m.detailHelpPairs()),
 	)
 }
 
-func (m tuiModel) renderFullScreenView(
-	header string,
-	vp viewport.Model,
-	renderLines []string,
-	help string,
-) tea.View {
-	totalLines := vp.TotalLineCount()
-	vpHeight := vp.Height()
+func (m tuiModel) renderFullScreenView(header string, vp *reviewViewport, help string) tea.View {
+	if vp == nil {
+		vp = m.reviewViewport(nil, "", "", bloom.WrapNone, 0)
+	}
+	chrome := 1 + lg.Height(help) // separator and footer
+	if header != "" {
+		chrome += 2 // header and separator
+	}
+	vp.height = max(0, m.height-chrome)
+	geo := vp.geometry()
 	status := ""
 	if m.flash.Msg != "" {
 		status = m.renderFlashStatus()
-	} else if totalLines > vpHeight {
-		offset := vp.YOffset()
-		end := min(offset+vpHeight, totalLines)
-		pct := int(math.Round(vp.ScrollPercent() * 100)) //nolint:mnd // percent
-		status = m.styles.statusOK.Render(
-			fmt.Sprintf("%d-%d/%d (%d%%)", offset+1, end, totalLines, pct),
-		)
+	} else if geo.TotalRows > geo.Rows {
+		end := min(geo.Row+geo.Rows, geo.TotalRows)
+		pct := int(math.Round(geo.Percent() * 100)) //nolint:mnd // percent
+		status = m.styles.statusOK.Render(fmt.Sprintf("%d-%d/%d (%d%%)", geo.Row+1, end, geo.TotalRows, pct))
 	}
 
-	if m.slide.progress.Animating() && vp.Width() > 0 && vpHeight > 0 {
-		body := m.renderViewportContent(renderLines, vp, false)
-		moving := m.slide.render(vp.Width(), vpHeight, body)
-		rows := layout.NormalizeLines(strings.Split(moving, nl), vp.Width())
-		// RenderFrame applies the viewport offset and draws its scrollbar after these rows.
-		offset := min(vp.YOffset(), len(renderLines))
-		renderLines = append(renderLines[:offset:offset], rows...)
+	var body bloom.Child = vp.node()
+	if m.slide.progress.Animating() && vp.width > 0 && vp.height > 0 {
+		body = m.slide.layout(vp.width, vp.height, body)
 	}
-
-	v := tea.NewView(view.RenderFrame(view.FrameModel{
-		Header: header,
-		Footer: m.footerComponents(help, status),
-		Lines:  renderLines,
-		View:   vp,
-		Width:  m.width,
-		Height: m.height,
-		Styles: view.FrameStyles{
-			Separator: m.styles.separator,
-			Scrollbar: scrollbar.Styles{
-				Thumb: lg.NewStyle().Foreground(colorAccent),
-				Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
-			},
-		},
-	}))
+	bar := bloom.ScrollbarOf(reviewBodyID).Style(reviewBarStyle())
+	separator := bloom.Fixed(1, bloom.Text(m.styles.separator.Render(layout.Separator(max(0, m.width), -1))).NoWrap())
+	var rows []bloom.Child
+	if header != "" {
+		rows = append(rows, bloom.Fixed(1, bloom.Text(header).NoWrap()), separator)
+	}
+	rows = append(rows,
+		bloom.Fixed(vp.height, bloom.Row(bloom.Fill(body), bloom.Fixed(tuiScrollbarWidth, bar))),
+		separator, bloom.Fill(bloom.Text(m.appendRightStatus(help, status)).NoWrap()),
+	)
+	v := tea.NewView(vp.root.Render(m.width, m.height, bloom.Column(rows...)))
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = tea.MouseModeAllMotion
 	if m.confirmUsesDialog() {
 		v.Content = m.viewConfirmDialog(v.Content)
 	}
 	m.applyRepaintMarker(&v)
 	return v
-}
-
-func (m tuiModel) renderViewportContent(
-	lines []string,
-	vp viewport.Model,
-	withScrollbar bool,
-) string {
-	return view.RenderContent(lines, vp, withScrollbar, scrollbar.Config{}, scrollbar.Styles{
-		Thumb: lg.NewStyle().Foreground(colorAccent),
-		Track: lg.NewStyle().Foreground(colorAccent).Faint(true),
-	})
 }
 
 func requestWindowSizeCmd() tea.Cmd {
@@ -2388,7 +2421,10 @@ func (m tuiModel) applyModeReport(msg tea.ModeReportMsg) tuiModel {
 		return m
 	}
 	m.p = m.p.withGraphemeWidth()
-	m.header, m.rows, m.colWidths = m.rerender()
+	if m.dialogBar != nil {
+		m.dialogBar = newScrollbarLayer(m.reviewWidthMethod())
+	}
+	m.applyWindowSize(m.width, m.height)
 	return m
 }
 
@@ -2396,8 +2432,10 @@ func (m *tuiModel) applyWindowSize(width, height int) {
 	m.width = width
 	m.height = height
 	m.header, m.rows, m.colWidths = m.rerender()
+	if m.view == tuiViewList {
+		m.offset = m.scrolledOffset()
+	}
 	if m.view == tuiViewDiff {
-		m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
 		m.syncDiffView()
 	}
 	if m.view == tuiViewDetail && len(m.detailLines) > 0 {
@@ -3172,25 +3210,6 @@ func (m tuiModel) renderFlashStatus() string {
 	return style.Render(m.flash.Msg)
 }
 
-func (m tuiModel) footerComponents(help, status string) []view.FooterComponent {
-	//nolint:mnd // this helper builds at most help and status
-	components := make(
-		[]view.FooterComponent,
-		0,
-		2,
-	)
-	if help != "" {
-		components = append(components, view.FooterComponent{Content: help})
-	}
-	if status != "" {
-		components = append(components, view.FooterComponent{
-			Align:   view.FooterAlignRight,
-			Content: status,
-		})
-	}
-	return components
-}
-
 func (m tuiModel) appendRightStatus(help, status string) string {
 	footer, _ := m.fitRightStatus(help, status)
 	return footer
@@ -3767,8 +3786,6 @@ func runTui(
 		selected:        make(prKeys),
 		collapsedStacks: foldedStackKeys(cfg.TUI.FoldedStacks),
 		filterInput:     fi,
-		diffView:        newScrollView(),
-		detailView:      newScrollView(),
 		p:               p,
 		cli:             cli,
 		cfg:             cfg,

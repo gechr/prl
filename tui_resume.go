@@ -11,7 +11,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/gechr/primer/layout"
 	xos "github.com/gechr/x/os"
 	"github.com/gechr/x/shell"
 	"github.com/gofrs/flock"
@@ -220,9 +219,9 @@ func (m *tuiModel) saveSession() {
 	}
 	switch m.view {
 	case tuiViewDiff:
-		pos.Active, pos.ViewOffset = m.diffKey, m.diffView.YOffset()
+		pos.Active, pos.ViewOffset = m.diffKey, m.diffView.offset()
 	case tuiViewDetail:
-		pos.Active, pos.ViewOffset = m.detailKey, m.detailView.YOffset()
+		pos.Active, pos.ViewOffset = m.detailKey, m.detailView.offset()
 	case tuiViewList:
 	}
 	if m.showOptions {
@@ -350,14 +349,13 @@ func (s *savedSession) restore(m *tuiModel) {
 		m.view, m.diffKey, m.diff = tuiViewDiff, s.Active, s.Diff
 		m.diffQueue, m.diffHistory, m.diffQueueTotal = s.DiffQueue, s.DiffHistory, s.DiffQueueTotal
 		m.diffQueuePos = m.diffQueueTotal - len(m.diffQueue)
-		m.diffLines = layout.WrapLines(m.diff, m.width-tuiScrollbarWidth)
 		m.syncDiffView()
-		m.diffView.SetYOffset(s.ViewOffset)
+		m.diffView.setOffset(s.ViewOffset)
 	case tuiViewDetail:
 		m.view, m.detailKey, m.detail = tuiViewDetail, s.Active, s.Detail
 		m.detailLines = m.renderDetailContent()
 		m.syncDetailView()
-		m.detailView.SetYOffset(s.ViewOffset)
+		m.detailView.setOffset(s.ViewOffset)
 	case tuiViewList:
 		return
 	}

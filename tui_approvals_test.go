@@ -520,7 +520,6 @@ func TestApproveMergeBatchSettlesApprovalAndMergeFailures(t *testing.T) {
 func diffTestModel(prs ...PullRequest) tuiModel {
 	m := approvalTestModel("", prs...)
 	m.view = tuiViewDiff
-	m.diffView = newScrollView()
 	m.diffKey = makePRKey(prs[0])
 	for _, pr := range prs[1:] {
 		m.diffQueue = append(m.diffQueue, makePRKey(pr))

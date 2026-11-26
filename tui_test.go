@@ -575,7 +575,7 @@ func TestExitDiffViewStartsImmediateRefreshWhenDue(t *testing.T) {
 		items:           []PRRowModel{{PR: pr}},
 		view:            tuiViewDiff,
 		diffKey:         makePRKey(pr),
-		diffLines:       []string{"diff"},
+		diff:            "diff",
 		autoRefresh:     true,
 		lastInteraction: time.Now(),
 		lastRefreshAt:   time.Now().Add(-2 * watchMaxInterval),
@@ -924,14 +924,13 @@ func TestViewDiffShowsWrappedContinuationRows(t *testing.T) {
 func TestViewDiffFillsTerminalRectangle(t *testing.T) {
 	pr := testReviewPullRequest()
 	m := tuiModel{
-		p:         testPRL,
-		rows:      []TableRow{{Item: PRRowModel{PR: pr}}},
-		diffKey:   makePRKey(pr),
-		diffLines: []string{"+small"},
-		diffView:  newScrollView(),
-		height:    8,
-		width:     120,
-		styles:    newTuiStyles(),
+		p:       testPRL,
+		rows:    []TableRow{{Item: PRRowModel{PR: pr}}},
+		diffKey: makePRKey(pr),
+		diff:    "+small",
+		height:  8,
+		width:   120,
+		styles:  newTuiStyles(),
 	}
 	m.syncDiffView()
 
@@ -941,7 +940,6 @@ func TestViewDiffFillsTerminalRectangle(t *testing.T) {
 func TestViewDetailFillsTerminalRectangle(t *testing.T) {
 	m := tuiModel{
 		detailLines: []string{"title", "body"},
-		detailView:  newScrollView(),
 		height:      8,
 		width:       120,
 		styles:      newTuiStyles(),
@@ -1014,49 +1012,13 @@ func TestViewListDiffingStatusDoesNotAddFooterLines(t *testing.T) {
 	}
 }
 
-func TestSyncDiffViewCachesNormalizedRenderLines(t *testing.T) {
-	m := tuiModel{
-		diffLines: []string{
-			"left\tright",
-			strings.Repeat("x", 40),
-		},
-		diffView: newScrollView(),
-		height:   6,
-		width:    20,
-		styles:   newTuiStyles(),
-	}
-
+func TestDiffViewportWrapsAndScrollsByRenderedRow(t *testing.T) {
+	m := tuiModel{diff: "left\tright\n" + strings.Repeat("x", 40), width: 20, height: 6}
 	m.syncDiffView()
-
-	require.Len(t, m.diffRenderLines, 2)
-	require.Equal(t, "left    right      ", ansi.Strip(m.diffRenderLines[0]))
-	require.Equal(t, 19, ansi.WcWidth.StringWidth(m.diffRenderLines[0]))
-	require.Equal(t, 19, ansi.WcWidth.StringWidth(m.diffRenderLines[1]))
-	require.Equal(t, len(m.diffRenderLines), m.diffView.TotalLineCount())
-}
-
-func TestRenderViewportContentUsesCachedLinesWithScrollbar(t *testing.T) {
-	m := tuiModel{styles: newTuiStyles()}
-	lines := []string{
-		layout.NormalizeLine("line 1", 10),
-		layout.NormalizeLine("line 2", 10),
-		layout.NormalizeLine("line 3", 10),
-		layout.NormalizeLine("line 4", 10),
-	}
-	vp := newScrollView()
-	vp.SetWidth(10)
-	vp.SetHeight(3)
-	vp.SetContentLines(lines)
-	vp.SetYOffset(1)
-
-	got := ansi.Strip(m.renderViewportContent(lines, vp, true))
-	rows := strings.Split(got, nl)
-
-	require.Len(t, rows, 3)
-	require.Equal(t, "line 2    ┃\nline 3    ┃\nline 4    █", got)
-	for _, row := range rows {
-		require.Equal(t, 11, ansi.WcWidth.StringWidth(row))
-	}
+	require.Equal(t, "left\tright", m.diffView.buffer.Text(0))
+	require.Equal(t, 4, m.diffView.geometry().TotalRows)
+	m.diffView.setOffset(1)
+	require.Equal(t, 1, m.diffView.offset())
 }
 
 func TestTUIWheelFilterCoalescesMouseWheelInput(t *testing.T) {
@@ -1107,7 +1069,6 @@ func TestDetailScrollbar(t *testing.T) {
 	m := approvalTestModel("", pr)
 	m.view = tuiViewDetail
 	m.detailKey = makePRKey(pr)
-	m.detailView = newScrollView()
 	m.resolver = &AuthorResolver{}
 	const last = "End of description."
 	m.detail.Body = strings.Repeat("A paragraph.\n\n", 30) + last
@@ -1121,8 +1082,7 @@ func testViewportScrollbar(t *testing.T, m tuiModel, first, last string) {
 	t.Helper()
 	h := newTUIHarness(t, m)
 	h.Wait(first).AssertNot(last)
-	require.Equal(t, cansi.ModeSet, h.ModeSetting(cansi.ModeMouseButtonEvent))
-	require.NotEqual(t, cansi.ModeSet, h.ModeSetting(cansi.ModeMouseAnyEvent))
+	require.Equal(t, cansi.ModeSet, h.ModeSetting(cansi.ModeMouseAnyEvent))
 
 	top := h.Locate(reel.Contains("█"))
 	bottom := h.Locate(reel.Nth(-1, reel.Contains("┃")))
@@ -1158,7 +1118,6 @@ func TestWrapDiffLinesExpandsTabs(t *testing.T) {
 func TestSyncDetailViewExpandsTabs(t *testing.T) {
 	m := tuiModel{
 		detailLines: []string{"left\tright"},
-		detailView:  newScrollView(),
 		height:      5,
 		width:       20,
 		styles:      newTuiStyles(),
@@ -1166,8 +1125,8 @@ func TestSyncDetailViewExpandsTabs(t *testing.T) {
 
 	m.syncDetailView()
 
-	out := ansi.Strip(m.detailView.View())
-	require.Equal(t, "left    right      ", out)
+	out := ansi.Strip(m.detailView.snapshot())
+	require.Equal(t, "left    right", strings.TrimSpace(out))
 }
 
 func TestFillViewToTerminalExpandsTabs(t *testing.T) {

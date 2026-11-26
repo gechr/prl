@@ -4,21 +4,9 @@ import (
 	"image/color"
 	"strings"
 
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	"github.com/gechr/primer/scrollbar"
-	"github.com/gechr/primer/view"
 	"github.com/gechr/x/ansi"
-)
-
-type scrollbarTarget uint8
-
-const (
-	scrollbarTargetNone scrollbarTarget = iota
-	scrollbarTargetDiff
-	scrollbarTargetDetail
-	scrollbarTargetConfirm
 )
 
 type wheelTarget uint8
@@ -31,12 +19,6 @@ const (
 	wheelTargetConfirm
 	wheelTargetPresetMenu
 )
-
-type scrollbarDragState struct {
-	scrollbar.Drag
-
-	target scrollbarTarget
-}
 
 func resolveWheelTarget(model tea.Model) (wheelTarget, bool) {
 	tui, ok := model.(tuiModel)
@@ -85,17 +67,9 @@ func (m *tuiModel) applyWheelScroll(target wheelTarget, delta int) {
 	case wheelTargetList:
 		m.applyListWheelScroll(delta)
 	case wheelTargetDiff:
-		if delta > 0 {
-			m.diffView.ScrollDown(delta)
-		} else {
-			m.diffView.ScrollUp(-delta)
-		}
+		m.diffView.scroll(delta)
 	case wheelTargetDetail:
-		if delta > 0 {
-			m.detailView.ScrollDown(delta)
-		} else {
-			m.detailView.ScrollUp(-delta)
-		}
+		m.detailView.scroll(delta)
 	case wheelTargetConfirm:
 		if m.dialogs != nil {
 			m.dialogs.ScrollBy(delta)
@@ -159,158 +133,6 @@ func (m tuiModel) diffContentViewport() int {
 		viewport -= 2 // title + separator above the diff body
 	}
 	return max(0, viewport)
-}
-
-func newScrollView() viewport.Model {
-	v := viewport.New()
-	v.KeyMap = viewport.KeyMap{} // disable all key bindings - views handle their own
-	v.MouseWheelEnabled = true
-	v.MouseWheelDelta = 1
-	return v
-}
-
-func (m *tuiModel) syncDiffView() {
-	m.diffRenderLines = view.Sync(
-		&m.diffView, m.diffLines, max(0, m.width-tuiScrollbarWidth), m.diffContentViewport(),
-	)
-}
-
-func (m *tuiModel) syncDetailView() {
-	m.detailRenderLines = view.Sync(
-		&m.detailView, m.detailLines, max(0, m.width-tuiScrollbarWidth), m.detailViewport(),
-	)
-}
-
-func (m *tuiModel) handleScrollbarPress(msg tea.Mouse) bool {
-	if !m.confirmUsesDialog() {
-		switch m.view {
-		case tuiViewList:
-			return false
-		case tuiViewDiff:
-			m.syncDiffView()
-		case tuiViewDetail:
-			m.syncDetailView()
-		default:
-			return false
-		}
-	}
-
-	hitbox, target, ok := m.scrollbarHitboxAt(msg.X, msg.Y)
-	if !ok {
-		return false
-	}
-
-	percent := m.scrollbarPercent(target)
-	offset := m.scrollDrag.Press(hitbox, msg.Y, percent)
-	m.scrollDrag.target = target
-
-	if vp := m.scrollbarViewport(target); vp != nil {
-		vp.SetYOffset(offset)
-	} else if target == scrollbarTargetConfirm && m.dialogs != nil {
-		m.dialogs.SetScrollOffset(offset)
-	}
-	return true
-}
-
-func (m *tuiModel) handleScrollbarMotion(msg tea.Mouse) bool {
-	hitbox, ok := m.scrollbarHitbox(m.scrollDrag.target)
-	if !ok {
-		m.scrollDrag = scrollbarDragState{}
-		return false
-	}
-	offset, active := m.scrollDrag.Motion(hitbox, msg.Y)
-	if !active {
-		return false
-	}
-	if vp := m.scrollbarViewport(m.scrollDrag.target); vp != nil {
-		vp.SetYOffset(offset)
-	} else if m.scrollDrag.target == scrollbarTargetConfirm && m.dialogs != nil {
-		m.dialogs.SetScrollOffset(offset)
-	}
-	return true
-}
-
-func (m *tuiModel) scrollbarViewport(target scrollbarTarget) *viewport.Model {
-	switch target {
-	case scrollbarTargetNone:
-		return nil
-	case scrollbarTargetDiff:
-		return &m.diffView
-	case scrollbarTargetDetail:
-		return &m.detailView
-	case scrollbarTargetConfirm:
-		return nil
-	default:
-		return nil
-	}
-}
-
-func (m tuiModel) scrollbarPercent(target scrollbarTarget) float64 {
-	if target == scrollbarTargetConfirm && m.dialogs != nil {
-		return m.dialogs.ScrollPercent()
-	}
-	if vp := m.scrollbarViewport(target); vp != nil {
-		return vp.ScrollPercent()
-	}
-	return 0
-}
-
-func (m tuiModel) scrollbarHitboxAt(x, y int) (scrollbar.Hitbox, scrollbarTarget, bool) {
-	for _, target := range []scrollbarTarget{
-		scrollbarTargetConfirm,
-		scrollbarTargetDiff,
-		scrollbarTargetDetail,
-	} {
-		hitbox, ok := m.scrollbarHitbox(target)
-		if !ok {
-			continue
-		}
-		if hitbox.Contains(x, y) {
-			return hitbox, target, true
-		}
-	}
-	return scrollbar.Hitbox{}, scrollbarTargetNone, false
-}
-
-func (m tuiModel) viewportScrollbarHitbox(
-	vp *viewport.Model,
-	view tuiView,
-	y int,
-) (scrollbar.Hitbox, bool) {
-	totalLines := vp.TotalLineCount()
-	height := vp.Height()
-	if totalLines <= height || height <= 0 || m.width <= 0 || m.view != view ||
-		m.confirmAction != "" {
-		return scrollbar.Hitbox{}, false
-	}
-	return scrollbar.Hitbox{
-		X:          m.width - 1,
-		Y:          y,
-		Height:     height,
-		TotalLines: totalLines,
-	}, true
-}
-
-func (m tuiModel) scrollbarHitbox(target scrollbarTarget) (scrollbar.Hitbox, bool) {
-	switch target {
-	case scrollbarTargetNone:
-		return scrollbar.Hitbox{}, false
-	case scrollbarTargetDiff:
-		y := 0
-		if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
-			y = 2
-		}
-		return m.viewportScrollbarHitbox(&m.diffView, tuiViewDiff, y)
-	case scrollbarTargetDetail:
-		return m.viewportScrollbarHitbox(&m.detailView, tuiViewDetail, 0)
-	case scrollbarTargetConfirm:
-		if !m.confirmUsesDialog() || m.dialogs == nil {
-			return scrollbar.Hitbox{}, false
-		}
-		return m.dialogs.ScrollbarHitbox()
-	default:
-		return scrollbar.Hitbox{}, false
-	}
 }
 
 func (m tuiModel) confirmInputWidth() int {

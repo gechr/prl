@@ -7,7 +7,6 @@ import (
 	"bloomfx.dev/bloom"
 	"bloomfx.dev/bloom/anim"
 	"bloomfx.dev/bloom/fx"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -17,26 +16,24 @@ type prSlide struct {
 	previous string
 	from     fx.Direction
 	progress anim.Value
-	root     *bloom.Root
 }
 
-func (m *tuiModel) startPRSlide(from fx.Direction, vp viewport.Model, lines []string) tea.Cmd {
+func (m *tuiModel) startPRSlide(from fx.Direction, vp *reviewViewport) tea.Cmd {
 	if m.cfg != nil && !m.cfg.TUI.Animations.Enabled {
 		return nil
 	}
-	if from == 0 || !anim.Motion() || vp.Width() <= 0 || vp.Height() <= 0 {
+	if from == 0 || !anim.Motion() || vp == nil || vp.width <= 0 || vp.height <= 0 {
 		return nil
 	}
 	m.slide = prSlide{
-		previous: m.renderViewportContent(lines, vp, false),
-		root:     bloom.New(bloom.WithWidthMethod(m.p.widthMethod())),
+		previous: vp.snapshot(),
 		from:     from,
 		progress: anim.NewValue(0, anim.Duration(prSlideDuration), anim.Ease(anim.InOutQuad)),
 	}
 	return m.slide.progress.To(1)
 }
 
-func (s prSlide) render(width, height int, current string) string {
+func (s prSlide) layout(width, height int, current bloom.Child) bloom.Child {
 	// Both layers must share a cell boundary, including at half-cell positions.
 	cells := float64(width)
 	t := math.Round(s.progress.Float()*cells) / cells
@@ -46,9 +43,9 @@ func (s prSlide) render(width, height int, current string) string {
 	}
 	outgoing := bloom.Layer(bloom.Text(s.previous).NoWrap()).Size(width, height).
 		Transition(1-t, fx.Slide{From: exit})
-	incoming := bloom.Layer(bloom.Text(current).NoWrap()).Size(width, height).
+	incoming := bloom.Layer(current).Size(width, height).
 		Transition(t, fx.Slide{From: s.from})
-	return s.root.Render(width, height, bloom.Overlay(bloom.Text(""), outgoing, incoming))
+	return bloom.Overlay(bloom.Text(""), outgoing, incoming)
 }
 
 // detailNeighbors follows the current list order and skips folded stack headers.

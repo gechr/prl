@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -1216,22 +1217,22 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.openDiff(prev, fx.Left)
 		return m, cmd
 	case tuiKeybindVimDown, key.Down:
-		m.diffView.ScrollDown(1)
+		m.diffView.scroll(1)
 		return m, nil
 	case tuiKeybindVimUp, key.Up:
-		m.diffView.ScrollUp(1)
+		m.diffView.scroll(-1)
 		return m, nil
 	case key.CtrlF, key.Space:
-		m.diffView.PageDown()
+		m.diffView.scroll(m.diffView.geometry().Rows)
 		return m, nil
 	case key.CtrlB:
-		m.diffView.PageUp()
+		m.diffView.scroll(-m.diffView.geometry().Rows)
 		return m, nil
 	case tuiKeybindTop:
-		m.diffView.GotoTop()
+		m.diffView.setOffset(0)
 		return m, nil
 	case tuiKeybindBottom:
-		m.diffView.GotoBottom()
+		m.diffView.setOffset(math.MaxInt)
 		return m, nil
 	case tuiKeybindApprove, tuiKeybindApproveNoConfirm:
 		ctx, ok := m.actionContextForKey(m.diffKey)
@@ -1405,22 +1406,22 @@ func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.openDetail(idx, from)
 		return m, cmd
 	case tuiKeybindVimDown, key.Down:
-		m.detailView.ScrollDown(1)
+		m.detailView.scroll(1)
 		return m, nil
 	case tuiKeybindVimUp, key.Up:
-		m.detailView.ScrollUp(1)
+		m.detailView.scroll(-1)
 		return m, nil
 	case key.CtrlF, key.Space:
-		m.detailView.PageDown()
+		m.detailView.scroll(m.detailView.geometry().Rows)
 		return m, nil
 	case key.CtrlB:
-		m.detailView.PageUp()
+		m.detailView.scroll(-m.detailView.geometry().Rows)
 		return m, nil
 	case tuiKeybindTop:
-		m.detailView.GotoTop()
+		m.detailView.setOffset(0)
 		return m, nil
 	case tuiKeybindBottom:
-		m.detailView.GotoBottom()
+		m.detailView.setOffset(math.MaxInt)
 		return m, nil
 	case tuiKeybindDiff:
 		// Jump to diff from detail view.

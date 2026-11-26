@@ -19,7 +19,6 @@ func resumeTestModel(prs []PullRequest) tuiModel {
 	m.cfg = &Config{}
 	m.resolver = &AuthorResolver{}
 	m.filterInput = textinput.New()
-	m.diffView, m.detailView = newScrollView(), newScrollView()
 	m.replaceListItems(buildPRRowModels(prs, "", m.resolver))
 	m.applyWindowSize(90, 15)
 	m.lastRefreshAt = time.Now().Add(-2 * tuiListResultCacheMaxAge).UTC()
@@ -54,7 +53,7 @@ func TestResumeCachedBrowser(t *testing.T) {
 				m.detail.Body = strings.Repeat("Example paragraph.\n\n", 50)
 				m.detailLines = m.renderDetailContent()
 				m.syncDetailView()
-				m.detailView.SetYOffset(10)
+				m.detailView.setOffset(10)
 			case tuiViewDiff:
 				m.diffKey = m.rowKeyAt(19)
 				m.diff = strings.Repeat("+ example line\n", 50)
@@ -62,7 +61,7 @@ func TestResumeCachedBrowser(t *testing.T) {
 				m.diffHistory = []prKey{m.rowKeyAt(17)}
 				m.diffQueuePos, m.diffQueueTotal = 2, 3
 				m.applyWindowSize(m.width, m.height)
-				m.diffView.SetYOffset(10)
+				m.diffView.setOffset(10)
 			case tuiViewList:
 			}
 
@@ -98,8 +97,8 @@ func TestResumeCachedBrowser(t *testing.T) {
 			require.Equal(t, before, after)
 			require.Equal(t, m.diffQueue, restored.diffQueue)
 			require.Equal(t, m.diffHistory, restored.diffHistory)
-			require.Equal(t, m.detailView.YOffset(), restored.detailView.YOffset())
-			require.Equal(t, m.diffView.YOffset(), restored.diffView.YOffset())
+			require.Equal(t, m.detailView.offset(), restored.detailView.offset())
+			require.Equal(t, m.diffView.offset(), restored.diffView.offset())
 			restored, _ = updateModel(
 				t,
 				restored,

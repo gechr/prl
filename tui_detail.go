@@ -153,13 +153,13 @@ func (m *tuiModel) showDetail(key prKey, detail PRDetail, idx int, from fx.Direc
 	m.refreshTerminalSize()
 	var slide tea.Cmd
 	if from != 0 && m.view == tuiViewDetail && m.detailKey != key {
-		slide = m.startPRSlide(from, m.detailView, m.detailRenderLines)
+		slide = m.startPRSlide(from, m.detailView)
 		m.cursor = idx
 		m.offset = m.scrolledOffset()
 	}
 	m.detailKey, m.view = key, tuiViewDetail
 	m.setDetailContent(detail)
-	m.detailView.GotoTop()
+	m.detailView.setOffset(0)
 	m.flash.Msg = ""
 	var prefetch tea.Cmd
 	if _, next := m.detailNeighbors(); next >= 0 {

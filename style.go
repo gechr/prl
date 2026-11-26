@@ -18,6 +18,7 @@ var (
 	colorAccent           color.Color // cursor, help keys, separators, borders
 	colorRef              color.Color // PR refs, hyperlinks
 	colorStackArrow       color.Color // stack disclosure arrows
+	colorSelectionBG      color.Color // selected text in review viewports
 	colorHighlight        color.Color // selected index, on-state, additions
 	colorOK               color.Color // success, selected items, focused text
 	colorDanger           color.Color // errors, confirm No
@@ -139,6 +140,7 @@ func initPalette(isLight bool) {
 
 	// Primary interactive palette.
 	colorAccent = ld(lg.Color("162"), lg.Color("198")) // deep/hot pink
+	colorSelectionBG = ld(lg.Color("#cbdff5"), lg.Color("#253e60"))
 	colorStackArrow = ld(lg.Color("#005aaa"), lg.Color("#59a5ef"))
 	colorRef = ld(lg.Color("26"), lg.Color("117"))       // blue
 	colorHighlight = ld(lg.Color("28"), lg.Color("118")) // green

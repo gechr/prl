@@ -75,10 +75,10 @@ func actionViewTestModel(view tuiView, pr PullRequest) tuiModel {
 	case tuiViewList:
 		return m
 	case tuiViewDetail:
-		m.detailKey, m.detailView = makePRKey(pr), newScrollView()
+		m.detailKey = makePRKey(pr)
 		m.detailLines = m.renderDetailContent()
 	case tuiViewDiff:
-		m.diffKey, m.diffView = makePRKey(pr), newScrollView()
+		m.diffKey = makePRKey(pr)
 		m.diff = "+change"
 	}
 	return m

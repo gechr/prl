@@ -204,6 +204,8 @@ For flags that accept a GitHub user, `copilot` is an alias for `copilot-pull-req
 - `f/F`: status presets. `t/T`: time ranges. `Ctrl+X`: clear both.
 - Left/Right or click a stack header: collapse/expand stacks.
 - In detail view, `n`/Right and `p`/Left browse the next and previous PR in the filtered list. In diff view, the same keys browse the selected queue. Both views prefetch the next PR and keep fetched content in memory for the session, so you can revisit a PR immediately. A known-outdated diff stays readable while it refreshes. Approval and merge become available when the current diff arrives.
+- When the PR list overflows, click or drag its scrollbar to browse the filtered rows.
+- In a diff or detail view, drag to select text. Hold the pointer above or below the content to keep scrolling, then press `Ctrl+c` to copy the selection.
 - `a`: approve, or unapprove your own approval. Unapprove opens a reason editor prefilled with "Approval withdrawn by reviewer." In diff view, approving advances to the next PR.
 - `Alt+a`: approve or unapprove without confirmation, using the default reason.
 - `--interval 30s`: slow auto-refresh.
