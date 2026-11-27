@@ -202,7 +202,7 @@ func (m *tuiModel) saveSession() {
 		Filter:         m.filterInput.Value(),
 		FilterFocused:  m.filterInput.Focused(),
 		FilterCursor:   m.filterInput.Position(),
-		ShowHelp:       m.showHelp,
+		ShowHelp:       m.help != nil,
 		DismissedEmpty: m.dismissedEmpty,
 		Sort:           m.cfg.TUI.Sort,
 		Stacks:         m.stacksEnabled(),
@@ -320,7 +320,11 @@ func (s *savedSession) restore(m *tuiModel) {
 	if s.FilterFocused {
 		m.initCmd = m.filterInput.Focus()
 	}
-	m.showHelp, m.dismissedEmpty = s.ShowHelp, s.DismissedEmpty
+	m.help = nil
+	if s.ShowHelp {
+		m.help = &helpSheet{}
+	}
+	m.dismissedEmpty = s.DismissedEmpty
 	if s.Selected != nil {
 		m.selected = s.Selected
 	}

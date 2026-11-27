@@ -48,7 +48,7 @@ func (s *tuiScreen) listScrollbar(total, visible, offset int) bloom.Child {
 }
 
 func (m tuiModel) listScrollbarActive() bool {
-	return m.view == tuiViewList && !m.confirmUsesDialog() && !m.showHelp && !m.showOptions &&
+	return m.view == tuiViewList && !m.confirmUsesDialog() && m.help == nil && !m.showOptions &&
 		!m.presetMenu.open
 }
 

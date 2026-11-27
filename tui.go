@@ -23,7 +23,6 @@ import (
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/flash"
 	"github.com/gechr/primer/helpbar"
-	"github.com/gechr/primer/helpsheet"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
 	"github.com/gechr/primer/picker"
@@ -563,7 +562,7 @@ type tuiModel struct {
 	spinnerTick        int     // current spinner frame index
 	queryGen           int     // generation counter to discard stale ticks and results
 	repaintTick        bool    // toggled each heartbeat to invalidate the renderer cache
-	showHelp           bool
+	help               *helpSheet
 
 	// Cached GitHub login of the authenticated user (resolved lazily).
 	login string
@@ -1080,7 +1079,10 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.update(done.msg)
 	}
 	switch msg.(type) {
-	case tea.KeyMsg, tea.WindowSizeMsg:
+	case tea.KeyReleaseMsg:
+		// A key released after dismissing a modal must not activate a list action.
+		return m, nil
+	case tea.KeyPressMsg, tea.WindowSizeMsg:
 		m.hover = hoverState{}
 	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
@@ -1089,10 +1091,8 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.quit()
 	}
 
-	// Dismiss help overlay on any keypress.
-	if _, ok := msg.(tea.KeyMsg); ok && m.showHelp {
-		m.showHelp = false
-		return m, nil
+	if keypress, ok := msg.(tea.KeyPressMsg); ok && m.help != nil {
+		return m.updateHelp(keypress), nil
 	}
 
 	// Handle filter options overlay keys.
@@ -1144,7 +1144,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.touchInteraction()
-		if m.showHelp {
+		if m.help != nil {
 			return m, nil
 		}
 		if m.showOptions {
@@ -1497,7 +1497,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		m.touchInteraction()
-		if m.showHelp || m.showOptions || m.presetMenu.open {
+		if m.help != nil || m.showOptions || m.presetMenu.open {
 			return m, nil
 		}
 		return m.doPaste(msg)
@@ -1809,7 +1809,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiKeybindHelp:
-		m.showHelp = true
+		m.help = &helpSheet{}
 		return m, nil
 
 	case tuiKeybindCycleTimePreset:
@@ -2028,7 +2028,7 @@ func (m tuiModel) viewList() tea.View {
 		rows = append(rows, bloom.Fixed(1, bloom.Text(input).NoWrap()))
 	}
 	var list bloom.Child = bloom.Column(rows...)
-	if len(visible) == 0 && !m.dismissedEmpty && m.flash.Msg == "" && !m.showHelp &&
+	if len(visible) == 0 && !m.dismissedEmpty && m.flash.Msg == "" && m.help == nil &&
 		!m.showOptions &&
 		!m.confirmUsesDialog() {
 		list = bloom.Overlay(list, bloom.Layer(bloom.Text(m.renderEmptyOverlay()).NoWrap()))
@@ -2052,8 +2052,8 @@ func (m tuiModel) viewList() tea.View {
 		bloom.Fill(bloom.Text(footer).NoWrap()),
 	)
 	switch {
-	case m.showHelp:
-		page = bloom.Overlay(page, screen.modalLayer(bloom.Text(m.renderHelpOverlay()).NoWrap()))
+	case m.help != nil:
+		page = bloom.Overlay(page, m.helpLayer())
 	case m.showOptions:
 		page = bloom.Overlay(page, screen.modalLayer(m.filterPanel()))
 	case m.confirmUsesDialog() && screen.dialog != nil:
@@ -3061,72 +3061,6 @@ func (m tuiModel) detailHelpPairs() []key.Hint {
 	}
 	pairs = append(pairs, key.Hint{Key: tuiKeybindQuit, Desc: tuiHelpDismiss})
 	return pairs
-}
-
-func (m tuiModel) renderHelpOverlay() string {
-	pairs := []key.Hint{
-		{Key: tuiKeysVimUpDown, Desc: tuiDescNavigate},
-		{Key: tuiKeysJumpFirstLast, Desc: tuiDescJumpFirstLast},
-		{Key: key.Enter, Desc: tuiDescShow},
-		{Key: key.Space, Desc: tuiDescSelect},
-		{Key: key.ShiftArrowsVertical, Desc: tuiDescExtendSelection},
-		{Key: tuiKeybindSelectAll, Desc: tuiDescSelectAll},
-		{Key: tuiKeybindInvertSelection, Desc: tuiDescInvertSelection},
-		{Key: tuiKeybindFilter, Desc: tuiDescFilter},
-		{Key: tuiKeybindApprove, Desc: tuiDescApprove},
-		{Key: tuiKeybindApproveMerge, Desc: tuiDescApproveMerge},
-		{Key: tuiKeybindApproveNoConfirm, Desc: tuiDescApproveNoConfirm},
-		{Key: tuiKeybindDiff, Desc: tuiDescDiff},
-		{Key: tuiKeybindDraftToggle, Desc: tuiDescDraftToggle},
-		{Key: tuiKeybindMerge, Desc: tuiDescMerge},
-		{Key: tuiKeybindForceMerge, Desc: tuiDescForceMerge},
-		{Key: tuiKeybindClose, Desc: tuiDescClose},
-		{Key: tuiKeybindUpdateBranch, Desc: tuiDescUpdateBranch},
-		{Key: tuiKeybindUnassign, Desc: tuiDescUnassign},
-		{Key: tuiKeybindUnassignNoConfirm, Desc: tuiDescUnassignNoConf},
-		{Key: tuiKeybindOpen, Desc: tuiDescOpen},
-		{Key: tuiKeybindCopyURL, Desc: tuiDescCopy},
-		{Key: tuiKeybindSlack, Desc: tuiDescSendSlack},
-		{Key: tuiKeybindSlackNoConfirm, Desc: tuiDescSendSlackNoConf},
-		{Key: key.Tab, Desc: tuiDescCycleSortOrder},
-		{Key: tuiKeybindOptions, Desc: tuiDescOptions},
-		{Key: tuiKeybindCyclePreset + "/" + tuiKeybindCyclePresetBack, Desc: tuiDescCyclePreset},
-		{
-			Key:  tuiKeybindCycleTimePreset + "/" + tuiKeybindCycleTimePresetBack,
-			Desc: tuiDescCycleTimePreset,
-		},
-		{Key: tuiKeybindClearPresets, Desc: tuiDescClearPresets},
-		{Key: tuiKeybindToggleRefresh, Desc: tuiDescRefresh},
-		{Key: tuiKeybindHelp, Desc: tuiDescHelp},
-		{Key: tuiKeybindQuit, Desc: tuiDescQuit},
-	}
-	if hasAIReviewLauncher() {
-		// Insert review before the last two entries (?, q).
-		pairs = append(
-			pairs[:len(pairs)-2],
-			append(
-				[]key.Hint{
-					{Key: tuiKeybindReview, Desc: tuiDescReview},
-					{Key: tuiKeybindReviewNoConfirm, Desc: tuiDescReviewNoConfirm},
-					{Key: tuiKeybindCopilotReview, Desc: tuiDescCopilotReview},
-				},
-				pairs[len(pairs)-2:]...)...)
-	}
-
-	sheetPairs := make([]helpsheet.Pair, len(pairs))
-	for i, p := range pairs {
-		sheetPairs[i] = helpsheet.Pair{Key: p.Key, Desc: p.Desc}
-	}
-	return helpsheet.Model{
-		Pairs:   sheetPairs,
-		Dismiss: "Press any key to dismiss",
-		Styles: helpsheet.Styles{
-			Key:     m.styles.helpKey,
-			Text:    m.styles.helpText,
-			Dismiss: styleDismiss.Bold(true),
-			Box:     m.styles.overlayBox,
-		},
-	}.Render()
 }
 
 // renderFlashStatus styles the flash message, or returns "" when there is none.

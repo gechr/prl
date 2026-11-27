@@ -164,7 +164,7 @@ func (m tuiModel) presetControlWidths(prLabel string) (int, int) {
 }
 
 func (m tuiModel) canOpenPresetMenu() bool {
-	if m.view != tuiViewList || m.cli == nil || m.cfg == nil || m.showHelp || m.showOptions ||
+	if m.view != tuiViewList || m.cli == nil || m.cfg == nil || m.help != nil || m.showOptions ||
 		m.confirmAction != "" || m.detailLoading || m.diffLoading || m.width < 5 {
 		return false
 	}
