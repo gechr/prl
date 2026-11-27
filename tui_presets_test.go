@@ -219,7 +219,7 @@ func TestPresetHoverPreservesIdleRefreshTimer(t *testing.T) {
 	testListSeparator(&m)
 	start, _ := testControlBounds(m, prPresetID)
 	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
-	require.Equal(t, prPresetID, m.hover.control)
+	require.Equal(t, prPresetID, m.hoveredControl)
 	require.Equal(t, idleSince, m.lastInteraction, "hover alone keeps the idle timer")
 	m, _ = updateModel(
 		t,

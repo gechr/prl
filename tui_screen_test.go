@@ -107,3 +107,16 @@ func TestFilterScrollbarLeavesRoomForChoices(t *testing.T) {
 	last := h.Locate(reel.After(reel.Contains("self-required"), reel.Contains("none  all")))
 	require.Equal(t, review.Y, last.Y)
 }
+
+func TestHeaderlessListClicksUseRenderedRows(t *testing.T) {
+	m := screenRegressionModel(t, 80, 12)
+	m.header = ""
+	m.View()
+	rect, ok := m.screen.root.Frame().Rect(prListID)
+	require.True(t, ok)
+	require.Zero(t, rect.Min.Y)
+	m, _ = updateModel(t, m, tea.MouseClickMsg{X: 4, Y: 1, Button: tea.MouseLeft})
+	require.Equal(t, 1, m.cursor)
+	m, _ = updateModel(t, m, tea.MouseClickMsg{X: 4, Y: 0, Button: tea.MouseLeft})
+	require.Zero(t, m.cursor)
+}

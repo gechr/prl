@@ -210,12 +210,10 @@ func (m *tuiModel) toggleStack(key prKey) {
 }
 
 func (m tuiModel) stackGlyphAt(x, y int) prKey {
-	line := y - 1 + m.offset // one column-header line
-	lines := m.listLines()
-	if y < 1 || y > m.listViewport() || line < 0 || line >= len(lines) {
+	entry, ok := m.listEntryAt(y)
+	if !ok {
 		return ""
 	}
-	entry := lines[line]
 	treeX := m.listPrefixWidth() - stackTreeWidth
 	if entry.stackKey != "" && x >= treeX && (entry.header != "" || x < treeX+stackTreeWidth) {
 		return entry.stackKey

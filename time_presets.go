@@ -180,7 +180,7 @@ func (m tuiModel) renderTimeTag(width int) string {
 	return m.renderPresetControl(
 		m.timeControlLabel(width),
 		style,
-		m.hover.control == timePresetID,
+		m.hoveredControl == timePresetID,
 		width,
 	)
 }

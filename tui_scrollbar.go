@@ -39,8 +39,10 @@ func (p *scrollPointer) update(root *bloom.Root, msg tea.Msg) tea.Cmd {
 	return root.Update(msg)
 }
 
-func (s *tuiScreen) listScrollbar(total, visible, offset int) bloom.Child {
-	return bloom.Scrollbar(total, visible, offset).Style(reviewBarStyle()).ID(scrollbarID).
+const prListID bloom.ID = "pr-list"
+
+func (s *tuiScreen) listScrollbar() bloom.Child {
+	return bloom.ScrollbarOf(prListID).Style(reviewBarStyle()).ID(scrollbarID).
 		OnScroll(func(offset int) tea.Cmd {
 			s.listOffset = offset
 			return nil

@@ -27,13 +27,6 @@ const (
 	presetIndicatorSuffix = " ├─"
 )
 
-// hoverState tracks what the pointer is over in the list view.
-type hoverState struct {
-	control bloom.ID
-	rowY    int  // pointer line, valid when rowOK
-	rowOK   bool // the pointer is over the list rows
-}
-
 func (m tuiModel) renderPresetControl(name string, style lg.Style, hovered bool, width int) string {
 	if width <= 0 {
 		return ""
@@ -129,7 +122,7 @@ func (m tuiModel) presetControls() presetControls {
 	}
 	prWidth, timeWidth := m.presetControlWidths(name)
 	return presetControls{
-		pr:   m.renderPresetControl(name, style, m.hover.control == prPresetID, prWidth),
+		pr:   m.renderPresetControl(name, style, m.hoveredControl == prPresetID, prWidth),
 		time: m.renderTimeTag(timeWidth),
 	}
 }

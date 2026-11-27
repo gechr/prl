@@ -470,7 +470,7 @@ type tuiModel struct {
 	showOptions     bool
 	optionsPicker   *filterPicker
 	presetMenu      presetMenuState
-	hover           hoverState
+	hoveredControl  bloom.ID
 	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
 	// the search filters just applied via the overlay, or because an approval
@@ -1055,7 +1055,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if !tm.canOpenPresetMenu() || tm.presetMenu.open {
-		tm.hover = hoverState{}
+		tm.hoveredControl = ""
 	}
 	state, kind := tm.programStatus()
 	if state != previousState || kind != previousKind {
@@ -1085,7 +1085,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A key released after dismissing a modal must not activate a list action.
 		return m, nil
 	case tea.KeyPressMsg, tea.WindowSizeMsg:
-		m.hover = hoverState{}
+		m.hoveredControl = ""
 	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
 		(keyMsg.String() == key.CtrlC || keyMsg.String() == key.CtrlD) &&
@@ -1174,7 +1174,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.listScrollbarActive() && m.screen.contains(scrollbarID, msg.X, msg.Y) {
 			return m, nil
 		}
-		if m.view == tuiViewList && msg.Button == tea.MouseLeft && msg.Y == 0 {
+		if m.view == tuiViewList && msg.Button == tea.MouseLeft && msg.Y == 0 && m.header != "" {
 			col := m.headerColumnAt(msg.X)
 			if col != "" {
 				return m.toggleSort(col)
@@ -1199,10 +1199,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.touchInteraction()
 		}
 		if m.canOpenPresetMenu() && !m.presetMenu.open {
-			m.hover = hoverState{control: m.screen.hit(msg.X, msg.Y)}
-			if _, ok := m.rowIndexAt(msg.Y); ok && !m.screen.contains(scrollbarID, msg.X, msg.Y) {
-				m.hover.rowY, m.hover.rowOK = msg.Y, true
-			}
+			m.hoveredControl = m.screen.hit(msg.X, msg.Y)
 		}
 		if m.presetMenu.open {
 			if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
@@ -1929,11 +1926,11 @@ func (m tuiModel) viewList() tea.View {
 	indexWidth := m.listIndexWidth()
 	indexPad := strings.Repeat(" ", indexWidth)
 	indexGap := m.indexGap()
-	rowNode := func(line string) bloom.Child {
+	rowNode := func(line string) bloom.TextNode {
 		if rowWidth < m.width {
 			line = m.reviewWidthMethod().Truncate(line, rowWidth, valueEllipsis)
 		}
-		return bloom.Fixed(1, bloom.Text(layout.ExpandTabs(line)).NoWrap())
+		return bloom.Text(layout.ExpandTabs(line)).NoWrap()
 	}
 
 	var rows []bloom.Child
@@ -1943,19 +1940,23 @@ func (m tuiModel) viewList() tea.View {
 			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
 			prefix = frame + " " + indexPad + indexGap
 		}
-		rows = append(rows, rowNode(prefix+m.header))
+		rows = append(rows, bloom.Fixed(1, rowNode(prefix+m.header)))
 	}
 
-	var lines []bloom.Child
-
-	// Determine visible slice based on offset.
-	end := min(m.offset+viewport, len(visible))
-	start := min(m.offset, len(visible))
-
-	filterVal := m.filterInput.Value()
-	hoverIdx, hoverOK := m.hoveredRow()
-
-	for _, entry := range visible[start:end] {
+	rowHover := lg.NewStyle().Transform(func(line string) string {
+		return layout.PreserveBackgroundWidth(line, hoverBG, rowWidth)
+	})
+	hoverEnabled := m.canOpenPresetMenu() && !m.presetMenu.open
+	listRow := func(line string, idx, pos int) bloom.Child {
+		node := rowNode(line)
+		if hoverEnabled && idx >= 0 && idx != m.cursor {
+			// Hover belongs to the screen row when scrolling changes the PR underneath it.
+			node = node.ID(bloom.ID("pr-row/" + strconv.Itoa(pos-m.offset))).HoverStyle(rowHover)
+		}
+		return node
+	}
+	var body bloom.Child = bloom.List(len(visible), func(pos int) bloom.Child {
+		entry := visible[pos]
 		idx := entry.row
 		index := m.renderTuiIndexWidth(entry.label(), m.selected[m.rowKeyAt(idx)], indexWidth)
 		if entry.header != "" {
@@ -1981,11 +1982,8 @@ func (m tuiModel) viewList() tea.View {
 					tuiNonCursorPrefix,
 				)
 				line = layout.PreserveBackgroundWidth(line, cursorLineBG, rowWidth)
-			} else if hoverOK && idx == hoverIdx {
-				line = layout.PreserveBackgroundWidth(line, hoverBG, rowWidth)
 			}
-			lines = append(lines, rowNode(line))
-			continue
+			return listRow(line, idx, pos)
 		}
 		tree := entry.tree
 		if m.p != nil && m.p.theme != nil && m.p.theme.MarkdownText != nil {
@@ -1993,12 +1991,7 @@ func (m tuiModel) viewList() tea.View {
 		}
 		display := index + indexGap + tree + m.rows[idx].Display
 		if idx != m.cursor {
-			line := m.rowGutter(idx) + display
-			if hoverOK && idx == hoverIdx {
-				line = layout.PreserveBackgroundWidth(line, hoverBG, rowWidth)
-			}
-			lines = append(lines, rowNode(line))
-			continue
+			return listRow(m.rowGutter(idx)+display, idx, pos)
 		}
 		line := m.rowCursor(idx) + display
 		// Inject background color throughout the line so it persists
@@ -2011,17 +2004,16 @@ func (m tuiModel) viewList() tea.View {
 			}
 			line = layout.PreserveBackgroundWidth(line, bg, rowWidth)
 		}
-		lines = append(lines, rowNode(line))
-	}
-
-	var body bloom.Child = bloom.Column(lines...)
+		return rowNode(line)
+	}).Offset(m.offset).ID(prListID)
 	if len(visible) > viewport {
 		body = bloom.Row(
 			bloom.Fill(body),
-			bloom.Fixed(tuiScrollbarWidth, screen.listScrollbar(len(visible), viewport, m.offset)),
+			bloom.Fixed(tuiScrollbarWidth, screen.listScrollbar()),
 		)
 	}
 	rows = append(rows, bloom.Fixed(viewport, body))
+	filterVal := m.filterInput.Value()
 	if m.filterInput.Focused() || filterVal != "" {
 		input := styleHeading.Bold(true).Render("/") + m.filterInput.View()
 		rows = append(rows, bloom.Fixed(1, bloom.Text(input).NoWrap()))
@@ -2274,7 +2266,7 @@ func (m tuiModel) filterTagText(width int) string {
 		width,
 		valueEllipsis,
 	)
-	if m.hover.control == filterTagsID {
+	if m.hoveredControl == filterTagsID {
 		return layout.PreserveBackground(text, hoverBG)
 	}
 	return text
@@ -3351,27 +3343,28 @@ func (m tuiModel) headerColumnAt(x int) string {
 // Returns the index into m.rows and ok=true if y is on a visible row. Lines
 // outside the viewport (header, filter bar, separator, help) map to no row,
 // even when rows are scrolled out of view above or below them.
-func (m tuiModel) rowIndexAt(y int) (int, bool) {
-	const headerLines = 1 // header is always rendered on Y=0
-	if y < headerLines || y >= headerLines+m.listViewport() {
-		return 0, false
+func (m tuiModel) listEntryAt(y int) (tuiListLine, bool) {
+	if m.screen == nil {
+		return tuiListLine{}, false
 	}
-	row := y - headerLines + m.offset
-	visible := m.listLines()
-	if row < 0 || row >= len(visible) || visible[row].row < 0 {
-		return 0, false
+	frame := m.screen.root.Frame()
+	rect, _ := frame.Rect(prListID)
+	list, ok := frame.List(prListID)
+	local := y - rect.Min.Y
+	if !ok || local < 0 || local >= list.Visible || y >= rect.Max.Y {
+		return tuiListLine{}, false
 	}
-	return visible[row].row, true
+	lines := m.listLines()
+	pos := list.First + local
+	if pos >= len(lines) {
+		return tuiListLine{}, false
+	}
+	return lines[pos], true
 }
 
-// hoveredRow returns the row under the pointer. It resolves the stored
-// pointer line on each render, so scrolling, refreshes and stack folds move
-// the highlight to whatever row now sits under the pointer.
-func (m tuiModel) hoveredRow() (int, bool) {
-	if !m.hover.rowOK {
-		return 0, false
-	}
-	return m.rowIndexAt(m.hover.rowY)
+func (m tuiModel) rowIndexAt(y int) (int, bool) {
+	entry, ok := m.listEntryAt(y)
+	return entry.row, ok && entry.row >= 0
 }
 
 // toggleSort cycles a column through: default direction -> reverse -> off.
