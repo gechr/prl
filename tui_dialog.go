@@ -5,8 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	"github.com/gechr/primer/button"
-	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/form"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/pill"
@@ -16,95 +14,59 @@ func (m *tuiModel) confirmUsesDialog() bool {
 	return m.confirmAction != ""
 }
 
-func (m *tuiModel) syncConfirmDialog() {
-	if m.confirmUsesDialog() {
-		modal := m.ensureScreen()
-		if modal.dialog == nil {
-			modal.dialog = m.newConfirmDialog()
+func (m *tuiModel) showInfo(prompt string) {
+	if m.confirmHasInput && m.screen != nil && m.screen.dialog != nil {
+		if d := m.screen.dialog; d.form != nil {
+			*m = m.rememberConfirmDraft(d.form.Value(len(d.options)))
 		}
-	} else if m.screen != nil && m.screen.dialog != nil {
-		m.screen.dialog = nil
-		m.screen.offset, m.screen.maxOffset, m.screen.manualScroll = 0, 0, false
 	}
+	*m = m.clearConfirm()
+	m.confirmAction, m.confirmPrompt = tuiActionInfo, prompt
 }
 
-func (m *tuiModel) newConfirmDialog() dialog.Dialog {
+func (m *tuiModel) syncConfirmDialog() {
+	if !m.confirmUsesDialog() && m.screen == nil {
+		return
+	}
+	s := m.ensureScreen()
+	if s.dialog != nil {
+		if s.dialog.action == m.confirmAction && s.dialog.prompt == m.confirmPrompt {
+			return
+		}
+		s.focus.Pop()
+		s.dialog = nil
+		if s.pointer.last.Button == tea.MouseLeft {
+			// A later release belongs to the old dialog, even if another opens in its place.
+			s.resetRoot(m.reviewWidthMethod())
+		}
+	}
+	if !m.confirmUsesDialog() {
+		return
+	}
+	d := &confirmDialog{action: m.confirmAction, prompt: m.confirmPrompt}
+	s.dialog = d
+	s.focus.Push(confirmPanelID)
 	switch {
 	case m.confirmHasInput:
-		return m.newConfirmFormDialog()
+		d.options = m.confirmOptions
+		values := make([]string, len(d.options))
+		for i := range d.options {
+			values[i] = m.selectedConfirmOptionValue(i)
+		}
+		if m.confirmAction == tuiActionReview && len(values) > 0 {
+			d.provider = normalizeReviewProvider(values[0])
+		}
+		input := m.confirmInputValue
+		if draft, ok := m.confirmDraft(); ok {
+			input = draft
+		}
+		d.form = new(m.newConfirmFormModel(d.options, values, input))
 	case m.confirmCmd == nil && m.confirmCmdFn == nil:
-		return dialog.NewInfo(m.confirmPrompt, button.Button{
-			Label: "OK",
-			Focused: pillButtonStyle(lg.NewStyle().
-				Background(colorTitle).
-				Foreground(colorBlack).
-				Bold(true).
-				Padding(0, 1), colorTitle, false),
-			Blurred: pillButtonStyle(
-				lg.NewStyle().Foreground(colorTitle).Padding(0, 1),
-				colorTitle,
-				true,
-			),
-		})
+		d.info = true
+		s.focus.Set(confirmOKID)
 	default:
-		return m.newConfirmButtonsDialog()
+		s.focus.Set(confirmYesID)
 	}
-}
-
-// newConfirmButtonsDialog builds the No/Yes dialog for the pending plain
-// confirm, keeping the legacy key contract: y accepts, n/q (and esc) decline,
-// and enter presses the focused button, which starts on Yes.
-func (m *tuiModel) newConfirmButtonsDialog() dialog.Dialog {
-	return dialog.NewConfirmButtons(
-		m.confirmPrompt,
-		dialog.ConfirmButton{
-			Label:   "No",
-			Focused: m.styles.confirmNo,
-			Blurred: m.styles.confirmNoDim,
-			Keys:    []string{tuiKeybindConfirmNo, "N", tuiKeybindQuit},
-		},
-		dialog.ConfirmButton{
-			Label:   "Yes",
-			Focused: m.styles.confirmYes,
-			Blurred: m.styles.confirmYesDim,
-			Accept:  true,
-			Keys:    []string{key.Y, "Y"},
-			Default: true,
-		},
-	)
-}
-
-func (m *tuiModel) newConfirmFormDialog() dialog.Dialog {
-	defs := append([]filterOptionDef(nil), m.confirmOptions...)
-	values := make([]string, len(defs))
-	for i := range defs {
-		values[i] = m.selectedConfirmOptionValue(i)
-	}
-	m.confirmLiveOptions = &defs
-	owner := *m
-	previousProvider := reviewProviderUnknown
-	if len(values) > 0 {
-		previousProvider = normalizeReviewProvider(values[0])
-	}
-	inputValue := m.confirmInputValue
-	if draft, ok := m.confirmDraft(); ok {
-		inputValue = draft
-	}
-	var d *dialog.Form
-	formOptions := []dialog.FormOption{}
-	if activeIcons.PillLeft != "" {
-		formOptions = append(formOptions, dialog.WithNerdFonts())
-	}
-	d = dialog.NewForm(
-		owner.newConfirmFormModel(defs, values, inputValue),
-		func(ev form.EventKind) {
-			if ev == form.EventChanged && owner.confirmAction == tuiActionReview {
-				owner.syncReviewDialogForm(d, &defs, &previousProvider)
-			}
-		},
-		formOptions...,
-	)
-	return d
 }
 
 func (m *tuiModel) newConfirmFormModel(
@@ -261,27 +223,24 @@ func confirmChoiceLabels(choices []filterChoice) []string {
 	return labels
 }
 
-func (m *tuiModel) syncReviewDialogForm(
-	d *dialog.Form,
-	defs *[]filterOptionDef,
-	previousProvider *reviewProvider,
-) {
-	if d == nil || len(*defs) < 2 {
+func (m *tuiModel) syncReviewDialogForm(d *confirmDialog) {
+	const requiredOptions = 2 // provider and model
+	if len(d.options) < requiredOptions {
 		return
 	}
-	fm := d.Model()
+	fm := d.form
 	provider := normalizeReviewProvider(fm.Value(0))
 	if provider == reviewProviderUnknown {
 		provider = configuredReviewProvider(m.cfg)
 	}
 	model := normalizeReviewModel(m.cfg, provider, fm.Value(1))
 	effort := ""
-	if row := reviewOptionRow(*defs, reviewEffortOptionLabel); row >= 0 {
+	if row := reviewOptionRow(d.options, reviewEffortOptionLabel); row >= 0 {
 		effort = normalizeReviewEffort(m.cfg, provider, model, fm.Value(row))
 	}
 	// Yolo never persisted: carry across rebuilds only.
 	yolo := reviewYoloNo
-	if row := reviewOptionRow(*defs, reviewYoloOptionLabel); row >= 0 {
+	if row := reviewOptionRow(d.options, reviewYoloOptionLabel); row >= 0 {
 		yolo = normalizeReviewYolo(fm.Value(row))
 	}
 	// Remember the navigated combination immediately - the next dialog opens
@@ -298,9 +257,9 @@ func (m *tuiModel) syncReviewDialogForm(
 		}
 	}
 	next := reviewConfirmOptions(m.cfg, provider, model)
-	promptValue := fm.Value(len(*defs))
+	promptValue := fm.Value(len(d.options))
 	if m.confirmReviewPR != nil {
-		oldPrompt := reviewPrompt(*m.confirmReviewPR, m.cfg, *previousProvider)
+		oldPrompt := reviewPrompt(*m.confirmReviewPR, m.cfg, d.provider)
 		if promptValue == oldPrompt {
 			promptValue = reviewPrompt(*m.confirmReviewPR, m.cfg, provider)
 		}
@@ -312,10 +271,10 @@ func (m *tuiModel) syncReviewDialogForm(
 	if reviewOptionRow(next, reviewYoloOptionLabel) >= 0 {
 		values = append(values, yolo)
 	}
-	if len(next) != len(*defs) {
+	if len(next) != len(d.options) {
 		*fm = m.newConfirmFormModel(next, values, promptValue)
-		*defs = next
-		*previousProvider = provider
+		d.options = next
+		d.provider = provider
 		return
 	}
 	for i, def := range next {
@@ -323,64 +282,96 @@ func (m *tuiModel) syncReviewDialogForm(
 		fm.SetValue(i, values[i])
 	}
 	fm.SetValue(len(next), promptValue)
-	*defs = next
-	*previousProvider = provider
+	d.options = next
+	d.provider = provider
 }
 
-// updateConfirmDialog routes a message into the confirm dialog and completes
-// the confirmation when the dialog resolves: an accepted confirm runs the
-// pending command with the progress flash, a declined one just clears.
 func (m tuiModel) updateConfirmDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.screen == nil || m.screen.dialog == nil {
 		return m, nil
 	}
-	if _, ok := m.screen.dialog.(*dialog.Info); ok {
-		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-			switch keyMsg.String() {
-			case key.Q, key.Y, "Y", key.N, "N":
+	d := m.screen.dialog
+	if d.form == nil {
+		return m.updateConfirmButtons(msg)
+	}
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		d.manualScroll = false
+		if keyMsg.String() == key.AltEnter {
+			msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+		}
+	}
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		m.screen.focusFormAt(click)
+		return m, nil
+	}
+	cmd, result, _ := d.form.Update(msg)
+	switch result {
+	case form.EventNone, form.EventEditor, form.EventConfirmDiscard:
+		// These forms edit inline and save drafts immediately on cancellation.
+	case form.EventChanged:
+		if m.confirmAction == tuiActionReview {
+			m.syncReviewDialogForm(d)
+		}
+	case form.EventSubmit:
+		if !m.confirmFits() {
+			return m, cmd
+		}
+		model, actionCmd := m.confirmAcceptWithSubmission(d.submission())
+		return model, tea.Batch(cmd, actionCmd)
+	case form.EventCancel:
+		m = m.rememberConfirmDraft(d.form.Value(len(d.options)))
+		model, dismissCmd := m.confirmDismiss()
+		return model, tea.Batch(cmd, dismissCmd)
+	}
+	return m, cmd
+}
+
+func (m tuiModel) updateConfirmButtons(msg tea.Msg) (tea.Model, tea.Cmd) {
+	s := m.screen
+	d := s.dialog
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		switch k.String() {
+		case key.Y, "Y":
+			if d.info {
 				return m.confirmDismiss()
+			}
+			d.pressed = confirmYesID
+		case tuiKeybindConfirmNo, "N", tuiKeybindQuit, key.Esc:
+			return m.confirmDismiss()
+		case key.Space:
+			if d.info {
+				return m.confirmDismiss()
+			}
+		case key.Enter:
+			if _, handled := s.focus.Update(k, s.root.Frame()); !handled {
+				// The frame may not have been drawn yet.
+				d.pressed = s.focus.Current()
+			}
+		case key.Left, "h", key.ShiftTab, key.Right, "l", key.Tab:
+			// Both directions wrap in a two-button row.
+			if s.focus.Next(s.root.Frame()) {
+				break
+			}
+			switch s.focus.Current() {
+			case confirmYesID:
+				s.focus.Set(confirmNoID)
+			case confirmNoID:
+				s.focus.Set(confirmYesID)
 			}
 		}
 	}
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == key.AltEnter {
-		msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
-	}
-	if click, ok := msg.(tea.MouseClickMsg); ok {
-		local, hit := m.screen.bodyClick(click)
-		if !hit {
+	switch d.pressed {
+	case confirmYesID:
+		d.pressed = ""
+		if !m.confirmFits() {
 			return m, nil
 		}
-		msg = local
+		return m.confirmAccept()
+	case confirmNoID, confirmOKID:
+		return m.confirmDismiss()
+	default:
+		return m, nil
 	}
-	if _, ok := msg.(tea.KeyPressMsg); ok {
-		m.screen.manualScroll = false
-	}
-	d, cmd, res := m.screen.dialog.Update(msg)
-	m.screen.dialog = d
-	if res != dialog.ResultSubmit && res != dialog.ResultClose {
-		return m, cmd
-	}
-	if res == dialog.ResultSubmit {
-		if f, ok := d.(*dialog.Form); ok {
-			model, actionCmd := m.confirmAcceptWithSubmission(m.dialogFormSubmission(f))
-			return model, tea.Batch(cmd, actionCmd)
-		}
-		model, actionCmd := m.confirmAccept()
-		return model, tea.Batch(cmd, actionCmd)
-	}
-	if f, ok := d.(*dialog.Form); ok {
-		m = m.rememberConfirmDraft(m.dialogFormInput(f))
-	}
-	model, dismissCmd := m.confirmDismiss()
-	return model, tea.Batch(cmd, dismissCmd)
-}
-
-func (m tuiModel) dialogFormInput(d *dialog.Form) string {
-	values := d.Model().Values()
-	if len(values) == 0 {
-		return ""
-	}
-	return values[len(values)-1]
 }
 
 func (m tuiModel) confirmDraft() (string, bool) {
@@ -423,26 +414,13 @@ func (m tuiModel) confirmDraftKey() (confirmDraftKey, bool) {
 	return confirmDraftKey{action: m.confirmAction, url: m.confirmURL}, true
 }
 
-func (m tuiModel) dialogFormSubmission(d *dialog.Form) confirmSubmission {
-	values := d.Model().Values()
-	if len(values) == 0 {
-		return confirmSubmission{}
-	}
-	submission := confirmSubmission{Input: strings.TrimSpace(values[len(values)-1])}
-	if len(values) == 1 {
-		return submission
-	}
-	// Open dialog rebuilds rows on provider switch: its list wins.
-	options := m.confirmOptions
-	if m.confirmLiveOptions != nil {
-		options = *m.confirmLiveOptions
-	}
-	submission.Options = make(map[string]string, len(values)-1)
-	for i, selected := range values[:len(values)-1] {
-		if i >= len(options) {
-			continue
+func (d *confirmDialog) submission() confirmSubmission {
+	submission := confirmSubmission{Input: strings.TrimSpace(d.form.Value(len(d.options)))}
+	if len(d.options) > 0 {
+		submission.Options = make(map[string]string, len(d.options))
+		for i, opt := range d.options {
+			submission.Options[opt.label] = confirmChoiceValue(opt.choices, d.form.Value(i))
 		}
-		submission.Options[options[i].label] = confirmChoiceValue(options[i].choices, selected)
 	}
 	return submission
 }

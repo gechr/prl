@@ -538,10 +538,8 @@ type tuiModel struct {
 	confirmInputValue       string            // initial text input value
 	confirmInputPlaceholder string            // empty text input hint
 	confirmOptions          []filterOptionDef // optional selectable rows shown in the dialog
-	// open form dialog's own rows; rebuilt on provider switch
-	confirmLiveOptions *[]filterOptionDef
-	confirmReviewPR    *PullRequest // selected PR when the dialog is for AI review
-	confirmDrafts      map[confirmDraftKey]string
+	confirmReviewPR         *PullRequest      // selected PR when the dialog is for AI review
+	confirmDrafts           map[confirmDraftKey]string
 
 	// Background auto-refresh.
 	eventStreams           *eventStreams
@@ -1217,6 +1215,9 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseReleaseMsg:
 		m.touchInteraction()
+		if m.confirmUsesDialog() && !m.confirmHasInput {
+			return m.updateConfirmDialog(msg)
+		}
 		return m, nil
 
 	case scrollwheel.Msg[wheelTarget]:
@@ -1268,9 +1269,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selected = make(prKeys)
 		status := fmt.Sprintf("%d/%d", msg.count-msg.failed, msg.count)
 		if msg.failed > 0 {
-			m.confirmAction = tuiActionInfo
-			m.confirmPrompt = renderBatchFailurePrompt(msg)
-			m.confirmCmd = nil
+			m.showInfo(renderBatchFailurePrompt(msg))
 			return m, tea.Batch(settleCmd, flashResult(
 				&m,
 				msg.action.String(),
@@ -1544,9 +1543,7 @@ func (m tuiModel) handleActionResult(msg actionMsg) (tea.Model, tea.Cmd) {
 	flashCmd := m.actionFlash(msg)
 	if hint != nil {
 		cmd := styleAccent.Bold(true).Render(hint.Hint)
-		m.confirmAction = tuiActionInfo
-		m.confirmPrompt = "To also mute notifications, run:\n\n" + cmd
-		m.confirmCmd = nil
+		m.showInfo("To also mute notifications, run:\n\n" + cmd)
 	}
 	// A completed action may belong to a PR the user has already navigated away from.
 	if m.view == tuiViewDiff && !m.diffLoading && m.diffKey == msg.key {
@@ -2060,7 +2057,7 @@ func (m tuiModel) viewList() tea.View {
 	case m.showOptions:
 		page = bloom.Overlay(page, screen.modalLayer(m.filterPanel()))
 	case m.confirmUsesDialog() && screen.dialog != nil:
-		page = bloom.Overlay(page, screen.modalLayer(m.confirmPanel()))
+		page = bloom.Overlay(page, m.confirmLayer())
 	case m.presetMenu.open:
 		page = bloom.Overlay(page, m.presetMenuLayer(presets))
 	}
@@ -2328,7 +2325,7 @@ func (m tuiModel) renderFullScreenView(header string, vp *reviewViewport, help s
 	var page bloom.Child = bloom.Column(rows...)
 	root := vp.root
 	if m.confirmUsesDialog() && m.screen != nil && m.screen.dialog != nil {
-		page = bloom.Overlay(page, m.screen.modalLayer(m.confirmPanel()))
+		page = bloom.Overlay(page, m.confirmLayer())
 		root = m.screen.root
 	}
 	v := tea.NewView(root.Render(m.width, m.height, page))
@@ -3330,7 +3327,6 @@ func (m tuiModel) clearConfirm() tuiModel {
 	m.confirmHasInput = false
 	m.confirmInputLabel = ""
 	m.confirmOptions = nil
-	m.confirmLiveOptions = nil
 	m.confirmOptionValues = nil
 	m.confirmReviewPR = nil
 	m.confirmInputValue = ""

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"net/http"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"getsteep.dev/steep/reel"
 	"getsteep.dev/steep/reel/vt"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/gechr/primer/dialog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,6 +84,145 @@ func TestPlainConfirmDialogClickButtons(t *testing.T) {
 	}
 }
 
+func TestReopenedConfirmationIgnoresPreviousButtonRelease(t *testing.T) {
+	m := listTUIModel(approvalTestPR(1))
+	m.width, m.height = 100, 25
+	m, _ = pressKey(t, m, tuiKeybindUpdateBranch)
+	m.View()
+	rect, ok := m.screen.root.Frame().Rect(confirmYesID)
+	require.True(t, ok)
+	mouse := tea.Mouse{X: rect.Min.X, Y: rect.Min.Y, Button: tea.MouseLeft}
+	m, _ = updateModel(t, m, tea.MouseClickMsg(mouse))
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Empty(t, m.confirmAction)
+	m.View()
+	m, _ = pressKey(t, m, tuiKeybindUpdateBranch)
+	m.View()
+	m, _ = updateModel(t, m, tea.MouseReleaseMsg(mouse))
+	require.Equal(t, tuiActionUpdateBranch, m.confirmAction)
+	require.Zero(t, m.actionsInFlight)
+}
+
+func TestConfirmDragMovesButtonsAndReopeningCentersDialog(t *testing.T) {
+	for _, view := range []tuiView{tuiViewList, tuiViewDetail, tuiViewDiff} {
+		t.Run(fmt.Sprint(view), func(t *testing.T) {
+			m := actionViewTestModel(view, approvalTestPR(1))
+			h := newTUIHarness(t, m)
+			const prompt = "Update branch for owner/repo#1?"
+			h.Key(tuiKeybindUpdateBranch).Wait(prompt)
+			label := h.Locate(reel.Contains(prompt))
+			border := label.Offset(0, -2)
+			no := h.Locate(reel.Contains(" No "))
+			h.LeftDrag(border.X, border.Y, border.X+9, border.Y+3)
+			h.WaitFor(reel.ScreenFunc(func(screen string) bool {
+				line := strings.Split(screen, nl)[label.Y+3]
+				return ansi.Cut(line, label.X+9, label.X+9+len(prompt)) == prompt
+			}))
+			no.LeftClick().Assert(prompt)
+			h.Locate(reel.Contains(" No ")).
+				LeftClick().
+				WaitNot(prompt).
+				Key(tuiKeybindUpdateBranch).
+				Wait(prompt)
+			at := h.Locate(reel.Contains(prompt))
+			require.Equal(t, label.X, at.X)
+			require.Equal(t, label.Y, at.Y)
+		})
+	}
+}
+
+func TestConfirmFitsShortTerminalAndGuardsHiddenActions(t *testing.T) {
+	m := openPlainConfirm(t, plainConfirmModel())
+	m.width, m.height = 90, 6
+	buttonVisible := func() bool {
+		m.View()
+		_, ok := m.screen.root.Frame().Rect(confirmYesID)
+		return ok
+	}
+	require.True(t, buttonVisible())
+	for _, size := range []tea.WindowSizeMsg{{Width: 90, Height: 3}, {Width: 18, Height: 24}} {
+		m, _ = updateModel(t, m, size)
+		m, _ = pressKey(t, m, "y")
+		require.False(t, buttonVisible())
+		m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		require.Equal(t, tuiActionApprove, m.confirmAction)
+		require.Zero(t, m.actionsInFlight)
+	}
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 90, Height: 4})
+	require.True(t, buttonVisible())
+	m, _ = pressKey(t, m, "y")
+	require.Empty(t, m.confirmAction)
+	require.Equal(t, 1, m.actionsInFlight)
+}
+
+func TestConfirmDropStaysPutWhenTerminalGrows(t *testing.T) {
+	m := openPlainConfirm(t, plainConfirmModel())
+	m.width, m.height = 100, 24
+	m.View()
+	rect, ok := m.screen.root.Frame().Rect(confirmHandleID)
+	require.True(t, ok)
+	down := tea.MouseClickMsg{X: rect.Min.X + 1, Y: rect.Min.Y, Button: tea.MouseLeft}
+	up := tea.MouseReleaseMsg{X: m.width - 1, Y: m.height - 1, Button: tea.MouseLeft}
+	m, _ = updateModel(t, m, down)
+	m, _ = updateModel(t, m, up)
+	m.View()
+	dropped, ok := m.screen.root.Frame().Rect(confirmPanelID)
+	require.True(t, ok)
+	require.Equal(t, m.width, dropped.Max.X)
+	require.Equal(t, m.height, dropped.Max.Y)
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 160, Height: 70})
+	m.View()
+	widened, ok := m.screen.root.Frame().Rect(confirmPanelID)
+	require.True(t, ok)
+	require.Equal(t, dropped, widened)
+}
+
+func TestMovedFormFitsAfterResizeAndKeepsDraft(t *testing.T) {
+	m := plainConfirmModel()
+	m.confirmHasInput = true
+	h := newTUIHarness(t, openPlainConfirm(t, m))
+	h.Wait(m.confirmPrompt).Paste("first line").Wait("first line")
+	label := h.Locate(reel.Contains(m.confirmPrompt))
+	h.LeftDrag(label.X, label.Y-2, 0, 0)
+	h.WaitFor(reel.ScreenFunc(func(screen string) bool { return strings.HasPrefix(screen, "╭─") }))
+	h.Resize(90, 18).Wait("first line").Paste(" plus edit").Wait("first line plus edit")
+}
+
+func TestConfirmButtonHover(t *testing.T) {
+	for _, light := range []bool{false, true} {
+		for _, mode := range []IconMode{IconUnicode, IconNerd} {
+			t.Run(fmt.Sprintf("light=%t/%s", light, mode), func(t *testing.T) {
+				oldLight, oldIcons := paletteIsLight, activeIcons
+				initPalette(light)
+				useIcons(iconsFor(mode))
+				t.Cleanup(func() {
+					initPalette(oldLight)
+					useIcons(oldIcons)
+				})
+
+				h := newTUIHarness(t, openPlainConfirm(t, plainConfirmModel()))
+				yes := h.Locate(reel.Contains(" Yes ")).Offset(1, 0)
+				no := h.Locate(reel.Contains(" No ")).Offset(1, 0)
+				for _, at := range []steep.Location{yes, no} {
+					base := cellStyle(h, at)
+					at.Hover()
+					waitCellStyle(t, h, at, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+					requireScreenColor(t, cellStyle(h, at).Bg, colorSelectionBG)
+					requireScreenColor(t, cellStyle(h, at).Fg, colorText)
+					requireScreenColor(t, cellStyle(h, at.Offset(-1, 0)).Bg, colorSelectionBG)
+					if mode == IconNerd {
+						requireScreenColor(t, cellStyle(h, at.Offset(-2, 0)).Fg, colorSelectionBG)
+					}
+					at.Offset(0, -1).Hover()
+					waitCellStyle(t, h, at, func(s reel.CellStyle) bool { return s == base })
+				}
+				no.Hover()
+				h.Key("enter").Wait("Approving")
+			})
+		}
+	}
+}
+
 func TestPlainConfirmDialogRendersPromptAndButtons(t *testing.T) {
 	m := openPlainConfirm(t, plainConfirmModel())
 	h := newTUIHarness(t, m)
@@ -122,11 +261,25 @@ func TestNerdConfirmDialogsRenderPillCapsWithoutShifting(t *testing.T) {
 	})
 }
 
+func TestInfoInterruptsFormAndPreservesDraft(t *testing.T) {
+	m := listTUIModel(approvalTestPR(1))
+	m, _ = pressKey(t, m, tuiKeybindComment)
+	m, _ = updateModel(t, m, tea.PasteMsg{Content: "draft comment"})
+	m, _ = updateModel(t, m, batchActionMsg{count: 1, failed: 1})
+	require.Equal(t, tuiActionInfo, m.confirmAction)
+	require.Nil(t, m.screen.dialog.form)
+	require.True(t, m.screen.focus.Is(confirmOKID))
+	m, _ = pressKey(t, m, "y")
+	require.Zero(t, m.actionsInFlight)
+	m, _ = pressKey(t, m, tuiKeybindComment)
+	require.Equal(t, "draft comment", m.screen.dialog.form.Value(0))
+}
+
 func TestInfoConfirmDialogQDismisses(t *testing.T) {
 	m := listTUIModel(approvalTestPR(1))
 	m.confirmAction, m.confirmPrompt = tuiActionInfo, "Approve failed"
 	m.syncConfirmDialog()
-	require.IsType(t, &dialog.Info{}, m.screen.dialog)
+	require.True(t, m.screen.focus.Is(confirmOKID))
 	h := newTUIHarness(t, m)
 	screen := h.Wait(m.confirmPrompt).Assert("OK").View()
 	require.Equal(t, 1, strings.Count(screen, m.confirmPrompt))
@@ -140,8 +293,7 @@ func TestInputConfirmUsesFormDialog(t *testing.T) {
 	m.confirmCmdFn = func(confirmSubmission) tea.Cmd { return nil }
 	require.True(t, m.confirmUsesDialog())
 	m.syncConfirmDialog()
-	_, ok := m.screen.dialog.(*dialog.Form)
-	require.True(t, ok)
+	require.NotNil(t, m.screen.dialog.form)
 }
 
 func TestInputConfirmDialogSeparatesAndAccentsField(t *testing.T) {

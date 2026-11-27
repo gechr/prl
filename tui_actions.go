@@ -678,9 +678,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 
 	case tuiKeybindReview:
 		if !hasAIReviewLauncher() {
-			m.confirmAction = tuiActionInfo
-			m.confirmPrompt = tuiAIReviewUnsupported
-			m.confirmCmd = nil
+			m.showInfo(tuiAIReviewUnsupported)
 			return m, nil, true
 		}
 		pr := m.currentPR()
@@ -698,9 +696,7 @@ func (m tuiModel) updateListActions(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 
 	case tuiKeybindReviewNoConfirm:
 		if !hasAIReviewLauncher() {
-			m.confirmAction = tuiActionInfo
-			m.confirmPrompt = tuiAIReviewUnsupported
-			m.confirmCmd = nil
+			m.showInfo(tuiAIReviewUnsupported)
 			return m, nil, true
 		}
 		pr := m.currentPR()
@@ -1125,9 +1121,7 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 			if m.view == tuiViewDetail {
 				exitCmd = m.exitDetailView()
 			}
-			m.confirmAction = tuiActionInfo
-			m.confirmPrompt = tuiAIReviewUnsupported
-			m.confirmCmd = nil
+			m.showInfo(tuiAIReviewUnsupported)
 			return m, exitCmd, true
 		}
 		if !ctx.actionable {
