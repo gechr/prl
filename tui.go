@@ -21,7 +21,6 @@ import (
 	cansi "github.com/charmbracelet/x/ansi"
 	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/gechr/clog"
-	"github.com/gechr/primer/dialog"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/flash"
 	"github.com/gechr/primer/helpbar"
@@ -544,8 +543,7 @@ type tuiModel struct {
 	confirmLiveOptions *[]filterOptionDef
 	confirmReviewPR    *PullRequest // selected PR when the dialog is for AI review
 	confirmDrafts      map[confirmDraftKey]string
-	dialogs            *dialog.Stack // primer stack for confirmations, information, and forms
-	dialogBar          *scrollbarLayer
+	modal              *tuiModal
 	listBar            *scrollbarLayer
 
 	// Background auto-refresh.
@@ -748,6 +746,9 @@ func (m tuiModel) selectedConfirmOptionValue(row int) string {
 func (m tuiModel) Init() tea.Cmd {
 	reportProgramStatus(m.programStatus())
 	var cmds []tea.Cmd
+	if m.modal != nil {
+		cmds = append(cmds, m.modal.root.Init())
+	}
 	if m.eventStreams != nil {
 		cmds = append(cmds, m.eventStreams.wait)
 	}
@@ -1012,12 +1013,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(inputCmd, copyCmd)
 			}
 		}
-	case m.confirmUsesDialog() && m.dialogBar != nil:
-		var offset int
-		offset, inputCmd = m.dialogBar.update(msg)
-		if offset >= 0 {
-			m.dialogs.SetScrollOffset(offset)
-		}
+	case m.confirmUsesDialog() && m.modal != nil:
+		inputCmd = m.modal.pointer.update(m.modal.root, msg)
 	case m.listScrollbarActive() && m.listBar != nil:
 		var offset int
 		offset, inputCmd = m.listBar.update(msg)
@@ -1134,13 +1131,31 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyWindowSize(msg.Width, msg.Height)
 		return m, nil
 
+	case tea.BackgroundColorMsg:
+		s := m.modalLayer()
+		s.bg = msg.Color
+		s.root.SetColors(s.fg, s.bg)
+		return m, nil
+
+	case tea.ForegroundColorMsg:
+		s := m.modalLayer()
+		s.fg = msg.Color
+		s.root.SetColors(s.fg, s.bg)
+		return m, nil
+
 	case tea.ModeReportMsg:
 		return m.applyModeReport(msg), nil
 
 	case tea.MouseClickMsg:
 		m.touchInteraction()
+		if m.showHelp {
+			return m, nil
+		}
 		if m.showOptions {
 			return m.clickFilterChoice(msg)
+		}
+		if m.confirmUsesDialog() {
+			return m.updateConfirmDialog(msg)
 		}
 		if m.presetMenu.open {
 			return m.updatePresetMenuClick(msg)
@@ -1156,17 +1171,6 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.presetTagAt(msg.X, msg.Y) {
 			m.openPresetMenu()
-			return m, nil
-		}
-		// A dialog-stack confirm is modal: left clicks go to its scrollbar or
-		// content (translated into ClickMsg); other buttons are swallowed.
-		if m.confirmUsesDialog() && m.dialogs != nil {
-			if msg.Button == tea.MouseLeft {
-				if m.dialogBar.contains(msg.X, msg.Y) {
-					return m, nil
-				}
-				return m.updateConfirmDialog(msg)
-			}
 			return m, nil
 		}
 		if m.listScrollbarActive() && m.listBar.contains(msg.X, msg.Y) {
@@ -1500,13 +1504,16 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		m.touchInteraction()
-		if m.presetMenu.open {
+		if m.showHelp || m.showOptions || m.presetMenu.open {
 			return m, nil
 		}
 		return m.doPaste(msg)
 
 	case tea.KeyMsg:
 		m.touchInteraction()
+		if m.confirmUsesDialog() {
+			return m.updateConfirmDialog(msg)
+		}
 		switch m.view {
 		case tuiViewDiff:
 			return m.updateDiffView(msg)
@@ -1640,11 +1647,6 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.offset = 0
 			return m, cmd
 		}
-	}
-
-	// Handle pending confirmation.
-	if m.confirmAction != "" {
-		return m.updateConfirmDialog(msg)
 	}
 
 	// Freeze interactions while a view is loading in the background.
@@ -1926,21 +1928,9 @@ func (m tuiModel) renderView() tea.View {
 	v := m.viewList()
 	switch {
 	case m.showHelp:
-		v.Content = overlay.Place(
-			v.Content,
-			m.renderHelpOverlay(),
-			m.width,
-			m.height,
-			overlay.Center,
-		)
+		v.Content = m.renderModal(v.Content, bloom.Text(m.renderHelpOverlay()).NoWrap())
 	case m.showOptions:
-		v.Content = overlay.Place(
-			v.Content,
-			m.renderOptionsOverlay(),
-			m.width,
-			m.height,
-			overlay.Center,
-		)
+		v.Content = m.renderModal(v.Content, bloom.Text(m.renderOptionsOverlay()).NoWrap().ID(optionsModalID))
 	case m.confirmUsesDialog():
 		v.Content = m.viewConfirmDialog(v.Content)
 	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.flash.Msg == "":
@@ -2421,8 +2411,8 @@ func (m tuiModel) applyModeReport(msg tea.ModeReportMsg) tuiModel {
 		return m
 	}
 	m.p = m.p.withGraphemeWidth()
-	if m.dialogBar != nil {
-		m.dialogBar = newScrollbarLayer(m.reviewWidthMethod())
+	if m.modal != nil {
+		m.modal.resetRoot(m.reviewWidthMethod())
 	}
 	m.applyWindowSize(m.width, m.height)
 	return m
@@ -3773,6 +3763,7 @@ func runTui(
 	}
 
 	model := tuiModel{
+		modal:           newTUIModal(p.widthMethod()),
 		rows:            r.rows,
 		header:          r.header,
 		colWidths:       r.colWidths,

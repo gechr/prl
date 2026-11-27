@@ -1,6 +1,7 @@
 package main
 
 import (
+	"image"
 	"slices"
 	"strings"
 	"time"
@@ -9,7 +10,6 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
-	"github.com/gechr/primer/overlay"
 	"github.com/gechr/primer/picker"
 	xslices "github.com/gechr/x/slices"
 )
@@ -369,42 +369,31 @@ func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// optionsDialogAt reports whether (x, y) falls inside the filter dialog box, so
-// clicks on the dialog never reach the tags it covers.
-func (m tuiModel) optionsDialogAt(x, y int) bool {
-	return overlay.Contains(m.renderOptionsOverlay(), m.width, m.height, overlay.Center, x, y)
-}
-
 // filterChoiceAt reads choice positions from the rendered picker so mouse
 // targets follow its padding, labels and any extra CI choice.
 func (m tuiModel) filterChoiceAt(x, y int) (int, int, bool) {
-	if x < 0 || x >= m.width || y < 0 || y >= m.height {
+	lines := strings.Split(ansi.Strip(m.renderOptionsOverlay()), nl)
+	if y < 0 || y >= len(lines) {
 		return 0, 0, false
 	}
-	view := m.renderOptionsOverlay()
-	originX, originY := overlay.Origin(view, m.width, m.height, overlay.Center)
-	lines := strings.Split(ansi.Strip(view), nl)
-	lineIndex := y - originY
-	if lineIndex < 0 || lineIndex >= len(lines) {
-		return 0, 0, false
-	}
-	line := lines[lineIndex]
+	line := lines[y]
+	method := m.reviewWidthMethod()
 	for rowIndex, row := range m.optionsPicker.Rows {
 		before, remaining, found := strings.Cut(line, row.Label)
 		if !found {
 			continue
 		}
-		offset := lg.Width(before + row.Label)
+		offset := method.StringWidth(before + row.Label)
 		for choiceIndex, choice := range row.Choices {
 			gap, after, ok := strings.Cut(remaining, choice)
 			if !ok {
 				break
 			}
-			start := originX + offset + lg.Width(gap)
-			if x >= start && x < start+lg.Width(choice) {
+			start := offset + method.StringWidth(gap)
+			if x >= start && x < start+method.StringWidth(choice) {
 				return rowIndex, choiceIndex, true
 			}
-			offset += lg.Width(gap + choice)
+			offset += method.StringWidth(gap + choice)
 			remaining = after
 		}
 	}
@@ -413,20 +402,26 @@ func (m tuiModel) filterChoiceAt(x, y int) (int, int, bool) {
 
 // openOptions opens the filter dialog (Shift+O, or a click on the filter tags).
 func (m *tuiModel) openOptions() {
+	m.modalLayer()
 	m.showOptions = true
 	m.optionsPicker = m.newFilterPicker()
 }
 
 func (m tuiModel) clickFilterChoice(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	if msg.Button == tea.MouseLeft {
-		if row, choice, ok := m.filterChoiceAt(msg.X, msg.Y); ok {
+	if m.modal == nil || msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	if rect, ok := m.modal.root.Frame().Rect(optionsModalID); ok {
+		point := image.Pt(msg.X, msg.Y)
+		if !point.In(rect) {
+			// Clicking the backdrop applies staged choices. Esc discards them.
+			return m.applyFilterOptions()
+		}
+		local := point.Sub(rect.Min)
+		if row, choice, ok := m.filterChoiceAt(local.X, local.Y); ok {
 			m.optionsPicker.Cursor = row
 			m.optionsPicker.Values[row] = choice
 			m.optionsPicker.IsReset[row] = false
-		} else if !m.optionsDialogAt(msg.X, msg.Y) {
-			// A click outside the dialog (the filter tags included) dismisses
-			// it like Shift+O, which applies and closes it. Only Esc cancels.
-			return m.applyFilterOptions()
 		}
 	}
 	return m, nil

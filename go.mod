@@ -6,7 +6,7 @@ go 1.27.4
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
 require (
-	bloomfx.dev/bloom v0.0.0-alpha.17
+	bloomfx.dev/bloom v0.0.0-alpha.18
 	charm.land/bubbles/v2 v2.2.2
 	charm.land/bubbletea/v2 v2.2.0
 	charm.land/huh/v2 v2.0.3

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"image"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,8 +19,7 @@ func filterClickTestModel() tuiModel {
 	m := approvalTestModel("", approvalTestPR(1), approvalTestPR(2), approvalTestPR(3))
 	m.cfg = &Config{}
 	m.width, m.height = 120, 30
-	m.showOptions = true
-	m.optionsPicker = m.newFilterPicker()
+	m.openOptions()
 	return m
 }
 
@@ -175,13 +175,16 @@ func TestOptionsOverlayCoversTagsUnderneath(t *testing.T) {
 		m.width, m.height, m.header = 80, height, "PR"
 		m.cli.State, m.cli.stateExplicit = valueClosed, true
 		m.optionsPicker = m.newFilterPicker()
+		m.View()
+		rect, ok := m.modal.root.Frame().Rect(optionsModalID)
+		require.True(t, ok)
 		start, end := m.filterTagsBounds()
 		y := m.listSeparatorY()
 		for x := start; x < end; x++ {
-			if !m.optionsDialogAt(x, y) {
+			if !image.Pt(x, y).In(rect) {
 				continue
 			}
-			if _, _, ok := m.filterChoiceAt(x, y); ok {
+			if _, _, ok := m.filterChoiceAt(x-rect.Min.X, y-rect.Min.Y); ok {
 				continue
 			}
 			covered++

@@ -2,8 +2,8 @@
 4d63.com/gocheckcompilerdirectives v1.4.0/go.mod h1:9ZOAiMOjqC/nRwci2fcUXVHUNLG/cH6r6rhUh+jTFtQ=
 4d63.com/gochecknoglobals v0.2.2 h1:H1vdnwnMaZdQW/N+NrkT1SZMTBmcwHe9Vq8lJcYYTtU=
 4d63.com/gochecknoglobals v0.2.2/go.mod h1:lLxwTQjL5eIesRbvnzIP3jZtG140FnTdz+AlMa+ogt0=
-bloomfx.dev/bloom v0.0.0-alpha.17 h1:xULwJsIGU6JQ5/HQl6MVm6b+N1C+LgCiT1aOnczXWD4=
-bloomfx.dev/bloom v0.0.0-alpha.17/go.mod h1:ogTsDJ0T0UgmaEefs2ZEHbra9FlgF4H8kUu5FBxGQyA=
+bloomfx.dev/bloom v0.0.0-alpha.18 h1:IBTIeobNTxgxd+s3ytT4EoS7vUxSxpFbkxu5W36FuL8=
+bloomfx.dev/bloom v0.0.0-alpha.18/go.mod h1:ogTsDJ0T0UgmaEefs2ZEHbra9FlgF4H8kUu5FBxGQyA=
 charm.land/bubbles/v2 v2.2.2 h1:lXTAX9eRzW4t92r+pG4qTzkV1vU6rIO6TaIoETFf7v4=
 charm.land/bubbles/v2 v2.2.2/go.mod h1:fuhrxpXZGQ6D+Yl2cr+/72Vyp/JNhpZFqsuIEmUiyLk=
 charm.land/bubbletea/v2 v2.2.0 h1:qeO/8WGuwjkiptxsa381BxIDvAiRs+/AIwK65KQhfIA=

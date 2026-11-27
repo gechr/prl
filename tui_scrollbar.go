@@ -43,7 +43,7 @@ func (p *scrollPointer) update(root *bloom.Root, msg tea.Msg) tea.Cmd {
 }
 
 // A scrollbar over an existing frame. Bloom maps the gesture to an offset
-// synchronously, so Update can apply it to the current list or dialog.
+// synchronously, so Update can scroll the PR list and keep its cursor visible.
 type scrollbarLayer struct {
 	root    *bloom.Root
 	pending int

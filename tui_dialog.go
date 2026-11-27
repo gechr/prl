@@ -1,8 +1,6 @@
 package main
 
 import (
-	"image"
-	"math"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,46 +10,23 @@ import (
 	"github.com/gechr/primer/form"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/pill"
-	"github.com/gechr/primer/scrollbar"
 )
 
-// confirmUsesDialog reports whether a confirmation is pending. Every flavor -
-// buttons, information, and forms - renders through the primer dialog stack.
 func (m *tuiModel) confirmUsesDialog() bool {
 	return m.confirmAction != ""
 }
 
-// syncConfirmDialog reconciles the dialog stack with the pending confirmation
-// after every Update: a freshly set-up confirmation opens its dialog, and one
-// cleared by any other path closes it. The stack is created
-// lazily so literal test models without one stay valid.
 func (m *tuiModel) syncConfirmDialog() {
 	if m.confirmUsesDialog() {
-		if m.dialogs == nil {
-			m.dialogs = dialog.New(m.newConfirmFrame())
+		modal := m.modalLayer()
+		if modal.dialog == nil {
+			modal.dialog = m.newConfirmDialog()
 		}
-		if !m.dialogs.Active() {
-			m.dialogBar = newScrollbarLayer(m.reviewWidthMethod())
-			m.dialogs.Push(m.newConfirmDialog())
-		}
-		return
+	} else if m.modal != nil && m.modal.dialog != nil {
+		m.modal.dialog = nil
+		m.modal.offset, m.modal.maxOffset, m.modal.manualScroll = 0, 0, false
+		m.modal.resetRoot(m.reviewWidthMethod())
 	}
-	m.dialogBar = nil
-	for m.dialogs != nil && m.dialogs.Active() {
-		m.dialogs.Pop()
-	}
-}
-
-// Primer reserves the column for the Bloom scrollbar and places the dialog.
-func (m *tuiModel) newConfirmFrame() dialog.Frame {
-	return dialog.NewFrame(dialog.FrameConfig{
-		Scrollbar: scrollbar.Config{ThumbSymbol: " ", HideTrack: true},
-		Styles: dialog.Styles{
-			Box:      m.styles.overlayBox.Padding(1, tuiConfirmPadX-1),
-			HintKey:  m.styles.helpKey,
-			HintText: m.styles.helpText,
-		},
-	})
 }
 
 func (m *tuiModel) newConfirmDialog() dialog.Dialog {
@@ -357,10 +332,10 @@ func (m *tuiModel) syncReviewDialogForm(
 // the confirmation when the dialog resolves: an accepted confirm runs the
 // pending command with the progress flash, a declined one just clears.
 func (m tuiModel) updateConfirmDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.dialogs == nil || !m.dialogs.Active() {
+	if m.modal == nil || m.modal.dialog == nil {
 		return m, nil
 	}
-	if _, ok := m.dialogs.Top().(*dialog.Info); ok {
+	if _, ok := m.modal.dialog.(*dialog.Info); ok {
 		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 			switch keyMsg.String() {
 			case key.Q, key.Y, "Y", key.N, "N":
@@ -371,19 +346,30 @@ func (m tuiModel) updateConfirmDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == key.AltEnter {
 		msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
 	}
-	cmd, popped, res := m.dialogs.Update(msg)
-	if popped == nil {
+	if click, ok := msg.(tea.MouseClickMsg); ok {
+		local, hit := m.modal.bodyClick(click)
+		if !hit {
+			return m, nil
+		}
+		msg = local
+	}
+	if _, ok := msg.(tea.KeyPressMsg); ok {
+		m.modal.manualScroll = false
+	}
+	d, cmd, res := m.modal.dialog.Update(msg)
+	m.modal.dialog = d
+	if res != dialog.ResultSubmit && res != dialog.ResultClose {
 		return m, cmd
 	}
 	if res == dialog.ResultSubmit {
-		if f, ok := popped.(*dialog.Form); ok {
+		if f, ok := d.(*dialog.Form); ok {
 			model, actionCmd := m.confirmAcceptWithSubmission(m.dialogFormSubmission(f))
 			return model, tea.Batch(cmd, actionCmd)
 		}
 		model, actionCmd := m.confirmAccept()
 		return model, tea.Batch(cmd, actionCmd)
 	}
-	if f, ok := popped.(*dialog.Form); ok {
+	if f, ok := d.(*dialog.Form); ok {
 		m = m.rememberConfirmDraft(m.dialogFormInput(f))
 	}
 	model, dismissCmd := m.confirmDismiss()
@@ -469,19 +455,4 @@ func confirmChoiceValue(choices []filterChoice, label string) string {
 		}
 	}
 	return label
-}
-
-// viewConfirmDialog composites the confirm dialog over the backdrop.
-func (m tuiModel) viewConfirmDialog(backdrop string) string {
-	if m.dialogs == nil {
-		return backdrop
-	}
-	frame := m.dialogs.View(backdrop, m.width, m.height)
-	if m.dialogBar == nil {
-		return frame
-	}
-	box, _ := m.dialogs.ScrollbarHitbox()
-	offset := int(math.Round(float64(box.TotalLines-box.Height) * m.dialogs.ScrollPercent()))
-	rect := image.Rect(box.X, box.Y, box.X+1, box.Y+box.Height)
-	return m.dialogBar.render(frame, m.width, m.height, rect, box.TotalLines, offset)
 }

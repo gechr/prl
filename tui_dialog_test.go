@@ -1,12 +1,15 @@
 package main
 
 import (
+	"image/color"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"bloomfx.dev/bloom/canvas"
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 	"getsteep.dev/steep"
 	"getsteep.dev/steep/reel"
 	"getsteep.dev/steep/reel/vt"
@@ -27,13 +30,11 @@ func plainConfirmModel() tuiModel {
 	return m
 }
 
-// openPlainConfirm reconciles the stack the way Update does after the keybind
-// that set the confirmation up, leaving the dialog open.
+// openPlainConfirm opens the pending confirmation as Update would.
 func openPlainConfirm(t *testing.T, m tuiModel) tuiModel {
 	t.Helper()
 	m.syncConfirmDialog()
-	require.NotNil(t, m.dialogs)
-	require.True(t, m.dialogs.Active())
+	require.NotNil(t, m.modal.dialog)
 	return m
 }
 
@@ -125,7 +126,7 @@ func TestInfoConfirmDialogQDismisses(t *testing.T) {
 	m := listTUIModel(approvalTestPR(1))
 	m.confirmAction, m.confirmPrompt = tuiActionInfo, "Approve failed"
 	m.syncConfirmDialog()
-	require.IsType(t, &dialog.Info{}, m.dialogs.Top())
+	require.IsType(t, &dialog.Info{}, m.modal.dialog)
 	h := newTUIHarness(t, m)
 	screen := h.Wait(m.confirmPrompt).Assert("OK").View()
 	require.Equal(t, 1, strings.Count(screen, m.confirmPrompt))
@@ -139,7 +140,7 @@ func TestInputConfirmUsesFormDialog(t *testing.T) {
 	m.confirmCmdFn = func(confirmSubmission) tea.Cmd { return nil }
 	require.True(t, m.confirmUsesDialog())
 	m.syncConfirmDialog()
-	_, ok := m.dialogs.Top().(*dialog.Form)
+	_, ok := m.modal.dialog.(*dialog.Form)
 	require.True(t, ok)
 }
 
@@ -225,4 +226,58 @@ func TestReviewConfirmDialogUpdatesDependentFields(t *testing.T) {
 		h.KeyRight().
 			Wait([]string{string(provider), model, defaultReviewEffort(nil, provider, model)})
 	}
+}
+
+func TestModalBackdropTracksTerminalColors(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		light bool
+		bg    color.Color
+	}{
+		{"dark", false, lg.Color("#222430")},
+		{"light", true, lg.Color("#f1efe9")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := paletteIsLight
+			initPalette(tc.light)
+			t.Cleanup(func() { initPalette(previous) })
+
+			m := numberedListTestModel(3)
+			m.width, m.height = 140, 52
+			h := newTUIHarness(t, m)
+			cell := h.Locate(reel.Contains("❯ 1")).Offset(2, 0)
+			original := cellStyle(h, cell)
+			require.Nil(t, original.Fg.Color)
+			fg := lg.LightDark(!tc.light)(lg.Color("#242f39"), lg.Color("#bfcde1"))
+			h.SendProgram(tea.ForegroundColorMsg{Color: fg})
+			h.SendProgram(tea.BackgroundColorMsg{Color: tc.bg})
+			var mixer canvas.Mixer
+			for _, modal := range []struct{ key, label string }{
+				{"?", "Press any key to dismiss"},
+				{"O", "enter apply"},
+				{"c", "Comment (optional)"},
+			} {
+				h.Key(modal.key).Wait(modal.label)
+				requireScreenColor(t, cellStyle(h, cell).Fg, mixer.Mix(fg, tc.bg, 0.5))
+				border := h.Locate(reel.Contains("╭"))
+				requireScreenColor(t, cellStyle(h, border).Fg, colorAccent)
+				requireScreenColor(t, cellStyle(h, border).Bg, tc.bg)
+				cell.Wheel(vt.MouseWheelDown)
+				if modal.key == "?" {
+					h.LeftClick(cell.X, cell.Y+1)
+				}
+				h.KeyEsc().WaitNot(modal.label).Assert("❯ 1")
+				require.Equal(t, original, cellStyle(h, cell))
+			}
+		})
+	}
+}
+
+func TestFormResizePreservesDraft(t *testing.T) {
+	m := plainConfirmModel()
+	m.confirmHasInput = true
+	h := newTUIHarness(t, openPlainConfirm(t, m))
+	h.Wait(m.confirmPrompt).Paste("draft in progress").Wait("draft in progress").
+		Resize(32, 10).Wait("terminal too narrow").
+		Resize(100, 24).Wait("draft in progress")
 }

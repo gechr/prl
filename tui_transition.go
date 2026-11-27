@@ -22,7 +22,7 @@ func (m *tuiModel) startPRSlide(from fx.Direction, vp *reviewViewport) tea.Cmd {
 	if m.cfg != nil && !m.cfg.TUI.Animations.Enabled {
 		return nil
 	}
-	if from == 0 || !anim.Motion() || vp == nil || vp.width <= 0 || vp.height <= 0 {
+	if from == 0 || !anim.Animates() || vp == nil || vp.width <= 0 || vp.height <= 0 {
 		return nil
 	}
 	m.slide = prSlide{

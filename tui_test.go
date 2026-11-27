@@ -1106,6 +1106,7 @@ func TestScrollbarTrackClickJumpsConfirmViewport(t *testing.T) {
 		LeftClick().
 		Wait("Last message").
 		AssertNot("First message")
+	h.Locate(reel.Contains("OK")).LeftClick().WaitNot("Last message")
 }
 
 func TestWrapDiffLinesExpandsTabs(t *testing.T) {
@@ -1477,7 +1478,9 @@ func TestRenderOptionsOverlayHighlightsActiveRow(t *testing.T) {
 		bg,
 		cellStyle(h, filterChoiceButton(t, h, filterRowDraft, valueHide).Offset(8, 0)).Bg,
 	)
-	require.Nil(t, cellStyle(h, h.Locate(reel.Contains("Stacks  "))).Bg.Color)
+	inactive := cellStyle(h, h.Locate(reel.Contains("Stacks  "))).Bg
+	require.Equal(t, cellStyle(h, h.Locate(reel.Contains("╭"))).Bg, inactive)
+	require.NotEqual(t, bg, inactive)
 }
 
 func TestRenderOptionsOverlayStylesDefaultChoices(t *testing.T) {

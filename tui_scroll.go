@@ -31,6 +31,9 @@ func resolveWheelTarget(model tea.Model) (wheelTarget, bool) {
 // wheelScrollTarget returns the scroll target for the current view state.
 // Used as the resolver callback for [scrollwheel.Coalescer].
 func (m tuiModel) wheelScrollTarget() (wheelTarget, bool) {
+	if m.showHelp || m.showOptions {
+		return wheelTargetNone, false
+	}
 	if m.presetMenu.open {
 		return wheelTargetPresetMenu, true
 	}
@@ -71,8 +74,8 @@ func (m *tuiModel) applyWheelScroll(target wheelTarget, delta int) {
 	case wheelTargetDetail:
 		m.detailView.scroll(delta)
 	case wheelTargetConfirm:
-		if m.dialogs != nil {
-			m.dialogs.ScrollBy(delta)
+		if m.modal != nil {
+			m.modal.scrollTo(m.modal.offset + delta)
 		}
 	}
 }

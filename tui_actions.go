@@ -1179,9 +1179,6 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 }
 
 func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.confirmAction != "" {
-		return m.updateConfirmDialog(msg)
-	}
 	// While the next diff loads, the view still shows the previous one: only
 	// allow leaving, so actions can't land on the wrong PR.
 	if m.diffLoading {
@@ -1376,9 +1373,6 @@ func (m tuiModel) updateDiffView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) updateDetailView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.confirmAction != "" {
-		return m.updateConfirmDialog(msg)
-	}
 	if m.detailLoading || m.diffLoading {
 		switch msg.String() {
 		case tuiKeybindQuit, key.Esc, key.Enter:

@@ -313,7 +313,9 @@ func TestFilterTagsHoverAndClickOpenOptions(t *testing.T) {
 	tag.Hover()
 	waitCellStyle(t, h, tag, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
 	tag.Offset(len("state:closed")-1, 0).LeftClick().Wait("enter apply")
-	waitCellStyle(t, h, tag, func(s reel.CellStyle) bool { return s == base })
+	dimmed := cellStyle(h, tag)
+	require.Equal(t, base.Bg, dimmed.Bg)
+	require.NotEqual(t, base.Fg, dimmed.Fg)
 	tag.LeftClick().WaitNot("enter apply").Assert("state:closed")
 }
 
