@@ -2,6 +2,7 @@ package main
 
 import (
 	"image/color"
+	"strings"
 	"testing"
 
 	"bloomfx.dev/bloom/canvas"
@@ -119,4 +120,18 @@ func TestHeaderlessListClicksUseRenderedRows(t *testing.T) {
 	require.Equal(t, 1, m.cursor)
 	m, _ = updateModel(t, m, tea.MouseClickMsg{X: 4, Y: 0, Button: tea.MouseLeft})
 	require.Zero(t, m.cursor)
+}
+
+func TestEmptyPanelWrapsQueryAndRecoveryHint(t *testing.T) {
+	m := numberedListTestModel(1)
+	m.width, m.height = 40, 22
+	h := newTUIHarness(t, m)
+	const query = "🌲é🌲é"
+	h.Key("/").
+		Paste(query).
+		Wait("No pull requests match").
+		Wait(query + "\"").
+		Assert("clear the filter")
+	h.Paste(strings.Repeat(query, 100)).Wait("…").Assert("clear the filter").AssertNot("�")
+	h.KeyEsc().Wait("❯ 1")
 }

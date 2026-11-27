@@ -2022,7 +2022,7 @@ func (m tuiModel) viewList() tea.View {
 	if len(visible) == 0 && !m.dismissedEmpty && m.flash.Msg == "" && m.help == nil &&
 		!m.showOptions &&
 		!m.confirmUsesDialog() {
-		list = bloom.Overlay(list, bloom.Layer(bloom.Text(m.renderEmptyOverlay()).NoWrap()))
+		list = bloom.Overlay(list, m.emptyLayer())
 	}
 
 	// Separator line, with active tags embedded inline when present.
@@ -3142,40 +3142,6 @@ func (m tuiModel) helpLines(pairs []key.Hint) int {
 // hasFilteredRows reports whether the query returned any loaded PRs.
 func (m tuiModel) hasFilteredRows() bool {
 	return len(m.rows) > 0
-}
-
-func (m tuiModel) renderEmptyOverlay() string {
-	dim := m.styles.helpText
-	key := m.styles.helpKey
-	box := lg.NewStyle().
-		Border(lg.RoundedBorder()).
-		BorderForeground(colorAccent).
-		Padding(1, tuiConfirmPadX)
-	if m.filterInput.Value() != "" {
-		// Truncate the filter value so the overlay doesn't overflow.
-		prefix := "No pull requests match \""
-		suffix := "\""
-		maxQuery := max(1, m.width*4/5-len(prefix)-len(suffix))
-		query := m.filterInput.Value()
-		if len(query) > maxQuery {
-			query = query[:maxQuery-1] + valueEllipsis
-		}
-		line1 := dim.Render(prefix) +
-			styleFilter.Render(query) + dim.Render(suffix)
-		line2 := dim.Render("Refine your search, or press ") +
-			key.Render("esc") + dim.Render(" to clear the filter")
-		return box.Render(line1 + "\n\n" + line2)
-	}
-	var line1 string
-	switch {
-	case m.hasFilteredRows():
-		line1 = dim.Render("No pull requests match the current filter")
-	default:
-		line1 = dim.Render("No pull requests found for the current query")
-	}
-	line2 := dim.Render("Press ") + key.Render("q") + dim.Render(" to quit, or ") +
-		key.Render("esc") + dim.Render(" to dismiss and wait for new results")
-	return box.Render(line1 + "\n\n" + line2)
 }
 
 func (m tuiModel) clearConfirm() tuiModel {
