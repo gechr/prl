@@ -174,7 +174,7 @@ func TestTimePresetColoursFollowTableTheme(t *testing.T) {
 					m.styles.separator.Render(
 						presetControlSuffix,
 					),
-				m.renderTimeTag(),
+				m.presetControls().time,
 			)
 		})
 	}
@@ -189,23 +189,21 @@ func TestTimePresetHitboxesFollowLabels(t *testing.T) {
 		m.width = width
 		for _, preset := range []string{"", "Needs your review"} {
 			m.cli.preset = preset
-			line := ansi.Strip(m.renderListSeparator())
+			line := testListSeparator(&m)
 			require.Equal(t, width, ansi.StringWidth(line))
-			start, end := m.timeTagBounds()
-			prStart, prEnd := m.presetTagBounds()
+			start, end := testControlBounds(m, timePresetID)
+			prStart, prEnd := testControlBounds(m, prPresetID)
 			if start != end {
 				require.Equal(t, allTimeLabel+presetControlSuffix, ansi.Cut(line, start, end))
 				require.Equal(t, timePresetSeparator, ansi.Cut(line, end, prStart))
-				require.True(t, m.timeTagAt(start, m.listSeparatorY()))
-				require.False(t, m.presetTagAt(start, m.listSeparatorY()))
+				require.Equal(t, timePresetID, m.screen.hit(start, m.listSeparatorY()))
 			}
 			label := noPresetLabel
 			if preset != "" {
 				label = preset
 			}
 			require.Equal(t, label+presetControlSuffix, ansi.Cut(line, prStart, prEnd))
-			require.False(t, m.timeTagAt(prStart, m.listSeparatorY()))
-			require.True(t, m.presetTagAt(prStart, m.listSeparatorY()))
+			require.Equal(t, prPresetID, m.screen.hit(prStart, m.listSeparatorY()))
 		}
 	}
 }
@@ -280,8 +278,9 @@ func TestActiveTimePresetStaysVisibleInNarrowTerminal(t *testing.T) {
 			m := listTUIModel(recent, stale)
 			m.cli.preset, m.cli.timePreset = "Needs your review", "10 minutes"
 			m.width = tc.width
-			prStart, prEnd := m.presetTagBounds()
-			timeStart, timeEnd := m.timeTagBounds()
+			testListSeparator(&m)
+			prStart, prEnd := testControlBounds(m, prPresetID)
+			timeStart, timeEnd := testControlBounds(m, timePresetID)
 			require.Equal(t, tc.prLabel, ansi.Cut(tc.line, prStart, prEnd))
 			require.Equal(t, tc.timeLabel, ansi.Cut(tc.line, timeStart, timeEnd))
 			h := newTUIHarness(t, m)
@@ -327,12 +326,11 @@ func TestTimePresetLabelsCompressBeforePRLabel(t *testing.T) {
 				expected := "┤ " + label + " ▾ │ Needs your review ▾ ├─"
 				expected = strings.Repeat("─", width-ansi.StringWidth(expected)) + expected
 				m.width = width
-				line := ansi.Strip(m.renderListSeparator())
+				line := testListSeparator(&m)
 				require.Equal(t, expected, line)
-				start, end := m.timeTagBounds()
+				start, end := testControlBounds(m, timePresetID)
 				require.Equal(t, label+presetControlSuffix, ansi.Cut(line, start, end))
-				require.True(t, m.timeTagAt(start, m.listSeparatorY()))
-				require.False(t, m.presetTagAt(start, m.listSeparatorY()))
+				require.Equal(t, timePresetID, m.screen.hit(start, m.listSeparatorY()))
 			}
 			h := newTUIHarness(t, m)
 			h.Locate(reel.Contains(tc.compact + " ▾")).LeftClick().Wait("✓ " + tc.name)
@@ -348,8 +346,8 @@ func TestCustomTimePresetLabelKeepsItsName(t *testing.T) {
 	}
 	m.cli.preset, m.cli.timePreset = "Needs your review", "Last 10 minutes"
 	m.width = 35
-	line := ansi.Strip(m.renderListSeparator())
-	start, end := m.timeTagBounds()
+	line := testListSeparator(&m)
+	start, end := testControlBounds(m, timePresetID)
 	require.Equal(t, "Last 10 minutes ▾", ansi.Cut(line, start, end))
 	h := newTUIHarness(t, m)
 	h.Locate(reel.Contains("Last 10 minutes ▾")).LeftClick().Wait("✓ Last 10 minutes")

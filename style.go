@@ -19,7 +19,7 @@ var (
 	colorAccent           color.Color // cursor, help keys, separators, borders
 	colorRef              color.Color // PR refs, hyperlinks
 	colorStackArrow       color.Color // stack disclosure arrows
-	colorSelectionBG      color.Color // review selection and hovered list rows
+	colorSelectionBG      color.Color // review selection and pointer highlights
 	colorHighlight        color.Color // selected index, on-state, additions
 	colorOK               color.Color // success, selected items, focused text
 	colorDanger           color.Color // errors, confirm No
@@ -79,7 +79,7 @@ func markdownStyle() string {
 var (
 	cursorLineBG         string
 	cursorLineSelectedBG string
-	rowHoverBG           string // background of the row under the pointer
+	hoverBG              string // background of a hovered control or row
 )
 
 // Base styles - add .Bold(true), .Faint(true), etc. at call sites as needed.
@@ -187,7 +187,7 @@ func initPalette(isLight bool) {
 	// Cursor-line highlight backgrounds: pale tints on light, dark tints on dark.
 	colorCursorLine = ld(lg.Color("#ffe1ee"), lg.Color("#280a1e"))
 	cursorLineBG = ansi.NewStyle().BackgroundColor(colorCursorLine).String()
-	rowHoverBG = ansi.NewStyle().BackgroundColor(colorSelectionBG).String()
+	hoverBG = ansi.NewStyle().BackgroundColor(colorSelectionBG).String()
 	if isLight {
 		cursorLineSelectedBG = "\x1b[48;2;225;245;230m"
 	} else {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"image"
 	"slices"
 	"strings"
 
@@ -10,13 +9,15 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
-	xansi "github.com/gechr/x/ansi"
 )
 
 const (
 	noPresetLabel          = "All PRs"
 	presetMenuID  bloom.ID = "preset-menu"
 	presetRowsID  bloom.ID = "preset-rows"
+	filterTagsID  bloom.ID = "filter-tags"
+	prPresetID    bloom.ID = "pr-preset"
+	timePresetID  bloom.ID = "time-preset"
 )
 
 const presetControlSuffix = " ▾"
@@ -28,9 +29,7 @@ const (
 
 // hoverState tracks what the pointer is over in the list view.
 type hoverState struct {
-	filters bool
-	time    bool
-	pr      bool
+	control bloom.ID
 	rowY    int  // pointer line, valid when rowOK
 	rowOK   bool // the pointer is over the list rows
 	helpX   int  // pointer cell, valid when helpOK
@@ -42,16 +41,19 @@ func (m tuiModel) renderPresetControl(name string, style lg.Style, hovered bool,
 	if width <= 0 {
 		return ""
 	}
-	caretWidth := lg.Width(presetControlSuffix)
-	var rendered string
-	if width <= caretWidth {
-		rendered = style.Bold(true).Render(xansi.Truncate(name, width, valueEllipsis))
-	} else {
-		label := xansi.Truncate(name, width-caretWidth, valueEllipsis)
-		rendered = style.Bold(true).Render(label) + m.styles.separator.Render(presetControlSuffix)
+	method := m.reviewWidthMethod()
+	labelWidth := width
+	caret := ""
+	if caretWidth := method.StringWidth(presetControlSuffix); width > caretWidth {
+		labelWidth -= caretWidth
+		caret = m.styles.separator.Render(presetControlSuffix)
 	}
+	if method.StringWidth(name) > labelWidth {
+		name = method.Truncate(name, labelWidth, valueEllipsis)
+	}
+	rendered := style.Bold(true).Render(name) + caret
 	if hovered {
-		return layout.PreserveBackgroundWidth(rendered, cursorLineBG, lg.Width(rendered))
+		return layout.PreserveBackground(rendered, hoverBG)
 	}
 	return rendered
 }
@@ -95,11 +97,6 @@ func (m tuiModel) menuAllLabel() string {
 	return noPresetLabel
 }
 
-type presetMenuLayout struct {
-	x, y, width int
-	first, rows int
-}
-
 func (m tuiModel) listSeparatorY() int {
 	y := m.listViewport()
 	if m.header != "" {
@@ -111,25 +108,48 @@ func (m tuiModel) listSeparatorY() int {
 	return y
 }
 
-func (m tuiModel) presetTagLabel() string {
-	if m.cli != nil {
-		if preset, _, ok := m.activePreset(m.searchesSelf()); ok {
-			return preset.Name
+type presetControls struct {
+	pr, time string
+}
+
+func (p presetControls) anchor(timeFilter bool) (bloom.ID, string) {
+	if timeFilter {
+		return timePresetID, p.time
+	}
+	return prPresetID, p.pr
+}
+
+func (m tuiModel) presetControls() presetControls {
+	if m.cli == nil {
+		return presetControls{}
+	}
+	name, style := noPresetLabel, m.styles.separator.Faint(false)
+	if preset, _, ok := m.activePreset(m.searchesSelf()); ok {
+		name, style = preset.Name, styleFilterTag.Faint(false)
+		if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
+			style = lg.NewStyle().Foreground(c)
 		}
 	}
-	return noPresetLabel
+	prWidth, timeWidth := m.presetControlWidths(name)
+	return presetControls{
+		pr:   m.renderPresetControl(name, style, m.hover.control == prPresetID, prWidth),
+		time: m.renderTimeTag(timeWidth),
+	}
 }
 
 // Shorten duration labels before truncating PR labels or hiding controls.
 // If only one control fits, the active time range takes priority.
-func (m tuiModel) presetControlWidths() (int, int) {
-	available := max(0, m.width-lg.Width(presetIndicatorPrefix)-lg.Width(presetIndicatorSuffix))
-	prWidth := min(available, lg.Width(m.presetTagLabel()+presetControlSuffix))
-	if m.cli == nil || available == 0 {
+func (m tuiModel) presetControlWidths(prLabel string) (int, int) {
+	method := m.reviewWidthMethod()
+	available := max(0, m.width-method.StringWidth(presetIndicatorPrefix+presetIndicatorSuffix))
+	prWidth := min(available, method.StringWidth(prLabel+presetControlSuffix))
+	if available == 0 {
 		return prWidth, 0
 	}
-	gapWidth := lg.Width(timePresetSeparator)
-	timeWidth := lg.Width(m.timeControlLabel(available-prWidth-gapWidth) + presetControlSuffix)
+	gapWidth := method.StringWidth(timePresetSeparator)
+	timeWidth := method.StringWidth(
+		m.timeControlLabel(available-prWidth-gapWidth) + presetControlSuffix,
+	)
 	if prWidth+gapWidth+timeWidth <= available {
 		return prWidth, timeWidth
 	}
@@ -137,80 +157,27 @@ func (m tuiModel) presetControlWidths() (int, int) {
 		return prWidth, 0
 	}
 	room := available - timeWidth - gapWidth
-	if room >= lg.Width(valueEllipsis+presetControlSuffix) {
+	if room >= method.StringWidth(valueEllipsis+presetControlSuffix) {
 		return min(prWidth, room), timeWidth
 	}
 	return 0, min(timeWidth, available)
 }
 
-// presetTagBounds mirrors the PR control's position in renderTagSeparator.
-func (m tuiModel) presetTagBounds() (int, int) {
-	prWidth, _ := m.presetControlWidths()
-	if prWidth == 0 {
-		return 0, 0
-	}
-	end := m.width - lg.Width(presetIndicatorSuffix)
-	return end - prWidth, end
-}
-
-func (m tuiModel) presetTagAt(x, y int) bool {
-	start, end := m.presetTagBounds()
-	return y == m.listSeparatorY() && x >= start && x < end
-}
-
-// filterOptionTags returns the option filter tags shown before the preset controls.
-func (m tuiModel) filterOptionTags() []string {
-	tags := m.activeFilterTags()
-	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
-		tags[0] == preset.Name {
-		return tags[1:]
-	}
-	return tags
-}
-
-// filterTagsBounds mirrors the option tags' position in renderTagSeparator:
-// one gap before the preset controls, truncated at the separator prefix.
-func (m tuiModel) filterTagsBounds() (int, int) {
-	prStart, prEnd := m.presetTagBounds()
-	tags := m.filterOptionTags()
-	if prStart == prEnd || len(tags) == 0 {
-		return 0, 0
-	}
-	controlsStart := prStart
-	if timeStart, timeEnd := m.timeTagBounds(); timeStart < timeEnd {
-		controlsStart = timeStart
-	}
-	end := controlsStart - lg.Width(timePresetSeparator)
-	start := max(
-		end-lg.Width(strings.Join(tags, dotSeparator)),
-		lg.Width(presetIndicatorPrefix),
-	)
-	if start >= end {
-		return 0, 0
-	}
-	return start, end
-}
-
-func (m tuiModel) filterTagsAt(x, y int) bool {
-	start, end := m.filterTagsBounds()
-	return y == m.listSeparatorY() && x >= start && x < end
-}
-
 func (m tuiModel) canOpenPresetMenu() bool {
-	return m.view == tuiViewList && m.cli != nil && m.cfg != nil &&
-		!m.showHelp && !m.showOptions && m.confirmAction == "" &&
-		!m.detailLoading && !m.diffLoading && m.width >= 5 && m.listSeparatorY() >= 3
+	if m.view != tuiViewList || m.cli == nil || m.cfg == nil || m.showHelp || m.showOptions ||
+		m.confirmAction != "" || m.detailLoading || m.diffLoading || m.width < 5 {
+		return false
+	}
+	y := m.listSeparatorY()
+	return y >= 3 && y < m.height
 }
 
 func (m tuiModel) canKeepPresetMenuOpen() bool {
 	if !m.canOpenPresetMenu() {
 		return false
 	}
-	start, end := m.presetTagBounds()
-	if m.presetMenu.timeFilter {
-		start, end = m.timeTagBounds()
-	}
-	return end > start
+	_, label := m.presetControls().anchor(m.presetMenu.timeFilter)
+	return label != ""
 }
 
 func (m *tuiModel) openPresetMenu() {
@@ -228,37 +195,20 @@ func (m *tuiModel) openFilterPresetMenu(timeFilter bool) {
 	m.movePresetMenu(0)
 }
 
-func (m tuiModel) presetMenuGeometry() presetMenuLayout {
-	presets := m.menuPresets()
-	method := m.reviewWidthMethod()
-	width := method.StringWidth(m.menuAllLabel())
-	for _, preset := range presets {
-		width = max(width, method.StringWidth(preset.Name))
-	}
-	const frameWidth = 6 // borders, padding, and selection marker
-	width = min(m.width, width+frameWidth)
-	const borders = 2
-	rows := min(len(presets)+1, max(0, m.listSeparatorY()-borders))
-	first := min(m.presetMenu.offset, len(presets)+1-rows)
-	start, end := m.presetTagBounds()
-	if m.presetMenu.timeFilter {
-		start, end = m.timeTagBounds()
-	}
-	x := (start + end - width) / 2 //nolint:mnd // midpoint centers the menu over its control
-	return presetMenuLayout{
-		x: max(0, min(x, m.width-width)), y: m.listSeparatorY() - rows - borders,
-		width: width, first: first, rows: rows,
-	}
+const presetMenuBorders = 2
+
+func (m tuiModel) presetMenuRows(count int) int {
+	return min(count, max(0, m.listSeparatorY()-presetMenuBorders))
 }
 
 func (m *tuiModel) movePresetMenu(delta int) {
 	count := len(m.menuPresets()) + 1
+	rows := max(1, m.presetMenuRows(count))
 	m.presetMenu.cursor = max(0, min(m.presetMenu.cursor+delta, count-1))
-	l := m.presetMenuGeometry()
-	m.presetMenu.offset = max(0, min(l.first, m.presetMenu.cursor))
-	if m.presetMenu.cursor >= m.presetMenu.offset+l.rows {
-		m.presetMenu.offset = m.presetMenu.cursor - l.rows + 1
-	}
+	m.presetMenu.offset = max(0,
+		m.presetMenu.cursor-rows+1,
+		min(m.presetMenu.offset, m.presetMenu.cursor, count-rows),
+	)
 }
 
 func (m tuiModel) presetMenuIndexAt(x, y int) (int, bool) {
@@ -324,13 +274,18 @@ func (m tuiModel) updatePresetMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m tuiModel) presetMenuLayer() bloom.LayerNode {
+func (m tuiModel) presetMenuLayer(controls presetControls) bloom.LayerNode {
 	presets := m.menuPresets()
 	activeName := m.menuSelection()
-	l := m.presetMenuGeometry()
-	const frameWidth = 4 // borders and padding
-	innerWidth := max(0, l.width-frameWidth)
 	method := m.reviewWidthMethod()
+	labelWidth := method.StringWidth(m.menuAllLabel())
+	for _, preset := range presets {
+		labelWidth = max(labelWidth, method.StringWidth(preset.Name))
+	}
+	const frameWidth = 4 // borders and padding
+	const markerWidth = 2
+	width := min(m.width, labelWidth+frameWidth+markerWidth)
+	innerWidth := max(0, width-frameWidth)
 	rows := bloom.List(len(presets)+1, func(idx int) bloom.Child {
 		name := m.menuAllLabel()
 		style := m.styles.separator.Faint(false)
@@ -352,15 +307,20 @@ func (m tuiModel) presetMenuLayer() bloom.LayerNode {
 		if active {
 			prefix = "✓ "
 		}
-		line := method.Truncate(prefix+name, innerWidth, valueEllipsis)
+		line := prefix + name
+		if method.StringWidth(line) > innerWidth {
+			line = method.Truncate(line, innerWidth, valueEllipsis)
+		}
 		line += strings.Repeat(" ", max(0, innerWidth-method.StringWidth(line)))
 		line = style.Bold(active).Render(line)
 		if idx == m.presetMenu.cursor {
-			line = layout.PreserveBackgroundWidth(line, cursorLineBG, innerWidth)
+			line = layout.PreserveBackground(line, hoverBG)
 		}
 		return bloom.Text(" " + line + " ").NoWrap()
-	}).Offset(l.first).ID(presetRowsID)
+	}).Offset(m.presetMenu.offset).ID(presetRowsID)
 	box := bloom.Box(m.styles.overlayBox.Padding(0), rows)
-	rect := image.Rect(l.x, l.y, l.x+l.width, m.listSeparatorY())
-	return m.screen.panelLayer(box).ID(presetMenuID).Place(rect)
+	anchor, label := controls.anchor(m.presetMenu.timeFilter)
+	dx := (method.StringWidth(label) - width) / 2 //nolint:mnd // center the menu on its control
+	return m.screen.panelLayer(box).ID(presetMenuID).AnchorTo(anchor, bloom.Top).
+		Offset(dx, 0).Size(width, m.presetMenuRows(len(presets)+1)+presetMenuBorders)
 }

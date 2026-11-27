@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"bloomfx.dev/bloom"
+	"bloomfx.dev/bloom/canvas"
 	tea "charm.land/bubbletea/v2"
 	"getsteep.dev/steep"
 	"getsteep.dev/steep/reel"
@@ -14,6 +16,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
+
+// Render before inspecting the controls so positions come from the frame on screen.
+func testListSeparator(m *tuiModel) string {
+	m.ensureScreen()
+	return ansi.Strip(strings.Split(m.View().Content, nl)[m.listSeparatorY()])
+}
+
+func testControlBounds(m tuiModel, id bloom.ID) (int, int) {
+	rect, _ := m.screen.root.Frame().Rect(id)
+	return rect.Min.X, rect.Max.X
+}
 
 func assertPresetRows(t *testing.T, h *steep.Harness, labels []string) {
 	t.Helper()
@@ -137,6 +150,22 @@ func TestPresetMenuKeyboardAndResize(t *testing.T) {
 	h.Resize(3, 3).Resize(80, 20).Wait("Needs your review ▾").AssertNot("✓ Needs your review")
 }
 
+func TestPresetMenuClosesWhenFilterMovesAnchorOffscreen(t *testing.T) {
+	for _, label := range []string{"All PRs", "All Time"} {
+		t.Run(label, func(t *testing.T) {
+			m := listTUIModel(approvalTestPR(1))
+			m.filterInput.SetValue("pr")
+			h := newTUIHarness(t, m)
+			h.Locate(reel.Contains(label + " ▾")).LeftClick().Wait("✓ " + label)
+			h.Resize(80, 3).
+				WaitNot(label+" ▾").
+				Resize(80, 20).
+				Wait(label + " ▾").
+				AssertNot("✓ " + label)
+		})
+	}
+}
+
 func TestPresetMenuDoesNotOpenOverModal(t *testing.T) {
 	for _, tc := range []struct{ key, dialog string }{
 		{"?", "Press any key to dismiss"}, {"O", "enter apply"}, {"a", "Approve owner/repo#1?"},
@@ -161,6 +190,7 @@ func TestPresetControlsHoverAndCaretClicks(t *testing.T) {
 			base := cellStyle(h, caret)
 			caret.Hover()
 			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+			requireScreenColor(t, cellStyle(h, caret).Bg, colorSelectionBG)
 			h.Locate(reel.Contains("TITLE")).Hover()
 			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s == base })
 			caret.Hover().LeftClick(caret.X, caret.Y).Wait("✓ " + label)
@@ -186,9 +216,10 @@ func TestPresetHoverPreservesIdleRefreshTimer(t *testing.T) {
 	m.cfg = &Config{}
 	idleSince := time.Now().Add(-time.Hour)
 	m.lastInteraction = idleSince
-	start, _ := m.presetTagBounds()
+	testListSeparator(&m)
+	start, _ := testControlBounds(m, prPresetID)
 	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
-	require.True(t, m.hover.pr)
+	require.Equal(t, prPresetID, m.hover.control)
 	require.Equal(t, idleSince, m.lastInteraction, "hover alone keeps the idle timer")
 	m, _ = updateModel(
 		t,
@@ -196,6 +227,37 @@ func TestPresetHoverPreservesIdleRefreshTimer(t *testing.T) {
 		tea.MouseMotionMsg{X: start, Y: m.listSeparatorY(), Button: tea.MouseLeft},
 	)
 	require.True(t, m.lastInteraction.After(idleSince), "dragging is an interaction")
+}
+
+func TestPresetHitsFollowWideLabels(t *testing.T) {
+	const name = "\u2600\ufe0f \u754c\u9762"
+	for _, grapheme := range []bool{false, true} {
+		m := listTUIModel(approvalTestPR(1))
+		if grapheme {
+			m.p = m.p.withGraphemeWidth()
+		}
+		m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{{Name: name, MaxAge: "1h"}}
+		m.cli.timePreset = name
+		method := m.reviewWidthMethod()
+		for _, width := range []int{80, 13, 10} {
+			m.width = width
+			line := testListSeparator(&m)
+			start, end := testControlBounds(m, timePresetID)
+			if width == 80 {
+				before, _, found := strings.Cut(line, name+presetControlSuffix)
+				require.True(t, found)
+				require.Equal(t, method.StringWidth(before), start)
+				require.Equal(t, method.StringWidth(name+presetControlSuffix), end-start)
+			}
+			require.Equal(t, "▾", canvas.Parse(line, method).CellAt(end-1, 0).Content)
+			y := m.listSeparatorY()
+			for x := start; x < end; x++ {
+				require.Equal(t, timePresetID, m.screen.hit(x, y))
+			}
+			require.NotEqual(t, timePresetID, m.screen.hit(start-1, y))
+			require.NotEqual(t, timePresetID, m.screen.hit(end, y))
+		}
+	}
 }
 
 func TestPresetMenusCenterOverTheirControls(t *testing.T) {
@@ -208,14 +270,18 @@ func TestPresetMenusCenterOverTheirControls(t *testing.T) {
 			m.cli.preset = "Needs your review"
 		}
 		m.openFilterPresetMenu(timeFilter)
-		start, end := m.presetTagBounds()
+		testListSeparator(&m)
+		id := prPresetID
 		if timeFilter {
-			start, end = m.timeTagBounds()
+			id = timePresetID
 		}
-		menu := m.presetMenuGeometry()
-		require.InDelta(t, float64(start+end)/2, float64(menu.x)+float64(menu.width)/2, 0.5)
-		require.GreaterOrEqual(t, menu.x, 0)
-		require.LessOrEqual(t, menu.x+menu.width, m.width)
+		start, end := testControlBounds(m, id)
+		left, right := testControlBounds(m, presetMenuID)
+		require.Greater(t, end, start)
+		require.Greater(t, right, left)
+		require.InDelta(t, float64(start+end)/2, float64(left+right)/2, 0.5)
+		require.GreaterOrEqual(t, left, 0)
+		require.LessOrEqual(t, right, m.width)
 	}
 }
 
@@ -227,15 +293,19 @@ func TestPresetMenuCenteringClampsToTerminal(t *testing.T) {
 	m.cfg.TUI.Presets.Time.Filters = []TUITimePresetConfig{{Name: name, MaxAge: "1h"}}
 	m.cli.timePreset = name
 	m.openFilterPresetMenu(true)
-	require.Equal(t, 0, m.presetMenuGeometry().x)
+	testListSeparator(&m)
+	left, right := testControlBounds(m, presetMenuID)
+	require.Greater(t, right, left)
+	require.Zero(t, left)
 	// A long menu entry extends past the right edge of the PR control.
 	m.cfg.TUI.Presets.Filters = []TUIPresetConfig{
 		{Name: strings.Repeat("p", 30), Filter: "ci:pending"},
 	}
 	m.cli.timePreset = ""
 	m.openPresetMenu()
-	menu := m.presetMenuGeometry()
-	require.Equal(t, m.width, menu.x+menu.width)
+	testListSeparator(&m)
+	_, right = testControlBounds(m, presetMenuID)
+	require.Equal(t, m.width, right)
 }
 
 func TestPresetMenuHoverHighlightsWithoutSelecting(t *testing.T) {
@@ -247,6 +317,7 @@ func TestPresetMenuHoverHighlightsWithoutSelecting(t *testing.T) {
 			before := cellStyle(h, option)
 			option.Hover()
 			waitCellStyle(t, h, option, func(s reel.CellStyle) bool { return s.Bg != before.Bg })
+			requireScreenColor(t, cellStyle(h, option).Bg, colorSelectionBG)
 			h.Assert("✓ " + tc.control).
 				KeyEsc().
 				WaitNot("✓ " + tc.control).
@@ -304,7 +375,8 @@ func TestTimeMenuClosesWhenItsControlDisappears(t *testing.T) {
 func TestFilterTagsHoverAndClickOpenOptions(t *testing.T) {
 	m := listTUIModel(approvalTestPR(1))
 	m.cli.NoBot = false
-	start, end := m.filterTagsBounds()
+	testListSeparator(&m)
+	start, end := testControlBounds(m, filterTagsID)
 	require.Equal(t, start, end)
 	m.cli.State, m.cli.stateExplicit = valueClosed, true
 	h := newTUIHarness(t, m)
@@ -312,6 +384,7 @@ func TestFilterTagsHoverAndClickOpenOptions(t *testing.T) {
 	base := cellStyle(h, tag)
 	tag.Hover()
 	waitCellStyle(t, h, tag, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+	requireScreenColor(t, cellStyle(h, tag).Bg, colorSelectionBG)
 	tag.Offset(len("state:closed")-1, 0).LeftClick().Wait("enter apply")
 	dimmed := cellStyle(h, tag)
 	require.Equal(t, base.Bg, dimmed.Bg)

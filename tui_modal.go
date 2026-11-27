@@ -61,6 +61,14 @@ func (s *tuiScreen) modalLayer(content bloom.Child) bloom.LayerNode {
 	return s.panelLayer(content).Backdrop(fx.Dim{Amount: modalDim})
 }
 
+func (s *tuiScreen) hit(x, y int) bloom.ID {
+	path := s.root.Frame().Hit(x, y)
+	if len(path) == 0 {
+		return ""
+	}
+	return path[len(path)-1]
+}
+
 func (s *tuiScreen) contains(id bloom.ID, x, y int) bool {
 	if s == nil {
 		return false

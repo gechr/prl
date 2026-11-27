@@ -98,6 +98,7 @@ func TestHelpHintHoverHighlightsTheHint(t *testing.T) {
 	text := h.View()
 	hint.Hover()
 	waitCellStyle(t, h, hint, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+	requireScreenColor(t, cellStyle(h, hint).Bg, colorSelectionBG)
 	require.Equal(t, text, h.View())
 	h.Locate(reel.Contains("TITLE")).Hover()
 	waitCellStyle(t, h, hint, func(s reel.CellStyle) bool { return s == base })

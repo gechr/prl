@@ -114,8 +114,9 @@ func (m tuiModel) timeTagLabel() string {
 // Custom preset names retain their configured wording.
 func (m tuiModel) timeControlLabel(width int) string {
 	name := m.timeTagLabel()
-	width -= lg.Width(presetControlSuffix)
-	if lg.Width(name) <= width {
+	method := m.reviewWidthMethod()
+	width -= method.StringWidth(presetControlSuffix)
+	if method.StringWidth(name) <= width {
 		return name
 	}
 	amount, unit, ok := strings.Cut(name, " ")
@@ -147,24 +148,6 @@ func (m tuiModel) timeControlLabel(width int) string {
 	return amount + compact
 }
 
-// timeTagBounds anchors the time control before the PR preset.
-func (m tuiModel) timeTagBounds() (int, int) {
-	prWidth, width := m.presetControlWidths()
-	if width == 0 {
-		return 0, 0
-	}
-	end := m.width - lg.Width(presetIndicatorSuffix)
-	if prWidth > 0 {
-		end -= prWidth + lg.Width(timePresetSeparator)
-	}
-	return end - width, end
-}
-
-func (m tuiModel) timeTagAt(x, y int) bool {
-	start, end := m.timeTagBounds()
-	return y == m.listSeparatorY() && x >= start && x < end
-}
-
 // timePresetStyle uses the same age thresholds as the created/updated columns.
 // An explicit preset colour overrides the theme's age colour.
 func (m tuiModel) timePresetStyle(preset TUITimePresetConfig) lg.Style {
@@ -186,16 +169,20 @@ func (m tuiModel) timePresetStyle(preset TUITimePresetConfig) lg.Style {
 	return style
 }
 
-func (m tuiModel) renderTimeTag() string {
-	start, end := m.timeTagBounds()
-	if start == end {
+func (m tuiModel) renderTimeTag(width int) string {
+	if width == 0 {
 		return ""
 	}
 	style := m.styles.separator.Faint(false)
 	if preset, ok := timePresetByName(m.cfg, m.cli.timePreset); ok {
 		style = m.timePresetStyle(preset)
 	}
-	return m.renderPresetControl(m.timeControlLabel(end-start), style, m.hover.time, end-start)
+	return m.renderPresetControl(
+		m.timeControlLabel(width),
+		style,
+		m.hover.control == timePresetID,
+		width,
+	)
 }
 
 func (m tuiModel) selectTimePreset(name string) (tea.Model, tea.Cmd) {

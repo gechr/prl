@@ -1158,18 +1158,18 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.presetMenu.open {
 			return m.updatePresetMenuClick(msg)
 		}
-		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.filterTagsAt(msg.X, msg.Y) {
-			m.hover = hoverState{}
-			m.openOptions()
-			return m, nil
-		}
-		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.timeTagAt(msg.X, msg.Y) {
-			m.openFilterPresetMenu(true)
-			return m, nil
-		}
-		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() && m.presetTagAt(msg.X, msg.Y) {
-			m.openPresetMenu()
-			return m, nil
+		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() {
+			switch m.screen.hit(msg.X, msg.Y) {
+			case filterTagsID:
+				m.openOptions()
+				return m, nil
+			case timePresetID:
+				m.openFilterPresetMenu(true)
+				return m, nil
+			case prPresetID:
+				m.openPresetMenu()
+				return m, nil
+			}
 		}
 		if m.listScrollbarActive() && m.screen.contains(scrollbarID, msg.X, msg.Y) {
 			return m, nil
@@ -1199,11 +1199,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.touchInteraction()
 		}
 		if m.canOpenPresetMenu() && !m.presetMenu.open {
-			m.hover = hoverState{
-				filters: m.filterTagsAt(msg.X, msg.Y),
-				time:    m.timeTagAt(msg.X, msg.Y),
-				pr:      m.presetTagAt(msg.X, msg.Y),
-			}
+			m.hover = hoverState{control: m.screen.hit(msg.X, msg.Y)}
 			if _, ok := m.rowIndexAt(msg.Y); ok && !m.screen.contains(scrollbarID, msg.X, msg.Y) {
 				m.hover.rowY, m.hover.rowOK = msg.Y, true
 			}
@@ -1990,7 +1986,7 @@ func (m tuiModel) viewList() tea.View {
 				)
 				line = layout.PreserveBackgroundWidth(line, cursorLineBG, rowWidth)
 			} else if hoverOK && idx == hoverIdx {
-				line = layout.PreserveBackgroundWidth(line, rowHoverBG, rowWidth)
+				line = layout.PreserveBackgroundWidth(line, hoverBG, rowWidth)
 			}
 			lines = append(lines, rowNode(line))
 			continue
@@ -2003,7 +1999,7 @@ func (m tuiModel) viewList() tea.View {
 		if idx != m.cursor {
 			line := m.rowGutter(idx) + display
 			if hoverOK && idx == hoverIdx {
-				line = layout.PreserveBackgroundWidth(line, rowHoverBG, rowWidth)
+				line = layout.PreserveBackgroundWidth(line, hoverBG, rowWidth)
 			}
 			lines = append(lines, rowNode(line))
 			continue
@@ -2043,18 +2039,19 @@ func (m tuiModel) viewList() tea.View {
 
 	// Separator line, with active tags embedded inline when present.
 	// When filter is focused, place a ┬ junction to connect with the │ in the help line.
-	var separator, help string
+	presets := m.presetControls()
+	junction := -1
+	var help string
 	if m.filterInput.Focused() {
-		separator = m.renderListSeparator(m.filterHelpPipeCol())
+		junction = m.filterHelpPipeCol()
 		help = m.renderFilterHelp()
 	} else {
-		separator = m.renderListSeparator()
 		help = m.listHelpBar().Render()
 	}
 	footer := layout.ExpandTabs(m.appendRightStatus(help, m.listStatus(visible)))
 	var page bloom.Child = bloom.Column(
 		bloom.Fixed(m.listSeparatorY(), list),
-		bloom.Fixed(1, bloom.Text(separator).NoWrap()),
+		bloom.Fixed(1, m.listSeparator(junction, presets)),
 		bloom.Fill(bloom.Text(footer).NoWrap()),
 	)
 	switch {
@@ -2065,7 +2062,7 @@ func (m tuiModel) viewList() tea.View {
 	case m.confirmUsesDialog() && screen.dialog != nil:
 		page = bloom.Overlay(page, screen.modalLayer(m.confirmPanel()))
 	case m.presetMenu.open:
-		page = bloom.Overlay(page, m.presetMenuLayer())
+		page = bloom.Overlay(page, m.presetMenuLayer(presets))
 	}
 	v := tea.NewView(screen.root.Render(m.width, m.height, page))
 	v.AltScreen = true
@@ -2221,100 +2218,70 @@ func renderReviewBadge(pr PullRequest, needsViewer bool) string {
 	return ""
 }
 
-// renderListSeparator renders the separator line. If junctionCol >= 0, a ┬ is
-// placed at that visual column to connect with a │ in the line below.
-func (m tuiModel) renderListSeparator(junctionCol ...int) string {
-	if m.width <= 0 {
+// The rule fills the space to the left of the clickable controls. A focused
+// filter joins it to the help line below at junction.
+func (m tuiModel) listSeparator(junction int, presets presetControls) bloom.Child {
+	separator := m.styles.separator
+	method := m.reviewWidthMethod()
+	if m.cli == nil {
+		return bloom.Text(separator.Render(layout.Separator(max(0, m.width), junction))).NoWrap()
+	}
+	room := m.width - method.StringWidth(presetIndicatorPrefix+presetIndicatorSuffix)
+	if room <= 0 {
+		return bloom.Text(separator.Render(method.Truncate(presetIndicatorSuffix, max(0, m.width), ""))).
+			NoWrap()
+	}
+	rule := bloom.LayoutFunc(func(ctx bloom.Context) bloom.Child {
+		return bloom.Text(separator.Render(layout.Separator(ctx.Width(), junction))).NoWrap()
+	})
+	parts := []bloom.Child{bloom.Fill(rule), bloom.Text(separator.Render(presetIndicatorPrefix))}
+	gap := bloom.Text(separator.Render(timePresetSeparator))
+	gapWidth := method.StringWidth(timePresetSeparator)
+	room -= method.StringWidth(presets.pr + presets.time)
+	if presets.time != "" && presets.pr != "" {
+		room -= gapWidth
+	}
+	if presets.pr != "" && room > gapWidth {
+		if tags := m.filterTagText(room - gapWidth); tags != "" {
+			parts = append(parts, bloom.Text(tags).NoWrap().ID(filterTagsID), gap)
+		}
+	}
+	if presets.time != "" {
+		parts = append(parts, bloom.Text(presets.time).NoWrap().ID(timePresetID))
+		if presets.pr != "" {
+			parts = append(parts, gap)
+		}
+	}
+	if presets.pr != "" {
+		parts = append(parts, bloom.Text(presets.pr).NoWrap().ID(prPresetID))
+	}
+	parts = append(parts, bloom.Text(separator.Render(presetIndicatorSuffix)))
+	return bloom.Row(parts...)
+}
+
+func (m tuiModel) filterTagText(width int) string {
+	style := styleFilterTag.Faint(false)
+	var labels []string
+	for _, tag := range m.activeFilterTags() {
+		if key, value, ok := strings.Cut(tag, ":"); ok {
+			labels = append(labels, style.Bold(true).Render(key)+style.Render(":"+value))
+		} else {
+			labels = append(labels, style.Bold(true).Render(tag))
+		}
+	}
+	if len(labels) == 0 {
 		return ""
 	}
-	col := -1
-	if len(junctionCol) > 0 {
-		col = junctionCol[0]
-	}
-	tags := m.activeFilterTags()
-	if len(tags) > 0 || m.cli != nil {
-		return m.renderTagSeparator(tags, col)
-	}
-	return m.styles.separator.Render(layout.Separator(m.width, col))
-}
-
-func (m tuiModel) renderTagSeparator(tags []string, col int) string {
-	filterTagStyle := styleFilterTag.Faint(false)
-	filterTagKeyStyle := filterTagStyle.Bold(true)
-	prStart, prEnd := m.presetTagBounds()
-	// The PR preset stays at the far right, after the time control, in its
-	// own colour and set apart by a vertical rule.
-	presetTag := m.renderPresetControl(
-		noPresetLabel,
-		m.styles.separator.Faint(false),
-		m.hover.pr,
-		prEnd-prStart,
+	method := m.reviewWidthMethod()
+	text := method.Truncate(
+		strings.Join(labels, style.Faint(true).Render(dotSeparator)),
+		width,
+		valueEllipsis,
 	)
-	if preset, _, ok := m.activePreset(m.searchesSelf()); ok && len(tags) > 0 &&
-		tags[0] == preset.Name {
-		style := filterTagKeyStyle
-		if c, err := parsePresetColor(preset.Color); err == nil && c != nil {
-			style = lg.NewStyle().Foreground(c).Bold(true)
-		}
-		presetTag = m.renderPresetControl(preset.Name, style, m.hover.pr, prEnd-prStart)
-		tags = tags[1:]
+	if m.hover.control == filterTagsID {
+		return layout.PreserveBackground(text, hoverBG)
 	}
-	if timeTag := m.renderTimeTag(); timeTag != "" {
-		if presetTag != "" {
-			timeTag += m.styles.separator.Render(timePresetSeparator)
-		}
-		presetTag = timeTag + presetTag
-	}
-	renderedTags := make([]string, 0, len(tags))
-	for _, tag := range tags {
-		if key, value, ok := strings.Cut(tag, ":"); ok {
-			renderedTags = append(
-				renderedTags,
-				filterTagKeyStyle.Render(key)+filterTagStyle.Render(":"+value),
-			)
-		} else {
-			renderedTags = append(renderedTags, filterTagKeyStyle.Render(tag))
-		}
-	}
-	options := strings.Join(renderedTags, filterTagStyle.Faint(true).Render(dotSeparator))
-	if prStart == prEnd {
-		options = ""
-	}
-	if start, end := m.filterTagsBounds(); m.hover.filters && start < end {
-		options = layout.PreserveBackgroundWidth(
-			xansi.Truncate(options, end-start, valueEllipsis), cursorLineBG, end-start,
-		)
-	}
-	suffix := m.styles.separator.Render(presetIndicatorSuffix)
-	available := m.width - lg.Width(presetIndicatorPrefix) - lg.Width(suffix)
-	if available <= 0 {
-		return xansi.Truncate(suffix, m.width, "")
-	}
-	indicator := m.joinPresetTag(options, presetTag, available)
-	if lg.Width(indicator) > available {
-		indicator = xansi.Truncate(indicator, available, valueEllipsis)
-	}
-	pad := max(m.width-lg.Width(presetIndicatorPrefix)-lg.Width(indicator)-lg.Width(suffix), 0)
-	return m.styles.separator.Render(layout.Separator(pad, col)+presetIndicatorPrefix) +
-		indicator +
-		suffix
-}
-
-// joinPresetTag appends the preset tag to the option filters, shortening the
-// options first so the preset stays visible within width.
-func (m tuiModel) joinPresetTag(options, presetTag string, width int) string {
-	if presetTag == "" {
-		return options
-	}
-	gap := m.styles.separator.Render(timePresetSeparator)
-	room := width - lg.Width(gap) - lg.Width(presetTag)
-	if options == "" || room <= 0 {
-		return presetTag
-	}
-	if lg.Width(options) > room {
-		options = xansi.Truncate(options, room, valueEllipsis)
-	}
-	return options + gap + presetTag
+	return text
 }
 
 func (m tuiModel) viewDetail() tea.View {
@@ -3307,7 +3274,7 @@ func (m tuiModel) listHelpBar() helpbar.Model {
 	bar := m.helpBar(m.listHelpPairs())
 	if m.hover.helpOK {
 		if i, ok := m.listHelpHintIndex(m.hover.helpX, m.hover.helpY); ok {
-			bar.Renderer.Hover, bar.Renderer.HoverBG = &i, cursorLineBG
+			bar.Renderer.Hover, bar.Renderer.HoverBG = &i, hoverBG
 		}
 	}
 	return bar

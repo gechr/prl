@@ -141,7 +141,7 @@ func TestOptionTagsUseDotDividers(t *testing.T) {
 	m.cli.CI, m.cli.Review = ciStatusFailure, valueReviewFilterRequired
 	text := "┤ ci:fail · review:required │ All Time ▾ │ All PRs ▾ ├─"
 	expected := strings.Repeat("─", m.width-ansi.StringWidth(text)) + text
-	require.Equal(t, expected, ansi.Strip(m.renderListSeparator()))
+	require.Equal(t, expected, testListSeparator(&m))
 }
 
 func TestOptionsOverlayOnlyEscDiscardsStagedChoices(t *testing.T) {
@@ -178,7 +178,7 @@ func TestOptionsOverlayCoversTagsUnderneath(t *testing.T) {
 		m.View()
 		rect, ok := m.screen.root.Frame().Rect(optionsModalID)
 		require.True(t, ok)
-		start, end := m.filterTagsBounds()
+		start, end := testControlBounds(m, filterTagsID)
 		y := m.listSeparatorY()
 		for x := start; x < end; x++ {
 			if !image.Pt(x, y).In(rect) {

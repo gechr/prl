@@ -776,7 +776,7 @@ func applyTUIFilterDefaults(cli *CLI, cfg *Config) bool {
 	return changed
 }
 
-// activeFilterTags returns display tags for all active filters that differ
+// activeFilterTags returns the option tags shown beside the preset controls for filters that differ
 // from the most permissive baseline (state:open, draft:any, bots:show,
 // archived:hide, ci:any, review:any).
 func (m tuiModel) activeFilterTags() []string {
@@ -784,9 +784,6 @@ func (m tuiModel) activeFilterTags() []string {
 		return nil
 	}
 	var tags []string
-	if _, _, ok := m.activePreset(m.searchesSelf()); ok {
-		tags = append(tags, m.cli.preset)
-	}
 	if s := m.cli.PRState(); s != StateOpen {
 		tags = append(tags, "state:"+s.String())
 	}

@@ -929,7 +929,7 @@ func TestTagSeparatorSetsPresetApart(t *testing.T) {
 	m.cli.preset = "Needs your review"
 	m.cli.NoBot = true
 
-	line := ansi.Strip(m.renderTagSeparator(m.activeFilterTags(), -1))
+	line := testListSeparator(&m)
 
 	require.Equal(
 		t,
@@ -940,7 +940,7 @@ func TestTagSeparatorSetsPresetApart(t *testing.T) {
 	// Narrow: the option filters are shortened, the preset stays whole.
 	m.width = 31
 	m.cli.State = valueMerged
-	line = ansi.Strip(m.renderTagSeparator(m.activeFilterTags(), -1))
+	line = testListSeparator(&m)
 	require.Equal(t, "┤ sta… │ Needs your review ▾ ├─", line)
 }
 
