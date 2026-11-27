@@ -6,16 +6,17 @@ import (
 	"strings"
 	"time"
 
+	"bloomfx.dev/bloom"
+	"bloomfx.dev/bloom/on"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/picker"
 	xslices "github.com/gechr/x/slices"
 )
 
 // newFilterPicker builds a picker.Model from the current filter state.
-func (m tuiModel) newFilterPicker() picker.Model {
+func (m tuiModel) newFilterPicker() *picker.Model {
 	rows := make([]picker.Row, len(filterOptionDefs))
 	for i, def := range filterOptionDefs {
 		rows[i] = picker.Row{Label: def.label, Choices: choiceLabels(m.filterChoices(filterRow(i)))}
@@ -33,16 +34,15 @@ func (m tuiModel) newFilterPicker() picker.Model {
 		make([]bool, len(filterOptionDefs)),
 		make([]bool, len(filterOptionDefs)),
 		picker.Styles{
-			Box:          m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX),
-			Cursor:       m.styles.cursor.Render("❯ "),
-			CursorLineBG: cursorLineBG,
-			CursorPad:    "  ",
-			Default:      m.styles.defaultChoice,
-			HelpKey:      m.styles.helpKey,
-			HelpText:     m.styles.helpText,
-			Inactive:     lg.NewStyle().Faint(true),
-			Label:        m.styles.helpKey,
-			Selected:     styleTitle.Bold(true),
+			Box:       m.styles.overlayBox.Padding(tuiOptionsPadY, tuiOptionsPadX),
+			Cursor:    m.styles.cursor.Render("❯ "),
+			CursorPad: "  ",
+			Default:   m.styles.defaultChoice,
+			HelpKey:   m.styles.helpKey,
+			HelpText:  m.styles.helpText,
+			Inactive:  lg.NewStyle().Faint(true),
+			Label:     m.styles.helpKey,
+			Selected:  styleTitle.Bold(true),
 		},
 	)
 	p.Hints = []picker.HelpHint{
@@ -52,7 +52,7 @@ func (m tuiModel) newFilterPicker() picker.Model {
 		{Key: "enter", Desc: "apply"},
 		{Key: "esc", Desc: "cancel"},
 	}
-	return p
+	return &p
 }
 
 // filterChoiceTrue/False are canonical string values for bool filter choices.
@@ -369,59 +369,18 @@ func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// filterChoiceAt reads choice positions from the rendered picker so mouse
-// targets follow its padding, labels and any extra CI choice.
-func (m tuiModel) filterChoiceAt(x, y int) (int, int, bool) {
-	lines := strings.Split(ansi.Strip(m.renderOptionsOverlay()), nl)
-	if y < 0 || y >= len(lines) {
-		return 0, 0, false
-	}
-	line := lines[y]
-	method := m.reviewWidthMethod()
-	for rowIndex, row := range m.optionsPicker.Rows {
-		before, remaining, found := strings.Cut(line, row.Label)
-		if !found {
-			continue
-		}
-		offset := method.StringWidth(before + row.Label)
-		for choiceIndex, choice := range row.Choices {
-			gap, after, ok := strings.Cut(remaining, choice)
-			if !ok {
-				break
-			}
-			start := offset + method.StringWidth(gap)
-			if x >= start && x < start+method.StringWidth(choice) {
-				return rowIndex, choiceIndex, true
-			}
-			offset += method.StringWidth(gap + choice)
-			remaining = after
-		}
-	}
-	return 0, 0, false
-}
-
 // openOptions opens the filter dialog (Shift+O, or a click on the filter tags).
 func (m *tuiModel) openOptions() {
-	m.modalLayer()
+	m.ensureScreen()
 	m.showOptions = true
 	m.optionsPicker = m.newFilterPicker()
 }
 
-func (m tuiModel) clickFilterChoice(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	if m.modal == nil || msg.Button != tea.MouseLeft {
-		return m, nil
-	}
-	if rect, ok := m.modal.root.Frame().Rect(optionsModalID); ok {
-		point := image.Pt(msg.X, msg.Y)
-		if !point.In(rect) {
-			// Clicking the backdrop applies staged choices. Esc discards them.
+func (m tuiModel) clickFilterBackdrop(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if m.screen != nil && msg.Button == tea.MouseLeft {
+		rect, ok := m.screen.root.Frame().Rect(optionsModalID)
+		if ok && !image.Pt(msg.X, msg.Y).In(rect) {
 			return m.applyFilterOptions()
-		}
-		local := point.Sub(rect.Min)
-		if row, choice, ok := m.filterChoiceAt(local.X, local.Y); ok {
-			m.optionsPicker.Cursor = row
-			m.optionsPicker.Values[row] = choice
-			m.optionsPicker.IsReset[row] = false
 		}
 	}
 	return m, nil
@@ -724,8 +683,58 @@ func matchesReviewDecision(pr PullRequest, review string) bool {
 	return true
 }
 
-func (m tuiModel) renderOptionsOverlay() string {
-	return m.optionsPicker.View()
+func (m tuiModel) filterPanel() bloom.Child {
+	p := m.optionsPicker
+	s := p.Styles
+	method := m.reviewWidthMethod()
+	labelWidth := 0
+	for _, row := range p.Rows {
+		labelWidth = max(labelWidth, method.StringWidth(row.Label))
+	}
+
+	var rows []bloom.Child
+	for i, row := range p.Rows {
+		cursor := s.CursorPad
+		if i == p.Cursor {
+			cursor = s.Cursor
+		}
+		label := strings.Repeat(" ", labelWidth-method.StringWidth(row.Label)) + row.Label
+		prefix := bloom.Text(cursor + s.Label.Render(label)).NoWrap()
+		cells := []bloom.Child{bloom.Fixed(method.StringWidth(cursor)+labelWidth, prefix)}
+		for j, choice := range row.Choices {
+			style := s.Inactive
+			switch j {
+			case p.Values[i]:
+				style = s.Selected
+			case p.Defaults[i]:
+				style = s.Default
+			}
+			cell := bloom.Text(style.Render(choice)).NoWrap().On(on.Mouse(func(e on.Event) tea.Cmd {
+				if click, ok := e.Msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+					p.Cursor, p.Values[i], p.IsReset[i] = i, j, false
+				}
+				return nil
+			}))
+			cells = append(cells, bloom.Fixed(method.StringWidth(choice), cell))
+		}
+		const choiceGap = 2
+		var line bloom.Child = bloom.Row(cells...).Gap(choiceGap)
+		if i == p.Cursor {
+			line = bloom.Box(lg.NewStyle().Background(colorCursorLine), line)
+		}
+		rows = append(rows, bloom.Fixed(1, line))
+	}
+
+	var hints []string
+	for _, hint := range p.Hints {
+		hints = append(hints, s.HelpKey.Render(hint.Key)+s.HelpText.Render(" "+hint.Desc))
+	}
+	rows = append(
+		rows,
+		bloom.Fixed(1, bloom.Space()),
+		bloom.Text(strings.Join(hints, "  ")).NoWrap(),
+	)
+	return bloom.Box(s.Box, bloom.Column(rows...)).ID(optionsModalID)
 }
 
 func applyTUIFilterDefaults(cli *CLI, cfg *Config) bool {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	lg "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/clib/theme"
 	xpalette "github.com/gechr/x/palette"
 	"github.com/gechr/x/terminal/emulator"
@@ -18,7 +19,7 @@ var (
 	colorAccent           color.Color // cursor, help keys, separators, borders
 	colorRef              color.Color // PR refs, hyperlinks
 	colorStackArrow       color.Color // stack disclosure arrows
-	colorSelectionBG      color.Color // selected text in review viewports
+	colorSelectionBG      color.Color // review selection and hovered list rows
 	colorHighlight        color.Color // selected index, on-state, additions
 	colorOK               color.Color // success, selected items, focused text
 	colorDanger           color.Color // errors, confirm No
@@ -58,6 +59,7 @@ var (
 	colorFilterTag     color.Color // filter tag
 	colorDefault       color.Color // default choice
 	colorCheckDuration color.Color // check duration
+	colorCursorLine    color.Color // active list or filter row
 	colorHelpKeyDim    color.Color // edit help key
 )
 
@@ -77,7 +79,7 @@ func markdownStyle() string {
 var (
 	cursorLineBG         string
 	cursorLineSelectedBG string
-	rowHoverBG           string // faint grey behind the row under the pointer
+	rowHoverBG           string // background of the row under the pointer
 )
 
 // Base styles - add .Bold(true), .Faint(true), etc. at call sites as needed.
@@ -140,7 +142,7 @@ func initPalette(isLight bool) {
 
 	// Primary interactive palette.
 	colorAccent = ld(lg.Color("162"), lg.Color("198")) // deep/hot pink
-	colorSelectionBG = ld(lg.Color("#cbdff5"), lg.Color("#253e60"))
+	colorSelectionBG = ld(lg.Color("#ddeaf9"), lg.Color("#18283e"))
 	colorStackArrow = ld(lg.Color("#005aaa"), lg.Color("#59a5ef"))
 	colorRef = ld(lg.Color("26"), lg.Color("117"))       // blue
 	colorHighlight = ld(lg.Color("28"), lg.Color("118")) // green
@@ -183,14 +185,13 @@ func initPalette(isLight bool) {
 	colorHelpKeyDim = ld(lg.Color("243"), lg.Color("248"))
 
 	// Cursor-line highlight backgrounds: pale tints on light, dark tints on dark.
+	colorCursorLine = ld(lg.Color("#ffe1ee"), lg.Color("#280a1e"))
+	cursorLineBG = ansi.NewStyle().BackgroundColor(colorCursorLine).String()
+	rowHoverBG = ansi.NewStyle().BackgroundColor(colorSelectionBG).String()
 	if isLight {
-		cursorLineBG = "\x1b[48;2;255;225;238m"
 		cursorLineSelectedBG = "\x1b[48;2;225;245;230m"
-		rowHoverBG = "\x1b[48;2;248;248;248m"
 	} else {
-		cursorLineBG = "\x1b[48;2;40;10;30m"
 		cursorLineSelectedBG = "\x1b[48;2;10;30;15m"
-		rowHoverBG = "\x1b[48;2;22;22;22m"
 	}
 
 	// Derived styles.

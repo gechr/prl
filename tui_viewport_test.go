@@ -47,8 +47,8 @@ func TestReviewSelectionBackground(t *testing.T) {
 		light bool
 		want  string
 	}{
-		{"dark", false, "#253e60"},
-		{"light", true, "#cbdff5"},
+		{"dark", false, "#18283e"},
+		{"light", true, "#ddeaf9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			previous := paletteIsLight
@@ -107,6 +107,10 @@ func TestListScrollbarTracksVisiblePRs(t *testing.T) {
 	top := h.Locate(reel.Contains("█"))
 	bottom := h.Locate(reel.Nth(-1, reel.Contains("┃")))
 	require.Equal(t, m.width-1, top.X)
+	h.Key("O").Wait("enter apply")
+	bottom.LeftClick().WaitNot("enter apply").Assert("Change 01").AssertNot("Change 40")
+	h.Locate(reel.Contains("All PRs ▾")).LeftClick().Wait("✓ All PRs")
+	top.LeftClick().WaitNot("✓ All PRs").Assert("Change 01").AssertNot("Change 40")
 	bottom.LeftClick().Wait("Change 40").AssertNot("Change 01")
 	bottom.LeftDrag(top).Wait("Change 01").AssertNot("Change 40")
 	bottom.LeftClick().Wait("Change 40")

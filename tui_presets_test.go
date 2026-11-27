@@ -335,6 +335,7 @@ func TestRowHoverHighlightsWithoutMovingCursor(t *testing.T) {
 				row,
 				func(s reel.CellStyle) bool { return s.Bg != base.Bg && s.Bg != cursorStyle.Bg },
 			)
+			requireScreenColor(t, cellStyle(h, row).Bg, colorSelectionBG)
 			h.Assert("❯ 1")
 			h.Locate(reel.Contains("All PRs ▾")).Hover()
 			waitCellStyle(t, h, row, func(s reel.CellStyle) bool { return s == base })

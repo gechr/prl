@@ -176,15 +176,12 @@ func TestOptionsOverlayCoversTagsUnderneath(t *testing.T) {
 		m.cli.State, m.cli.stateExplicit = valueClosed, true
 		m.optionsPicker = m.newFilterPicker()
 		m.View()
-		rect, ok := m.modal.root.Frame().Rect(optionsModalID)
+		rect, ok := m.screen.root.Frame().Rect(optionsModalID)
 		require.True(t, ok)
 		start, end := m.filterTagsBounds()
 		y := m.listSeparatorY()
 		for x := start; x < end; x++ {
 			if !image.Pt(x, y).In(rect) {
-				continue
-			}
-			if _, _, ok := m.filterChoiceAt(x-rect.Min.X, y-rect.Min.Y); ok {
 				continue
 			}
 			covered++

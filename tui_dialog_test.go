@@ -34,7 +34,7 @@ func plainConfirmModel() tuiModel {
 func openPlainConfirm(t *testing.T, m tuiModel) tuiModel {
 	t.Helper()
 	m.syncConfirmDialog()
-	require.NotNil(t, m.modal.dialog)
+	require.NotNil(t, m.screen.dialog)
 	return m
 }
 
@@ -126,7 +126,7 @@ func TestInfoConfirmDialogQDismisses(t *testing.T) {
 	m := listTUIModel(approvalTestPR(1))
 	m.confirmAction, m.confirmPrompt = tuiActionInfo, "Approve failed"
 	m.syncConfirmDialog()
-	require.IsType(t, &dialog.Info{}, m.modal.dialog)
+	require.IsType(t, &dialog.Info{}, m.screen.dialog)
 	h := newTUIHarness(t, m)
 	screen := h.Wait(m.confirmPrompt).Assert("OK").View()
 	require.Equal(t, 1, strings.Count(screen, m.confirmPrompt))
@@ -140,7 +140,7 @@ func TestInputConfirmUsesFormDialog(t *testing.T) {
 	m.confirmCmdFn = func(confirmSubmission) tea.Cmd { return nil }
 	require.True(t, m.confirmUsesDialog())
 	m.syncConfirmDialog()
-	_, ok := m.modal.dialog.(*dialog.Form)
+	_, ok := m.screen.dialog.(*dialog.Form)
 	require.True(t, ok)
 }
 

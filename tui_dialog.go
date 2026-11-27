@@ -18,14 +18,13 @@ func (m *tuiModel) confirmUsesDialog() bool {
 
 func (m *tuiModel) syncConfirmDialog() {
 	if m.confirmUsesDialog() {
-		modal := m.modalLayer()
+		modal := m.ensureScreen()
 		if modal.dialog == nil {
 			modal.dialog = m.newConfirmDialog()
 		}
-	} else if m.modal != nil && m.modal.dialog != nil {
-		m.modal.dialog = nil
-		m.modal.offset, m.modal.maxOffset, m.modal.manualScroll = 0, 0, false
-		m.modal.resetRoot(m.reviewWidthMethod())
+	} else if m.screen != nil && m.screen.dialog != nil {
+		m.screen.dialog = nil
+		m.screen.offset, m.screen.maxOffset, m.screen.manualScroll = 0, 0, false
 	}
 }
 
@@ -332,10 +331,10 @@ func (m *tuiModel) syncReviewDialogForm(
 // the confirmation when the dialog resolves: an accepted confirm runs the
 // pending command with the progress flash, a declined one just clears.
 func (m tuiModel) updateConfirmDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.modal == nil || m.modal.dialog == nil {
+	if m.screen == nil || m.screen.dialog == nil {
 		return m, nil
 	}
-	if _, ok := m.modal.dialog.(*dialog.Info); ok {
+	if _, ok := m.screen.dialog.(*dialog.Info); ok {
 		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 			switch keyMsg.String() {
 			case key.Q, key.Y, "Y", key.N, "N":
@@ -347,17 +346,17 @@ func (m tuiModel) updateConfirmDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
 	}
 	if click, ok := msg.(tea.MouseClickMsg); ok {
-		local, hit := m.modal.bodyClick(click)
+		local, hit := m.screen.bodyClick(click)
 		if !hit {
 			return m, nil
 		}
 		msg = local
 	}
 	if _, ok := msg.(tea.KeyPressMsg); ok {
-		m.modal.manualScroll = false
+		m.screen.manualScroll = false
 	}
-	d, cmd, res := m.modal.dialog.Update(msg)
-	m.modal.dialog = d
+	d, cmd, res := m.screen.dialog.Update(msg)
+	m.screen.dialog = d
 	if res != dialog.ResultSubmit && res != dialog.ResultClose {
 		return m, cmd
 	}

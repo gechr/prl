@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"bloomfx.dev/bloom/canvas"
 	"charm.land/bubbles/v2/textinput"
 	lg "charm.land/lipgloss/v2"
 	"getsteep.dev/steep/reel"
@@ -441,26 +442,28 @@ func TestStackGlyphsAdaptToThemeAndIconMode(t *testing.T) {
 				}
 				require.Regexp(t, regexp.QuoteMeta(expected), header)
 			}
-			output := m.viewList().Content
-			require.Regexp(t, regexp.QuoteMeta(styleStackArrow.Render(tc.expanded)), output)
-			require.Regexp(
-				t,
-				regexp.QuoteMeta(styleStackArrow.Faint(true).Render(lines[0].header)),
-				output,
-			)
-			for _, glyph := range []string{"├─ ", "╰─ "} {
-				require.Regexp(t, regexp.QuoteMeta(m.p.theme.MarkdownText.Render(glyph)), output)
+			method := m.reviewWidthMethod()
+			screen := canvas.Parse(m.viewList().Content, method)
+			assertSpan := func(x, y int, styled string) {
+				t.Helper()
+				want := canvas.Parse(styled, method)
+				for dx := range want.Width() {
+					require.Equal(t, want.CellAt(dx, 0), screen.CellAt(x+dx, y))
+				}
+			}
+			treeX := m.listPrefixWidth() - stackTreeWidth
+			assertSpan(treeX, 1, styleStackArrow.Render(tc.expanded))
+			assertSpan(treeX+stackTreeWidth, 1, styleStackArrow.Faint(true).Render(lines[0].header))
+			for i, glyph := range []string{"├─ ", "├─ ", "╰─ "} {
+				assertSpan(treeX, i+2, m.p.theme.MarkdownText.Render(glyph))
 			}
 			m.toggleStack(m.rows[0].Item.StackKey)
-			require.Regexp(
-				t,
-				regexp.QuoteMeta(styleHeading.Render(tc.collapsed)),
-				m.viewList().Content,
-			)
-			require.Regexp(
-				t,
-				regexp.QuoteMeta(styleHeading.Faint(true).Italic(true).Render(lines[0].header)),
-				m.viewList().Content,
+			screen = canvas.Parse(m.viewList().Content, method)
+			assertSpan(treeX, 1, styleHeading.Render(tc.collapsed))
+			assertSpan(
+				treeX+stackTreeWidth,
+				1,
+				styleHeading.Faint(true).Italic(true).Render(lines[0].header),
 			)
 		}
 	}

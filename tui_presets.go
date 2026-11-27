@@ -1,9 +1,11 @@
 package main
 
 import (
+	"image"
 	"slices"
 	"strings"
 
+	"bloomfx.dev/bloom"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/primer/key"
@@ -11,7 +13,11 @@ import (
 	xansi "github.com/gechr/x/ansi"
 )
 
-const noPresetLabel = "All PRs"
+const (
+	noPresetLabel          = "All PRs"
+	presetMenuID  bloom.ID = "preset-menu"
+	presetRowsID  bloom.ID = "preset-rows"
+)
 
 const presetControlSuffix = " ▾"
 
@@ -224,9 +230,10 @@ func (m *tuiModel) openFilterPresetMenu(timeFilter bool) {
 
 func (m tuiModel) presetMenuGeometry() presetMenuLayout {
 	presets := m.menuPresets()
-	width := lg.Width(m.menuAllLabel())
+	method := m.reviewWidthMethod()
+	width := method.StringWidth(m.menuAllLabel())
 	for _, preset := range presets {
-		width = max(width, lg.Width(preset.Name))
+		width = max(width, method.StringWidth(preset.Name))
 	}
 	const frameWidth = 6 // borders, padding, and selection marker
 	width = min(m.width, width+frameWidth)
@@ -255,9 +262,13 @@ func (m *tuiModel) movePresetMenu(delta int) {
 }
 
 func (m tuiModel) presetMenuIndexAt(x, y int) (int, bool) {
-	l := m.presetMenuGeometry()
-	row := y - l.y - 1
-	return l.first + row, x > l.x && x < l.x+l.width-1 && row >= 0 && row < l.rows
+	if !m.screen.contains(presetRowsID, x, y) {
+		return 0, false
+	}
+	frame := m.screen.root.Frame()
+	rect, _ := frame.Rect(presetRowsID)
+	list, _ := frame.List(presetRowsID)
+	return list.First + y - rect.Min.Y, true
 }
 
 func (m tuiModel) choosePresetMenuItem(idx int) (tea.Model, tea.Cmd) {
@@ -279,8 +290,7 @@ func (m tuiModel) updatePresetMenuClick(msg tea.MouseClickMsg) (tea.Model, tea.C
 	if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
 		return m.choosePresetMenuItem(idx)
 	}
-	l := m.presetMenuGeometry()
-	if msg.X < l.x || msg.X >= l.x+l.width || msg.Y < l.y || msg.Y >= l.y+l.rows+2 {
+	if !m.screen.contains(presetMenuID, msg.X, msg.Y) {
 		m.presetMenu.open = false
 	}
 	return m, nil
@@ -314,14 +324,14 @@ func (m tuiModel) updatePresetMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m tuiModel) viewPresetMenu(background string) string {
+func (m tuiModel) presetMenuLayer() bloom.LayerNode {
 	presets := m.menuPresets()
 	activeName := m.menuSelection()
 	l := m.presetMenuGeometry()
 	const frameWidth = 4 // borders and padding
 	innerWidth := max(0, l.width-frameWidth)
-	lines := make([]string, 0, l.rows)
-	for idx := l.first; idx < l.first+l.rows; idx++ {
+	method := m.reviewWidthMethod()
+	rows := bloom.List(len(presets)+1, func(idx int) bloom.Child {
 		name := m.menuAllLabel()
 		style := m.styles.separator.Faint(false)
 		active := activeName == ""
@@ -342,17 +352,15 @@ func (m tuiModel) viewPresetMenu(background string) string {
 		if active {
 			prefix = "✓ "
 		}
-		line := xansi.Truncate(prefix+name, innerWidth, valueEllipsis)
-		line += strings.Repeat(" ", max(0, innerWidth-lg.Width(line)))
+		line := method.Truncate(prefix+name, innerWidth, valueEllipsis)
+		line += strings.Repeat(" ", max(0, innerWidth-method.StringWidth(line)))
 		line = style.Bold(active).Render(line)
 		if idx == m.presetMenu.cursor {
 			line = layout.PreserveBackgroundWidth(line, cursorLineBG, innerWidth)
 		}
-		lines = append(lines, line)
-	}
-	box := m.styles.overlayBox.Padding(0, 1).Render(strings.Join(lines, nl))
-	return lg.NewCompositor(
-		lg.NewLayer(background),
-		lg.NewLayer(box).X(l.x).Y(l.y).Z(1),
-	).Render()
+		return bloom.Text(" " + line + " ").NoWrap()
+	}).Offset(l.first).ID(presetRowsID)
+	box := bloom.Box(m.styles.overlayBox.Padding(0), rows)
+	rect := image.Rect(l.x, l.y, l.x+l.width, m.listSeparatorY())
+	return m.screen.panelLayer(box).ID(presetMenuID).Place(rect)
 }

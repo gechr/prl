@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"image"
 	"image/color"
 	"math"
 	"os"
@@ -27,7 +26,6 @@ import (
 	"github.com/gechr/primer/helpsheet"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
-	"github.com/gechr/primer/overlay"
 	"github.com/gechr/primer/picker"
 	"github.com/gechr/primer/render"
 	"github.com/gechr/primer/scrollbar"
@@ -447,6 +445,7 @@ type tuiModel struct {
 	sortAsc              bool
 	cursor               int
 	offset               int
+	screen               *tuiScreen
 	slide                prSlide
 	view                 tuiView
 	diff                 string
@@ -471,7 +470,7 @@ type tuiModel struct {
 
 	// Filter options overlay.
 	showOptions     bool
-	optionsPicker   picker.Model
+	optionsPicker   *picker.Model
 	presetMenu      presetMenuState
 	hover           hoverState
 	collapsedStacks prKeys
@@ -543,8 +542,6 @@ type tuiModel struct {
 	confirmLiveOptions *[]filterOptionDef
 	confirmReviewPR    *PullRequest // selected PR when the dialog is for AI review
 	confirmDrafts      map[confirmDraftKey]string
-	modal              *tuiModal
-	listBar            *scrollbarLayer
 
 	// Background auto-refresh.
 	eventStreams           *eventStreams
@@ -746,8 +743,8 @@ func (m tuiModel) selectedConfirmOptionValue(row int) string {
 func (m tuiModel) Init() tea.Cmd {
 	reportProgramStatus(m.programStatus())
 	var cmds []tea.Cmd
-	if m.modal != nil {
-		cmds = append(cmds, m.modal.root.Init())
+	if m.screen != nil {
+		cmds = append(cmds, m.screen.root.Init())
 	}
 	if m.eventStreams != nil {
 		cmds = append(cmds, m.eventStreams.wait)
@@ -1013,13 +1010,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(inputCmd, copyCmd)
 			}
 		}
-	case m.confirmUsesDialog() && m.modal != nil:
-		inputCmd = m.modal.pointer.update(m.modal.root, msg)
-	case m.listScrollbarActive() && m.listBar != nil:
-		var offset int
-		offset, inputCmd = m.listBar.update(msg)
-		if offset >= 0 {
-			m.setListScrollOffset(offset)
+	case m.view == tuiViewList || m.confirmUsesDialog():
+		s := m.ensureScreen()
+		s.listOffset = -1
+		inputCmd = s.pointer.update(s.root, msg)
+		if s.listOffset >= 0 && m.listScrollbarActive() {
+			m.setListScrollOffset(s.listOffset)
 		}
 	}
 	m.recordChangedPRs(msg)
@@ -1041,8 +1037,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	tm.syncConfirmDialog()
-	if tm.listScrollbarActive() && (tm.listBar == nil || !m.listScrollbarActive() || tm.reviewWidthMethod() != m.reviewWidthMethod()) {
-		tm.listBar = newScrollbarLayer(tm.reviewWidthMethod())
+	if tm.view == tuiViewList && m.view != tuiViewList && tm.screen != nil &&
+		tm.screen.pointer.last.Button == tea.MouseLeft {
+		// A release in the review viewport never reached the list scrollbar.
+		tm.screen.resetRoot(tm.reviewWidthMethod())
 	}
 	if reader != nil && reader != tm.activeReviewViewport() {
 		reader.resetInput()
@@ -1132,13 +1130,13 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.BackgroundColorMsg:
-		s := m.modalLayer()
+		s := m.ensureScreen()
 		s.bg = msg.Color
 		s.root.SetColors(s.fg, s.bg)
 		return m, nil
 
 	case tea.ForegroundColorMsg:
-		s := m.modalLayer()
+		s := m.ensureScreen()
 		s.fg = msg.Color
 		s.root.SetColors(s.fg, s.bg)
 		return m, nil
@@ -1152,7 +1150,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.showOptions {
-			return m.clickFilterChoice(msg)
+			return m.clickFilterBackdrop(msg)
 		}
 		if m.confirmUsesDialog() {
 			return m.updateConfirmDialog(msg)
@@ -1173,7 +1171,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openPresetMenu()
 			return m, nil
 		}
-		if m.listScrollbarActive() && m.listBar.contains(msg.X, msg.Y) {
+		if m.listScrollbarActive() && m.screen.contains(scrollbarID, msg.X, msg.Y) {
 			return m, nil
 		}
 		if m.view == tuiViewList && msg.Button == tea.MouseLeft && msg.Y == 0 {
@@ -1206,7 +1204,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				time:    m.timeTagAt(msg.X, msg.Y),
 				pr:      m.presetTagAt(msg.X, msg.Y),
 			}
-			if _, ok := m.rowIndexAt(msg.Y); ok && !m.listBar.contains(msg.X, msg.Y) {
+			if _, ok := m.rowIndexAt(msg.Y); ok && !m.screen.contains(scrollbarID, msg.X, msg.Y) {
 				m.hover.rowY, m.hover.rowOK = msg.Y, true
 			}
 			if _, ok := m.listHelpHintIndex(msg.X, msg.Y); ok {
@@ -1925,31 +1923,11 @@ func (m tuiModel) renderView() tea.View {
 		return m.viewDetail()
 	case tuiViewList:
 	}
-	v := m.viewList()
-	switch {
-	case m.showHelp:
-		v.Content = m.renderModal(v.Content, bloom.Text(m.renderHelpOverlay()).NoWrap())
-	case m.showOptions:
-		v.Content = m.renderModal(v.Content, bloom.Text(m.renderOptionsOverlay()).NoWrap().ID(optionsModalID))
-	case m.confirmUsesDialog():
-		v.Content = m.viewConfirmDialog(v.Content)
-	case len(m.visibleIndices()) == 0 && !m.dismissedEmpty && m.flash.Msg == "":
-		// Keep the filter control and help clickable below the empty-state box.
-		lines := strings.Split(v.Content, nl)
-		bodyHeight := min(m.listSeparatorY(), len(lines))
-		box := lg.NewStyle().MaxWidth(m.width).MaxHeight(bodyHeight).Render(m.renderEmptyOverlay())
-		v.Content = overlay.Place(
-			strings.Join(lines[:bodyHeight], nl), box, m.width, bodyHeight, overlay.Center,
-		) + nl + strings.Join(lines[bodyHeight:], nl)
-	}
-	if m.presetMenu.open {
-		v.Content = m.viewPresetMenu(v.Content)
-	}
-	return v
+	return m.viewList()
 }
 
 func (m tuiModel) viewList() tea.View {
-	var b strings.Builder
+	screen := m.ensureScreen()
 	visible := m.listLines()
 	viewport := m.listViewport()
 	rowWidth := m.width
@@ -1959,23 +1937,24 @@ func (m tuiModel) viewList() tea.View {
 	indexWidth := m.listIndexWidth()
 	indexPad := strings.Repeat(" ", indexWidth)
 	indexGap := m.indexGap()
-	writeRow := func(line string) {
+	rowNode := func(line string) bloom.Child {
 		if rowWidth < m.width {
 			line = m.reviewWidthMethod().Truncate(line, rowWidth, valueEllipsis)
 		}
-		b.WriteString(line)
-		b.WriteString(nl)
+		return bloom.Fixed(1, bloom.Text(layout.ExpandTabs(line)).NoWrap())
 	}
 
-	// Column header line.
+	var rows []bloom.Child
 	if m.header != "" {
 		prefix := tuiNonCursorPrefix + indexPad + indexGap
 		if m.refreshing && len(m.spinner.frames) > 0 {
 			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
 			prefix = frame + " " + indexPad + indexGap
 		}
-		writeRow(prefix + m.header)
+		rows = append(rows, rowNode(prefix+m.header))
 	}
+
+	var lines []bloom.Child
 
 	// Determine visible slice based on offset.
 	end := min(m.offset+viewport, len(visible))
@@ -2013,7 +1992,7 @@ func (m tuiModel) viewList() tea.View {
 			} else if hoverOK && idx == hoverIdx {
 				line = layout.PreserveBackgroundWidth(line, rowHoverBG, rowWidth)
 			}
-			writeRow(line)
+			lines = append(lines, rowNode(line))
 			continue
 		}
 		tree := entry.tree
@@ -2026,7 +2005,7 @@ func (m tuiModel) viewList() tea.View {
 			if hoverOK && idx == hoverIdx {
 				line = layout.PreserveBackgroundWidth(line, rowHoverBG, rowWidth)
 			}
-			writeRow(line)
+			lines = append(lines, rowNode(line))
 			continue
 		}
 		line := m.rowCursor(idx) + display
@@ -2040,48 +2019,55 @@ func (m tuiModel) viewList() tea.View {
 			}
 			line = layout.PreserveBackgroundWidth(line, bg, rowWidth)
 		}
-		writeRow(line)
+		lines = append(lines, rowNode(line))
 	}
 
-	// Pad to fill viewport.
-	rendered := end - start
-	for range viewport - rendered {
-		b.WriteString(nl)
+	var body bloom.Child = bloom.Column(lines...)
+	if len(visible) > viewport {
+		body = bloom.Row(
+			bloom.Fill(body),
+			bloom.Fixed(tuiScrollbarWidth, screen.listScrollbar(len(visible), viewport, m.offset)),
+		)
 	}
-
-	// Filter bar.
+	rows = append(rows, bloom.Fixed(viewport, body))
 	if m.filterInput.Focused() || filterVal != "" {
-		b.WriteString(styleHeading.Bold(true).Render("/") + m.filterInput.View() + nl)
+		input := styleHeading.Bold(true).Render("/") + m.filterInput.View()
+		rows = append(rows, bloom.Fixed(1, bloom.Text(input).NoWrap()))
+	}
+	var list bloom.Child = bloom.Column(rows...)
+	if len(visible) == 0 && !m.dismissedEmpty && m.flash.Msg == "" && !m.showHelp &&
+		!m.showOptions &&
+		!m.confirmUsesDialog() {
+		list = bloom.Overlay(list, bloom.Layer(bloom.Text(m.renderEmptyOverlay()).NoWrap()))
 	}
 
 	// Separator line, with active tags embedded inline when present.
 	// When filter is focused, place a ┬ junction to connect with the │ in the help line.
-	var help string
+	var separator, help string
 	if m.filterInput.Focused() {
-		b.WriteString(m.renderListSeparator(m.filterHelpPipeCol()))
-		b.WriteString(nl)
+		separator = m.renderListSeparator(m.filterHelpPipeCol())
 		help = m.renderFilterHelp()
 	} else {
-		b.WriteString(m.renderListSeparator())
-		b.WriteString(nl)
+		separator = m.renderListSeparator()
 		help = m.listHelpBar().Render()
 	}
-	b.WriteString(m.appendRightStatus(help, m.listStatus(visible)))
-
-	content := layout.ExpandTabs(b.String())
-	if m.listBar != nil || len(visible) > viewport {
-		bar := m.listBar
-		if bar == nil {
-			bar = newScrollbarLayer(m.reviewWidthMethod())
-		}
-		top := 0
-		if m.header != "" {
-			top++
-		}
-		rect := image.Rect(m.width-1, top, m.width, top+viewport)
-		content = bar.render(content, m.width, m.height, rect, len(visible), m.offset)
+	footer := layout.ExpandTabs(m.appendRightStatus(help, m.listStatus(visible)))
+	var page bloom.Child = bloom.Column(
+		bloom.Fixed(m.listSeparatorY(), list),
+		bloom.Fixed(1, bloom.Text(separator).NoWrap()),
+		bloom.Fill(bloom.Text(footer).NoWrap()),
+	)
+	switch {
+	case m.showHelp:
+		page = bloom.Overlay(page, screen.modalLayer(bloom.Text(m.renderHelpOverlay()).NoWrap()))
+	case m.showOptions:
+		page = bloom.Overlay(page, screen.modalLayer(m.filterPanel()))
+	case m.confirmUsesDialog() && screen.dialog != nil:
+		page = bloom.Overlay(page, screen.modalLayer(m.confirmPanel()))
+	case m.presetMenu.open:
+		page = bloom.Overlay(page, m.presetMenuLayer())
 	}
-	v := tea.NewView(content)
+	v := tea.NewView(screen.root.Render(m.width, m.height, page))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
 	m.applyRepaintMarker(&v)
@@ -2372,12 +2358,15 @@ func (m tuiModel) renderFullScreenView(header string, vp *reviewViewport, help s
 		bloom.Fixed(vp.height, bloom.Row(bloom.Fill(body), bloom.Fixed(tuiScrollbarWidth, bar))),
 		separator, bloom.Fill(bloom.Text(m.appendRightStatus(help, status)).NoWrap()),
 	)
-	v := tea.NewView(vp.root.Render(m.width, m.height, bloom.Column(rows...)))
+	var page bloom.Child = bloom.Column(rows...)
+	root := vp.root
+	if m.confirmUsesDialog() && m.screen != nil && m.screen.dialog != nil {
+		page = bloom.Overlay(page, m.screen.modalLayer(m.confirmPanel()))
+		root = m.screen.root
+	}
+	v := tea.NewView(root.Render(m.width, m.height, page))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
-	if m.confirmUsesDialog() {
-		v.Content = m.viewConfirmDialog(v.Content)
-	}
 	m.applyRepaintMarker(&v)
 	return v
 }
@@ -2411,8 +2400,8 @@ func (m tuiModel) applyModeReport(msg tea.ModeReportMsg) tuiModel {
 		return m
 	}
 	m.p = m.p.withGraphemeWidth()
-	if m.modal != nil {
-		m.modal.resetRoot(m.reviewWidthMethod())
+	if m.screen != nil {
+		m.screen.resetRoot(m.reviewWidthMethod())
 	}
 	m.applyWindowSize(m.width, m.height)
 	return m
@@ -3763,7 +3752,7 @@ func runTui(
 	}
 
 	model := tuiModel{
-		modal:           newTUIModal(p.widthMethod()),
+		screen:          newTUIScreen(p.widthMethod()),
 		rows:            r.rows,
 		header:          r.header,
 		colWidths:       r.colWidths,

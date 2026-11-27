@@ -329,7 +329,7 @@ func (s *savedSession) restore(m *tuiModel) {
 	m.resyncCursorAndOffset()
 	if p := s.Options; p != nil {
 		m.openOptions()
-		picker := &m.optionsPicker
+		picker := m.optionsPicker
 		picker.Cursor = min(max(0, p.Cursor), len(picker.Rows)-1)
 		for i := range min(len(picker.Rows), len(p.Values), len(p.Reset)) {
 			picker.Values[i] = min(max(0, p.Values[i]), len(picker.Rows[i].Choices)-1)

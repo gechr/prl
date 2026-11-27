@@ -74,8 +74,8 @@ func (m *tuiModel) applyWheelScroll(target wheelTarget, delta int) {
 	case wheelTargetDetail:
 		m.detailView.scroll(delta)
 	case wheelTargetConfirm:
-		if m.modal != nil {
-			m.modal.scrollTo(m.modal.offset + delta)
+		if m.screen != nil {
+			m.screen.scrollTo(m.screen.offset + delta)
 		}
 	}
 }

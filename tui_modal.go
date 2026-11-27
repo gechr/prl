@@ -20,10 +20,11 @@ const (
 	modalDim                = 0.5
 )
 
-type tuiModal struct {
-	root    *bloom.Root
-	fg, bg  color.Color
-	pointer scrollPointer
+type tuiScreen struct {
+	root       *bloom.Root
+	fg, bg     color.Color
+	pointer    scrollPointer
+	listOffset int // set synchronously by the list scrollbar during Update
 
 	dialog       dialog.Dialog
 	offset       int
@@ -31,36 +32,44 @@ type tuiModal struct {
 	manualScroll bool
 }
 
-func newTUIModal(method ansi.Method) *tuiModal {
+func newTUIScreen(method ansi.Method) *tuiScreen {
 	bg := lg.LightDark(!paletteIsLight)(color.White, color.Black)
-	modal := &tuiModal{fg: colorText, bg: bg}
-	modal.resetRoot(method)
-	return modal
+	s := &tuiScreen{fg: colorText, bg: bg}
+	s.resetRoot(method)
+	return s
 }
 
-func (s *tuiModal) resetRoot(method ansi.Method) {
+func (s *tuiScreen) resetRoot(method ansi.Method) {
 	s.root = bloom.New(bloom.WithWidthMethod(method), bloom.WithColors(s.fg, s.bg))
 	s.pointer = scrollPointer{}
 }
 
-func (m *tuiModel) modalLayer() *tuiModal {
-	if m.modal == nil {
-		m.modal = newTUIModal(m.reviewWidthMethod())
+func (m *tuiModel) ensureScreen() *tuiScreen {
+	if m.screen == nil {
+		m.screen = newTUIScreen(m.reviewWidthMethod())
 	}
-	return m.modal
+	return m.screen
 }
 
-func (m *tuiModel) renderModal(backdrop string, content bloom.Child) string {
-	s := m.modalLayer()
+func (s *tuiScreen) panelLayer(content bloom.Child) bloom.LayerNode {
 	// Paint the whole panel so a highlighted PR row cannot show through it.
 	panel := bloom.Box(lg.NewStyle().Background(s.bg), content)
-	return s.root.Render(m.width, m.height, bloom.Overlay(
-		bloom.Text(backdrop).NoWrap(),
-		bloom.Layer(panel).Modal().Backdrop(fx.Dim{Amount: modalDim}),
-	))
+	return bloom.Layer(panel).Modal()
 }
 
-func (s *tuiModal) bodyClick(click tea.MouseClickMsg) (dialog.ClickMsg, bool) {
+func (s *tuiScreen) modalLayer(content bloom.Child) bloom.LayerNode {
+	return s.panelLayer(content).Backdrop(fx.Dim{Amount: modalDim})
+}
+
+func (s *tuiScreen) contains(id bloom.ID, x, y int) bool {
+	if s == nil {
+		return false
+	}
+	rect, ok := s.root.Frame().Rect(id)
+	return ok && image.Pt(x, y).In(rect)
+}
+
+func (s *tuiScreen) bodyClick(click tea.MouseClickMsg) (dialog.ClickMsg, bool) {
 	rect, ok := s.root.Frame().Rect(modalBodyID)
 	point := image.Pt(click.X, click.Y)
 	if !ok || click.Button != tea.MouseLeft || !point.In(rect) {
@@ -70,7 +79,7 @@ func (s *tuiModal) bodyClick(click tea.MouseClickMsg) (dialog.ClickMsg, bool) {
 	return dialog.ClickMsg{X: local.X, Y: local.Y + s.offset}, true
 }
 
-func (s *tuiModal) scrollTo(offset int) tea.Cmd {
+func (s *tuiScreen) scrollTo(offset int) tea.Cmd {
 	if s.maxOffset > 0 {
 		s.offset = max(0, min(offset, s.maxOffset))
 		s.manualScroll = true
@@ -78,11 +87,8 @@ func (s *tuiModal) scrollTo(offset int) tea.Cmd {
 	return nil
 }
 
-func (m tuiModel) viewConfirmDialog(backdrop string) string {
-	s := m.modal
-	if s == nil || s.dialog == nil {
-		return backdrop
-	}
+func (m tuiModel) confirmPanel() bloom.Child {
+	s := m.screen
 	box := m.styles.overlayBox.Padding(1, tuiConfirmPadX-1)
 	innerW := max(1, m.width-box.GetHorizontalFrameSize())
 	innerH := max(1, m.height-box.GetVerticalFrameSize())
@@ -98,7 +104,7 @@ func (m tuiModel) viewConfirmDialog(backdrop string) string {
 	if width > innerW || footerWidth > innerW {
 		s.maxOffset = 0
 		notice := m.styles.helpText.Render("terminal too narrow")
-		return m.renderModal(backdrop, bloom.Box(box, bloom.Text(notice)))
+		return bloom.Box(box, bloom.Text(notice))
 	}
 
 	height := min(total, max(1, innerH-footerHeight))
@@ -125,5 +131,5 @@ func (m tuiModel) viewConfirmDialog(backdrop string) string {
 	if footerHeight > 0 {
 		rows = append(rows, bloom.Fixed(footerHeight, bloom.Text(footer).NoWrap()))
 	}
-	return m.renderModal(backdrop, bloom.Box(box, bloom.Column(rows...)))
+	return bloom.Box(box, bloom.Column(rows...))
 }
