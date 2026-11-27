@@ -44,7 +44,13 @@ func (m tuiModel) reviewWidthMethod() ansi.Method {
 }
 
 func (m *tuiModel) syncDiffView() {
-	m.diffView = m.reviewViewport(m.diffView, m.diffKey, m.diff, bloom.WrapChars, m.diffContentViewport())
+	m.diffView = m.reviewViewport(
+		m.diffView,
+		m.diffKey,
+		m.diff,
+		bloom.WrapChars,
+		m.diffContentViewport(),
+	)
 }
 
 func (m *tuiModel) syncDetailView() {

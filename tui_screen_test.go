@@ -2,13 +2,16 @@ package main
 
 import (
 	"image/color"
+	"regexp"
 	"strings"
 	"testing"
 
+	"bloomfx.dev/bloom"
 	"bloomfx.dev/bloom/canvas"
 	tea "charm.land/bubbletea/v2"
 	"getsteep.dev/steep/reel"
 	"getsteep.dev/steep/reel/vt"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,4 +137,24 @@ func TestEmptyPanelWrapsQueryAndRecoveryHint(t *testing.T) {
 		Assert("clear the filter")
 	h.Paste(strings.Repeat(query, 100)).Wait("…").Assert("clear the filter").AssertNot("�")
 	h.KeyEsc().Wait("❯ 1")
+}
+
+func TestEmptyPanelKeepsFilterInputVisible(t *testing.T) {
+	m := numberedListTestModel(1)
+	m.width, m.height = 40, 10
+	h := newTUIHarness(t, m)
+	input := reel.Matches(regexp.MustCompile("(?m)^/[^\n]*nomatch"))
+	h.Key("/").Paste("nomatch").WaitFor(input).Assert("PR")
+	h.Resize(40, 8).Wait("esc clear filter").WaitFor(input)
+	h.KeyEsc().Wait("❯ 1")
+}
+
+func TestEmptyPanelEllipsizesLongUnbrokenQuery(t *testing.T) {
+	m := numberedListTestModel(1)
+	m.width = 30
+	m.filterInput.SetValue(strings.Repeat("x", 150))
+	panel := bloom.Overlay(nil, m.emptyLayer(3))
+	screen := ansi.Strip(bloom.Render(m.width, 3, panel))
+	require.Regexp(t, `x+…`, screen)
+	require.Regexp(t, `clear the filter`, screen)
 }

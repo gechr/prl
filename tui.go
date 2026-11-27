@@ -1033,7 +1033,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	tm.syncConfirmDialog()
-	if m.showOptions && !tm.showOptions && tm.screen != nil && tm.screen.pointer.last.Button == tea.MouseLeft {
+	if m.showOptions && !tm.showOptions && tm.screen != nil &&
+		tm.screen.pointer.last.Button == tea.MouseLeft {
 		tm.screen.resetRoot(tm.reviewWidthMethod())
 	}
 	if tm.view == tuiViewList && m.view != tuiViewList && tm.screen != nil &&
@@ -1120,7 +1121,11 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case bloom.CopyMsg:
 		if msg.Err != nil {
-			cmd := tuiFlashMessage(&m, "System clipboard unavailable (sent to terminal clipboard)", true)
+			cmd := tuiFlashMessage(
+				&m,
+				"System clipboard unavailable (sent to terminal clipboard)",
+				true,
+			)
 			return m, cmd
 		}
 		return m, nil
@@ -1475,7 +1480,11 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		header, rows, widths := m.rerender()
 		m = m.mergeRefresh(rows)
 		m.header, m.colWidths = header, widths
-		return m, tea.Batch(m.rescheduleRefresh(), m.startHeadValidation(msg.items), m.refreshOpenReview())
+		return m, tea.Batch(
+			m.rescheduleRefresh(),
+			m.startHeadValidation(msg.items),
+			m.refreshOpenReview(),
+		)
 
 	case headValidationMsg:
 		if msg.queryGen != m.queryGen {
@@ -2012,6 +2021,10 @@ func (m tuiModel) viewList() tea.View {
 			bloom.Fixed(tuiScrollbarWidth, screen.listScrollbar()),
 		)
 	}
+	if len(visible) == 0 && !m.dismissedEmpty && m.flash.Msg == "" && m.help == nil &&
+		!m.showOptions && !m.confirmUsesDialog() {
+		body = bloom.Overlay(body, m.emptyLayer(viewport))
+	}
 	rows = append(rows, bloom.Fixed(viewport, body))
 	filterVal := m.filterInput.Value()
 	if m.filterInput.Focused() || filterVal != "" {
@@ -2019,11 +2032,6 @@ func (m tuiModel) viewList() tea.View {
 		rows = append(rows, bloom.Fixed(1, bloom.Text(input).NoWrap()))
 	}
 	var list bloom.Child = bloom.Column(rows...)
-	if len(visible) == 0 && !m.dismissedEmpty && m.flash.Msg == "" && m.help == nil &&
-		!m.showOptions &&
-		!m.confirmUsesDialog() {
-		list = bloom.Overlay(list, m.emptyLayer())
-	}
 
 	// Separator line, with active tags embedded inline when present.
 	// When filter is focused, place a ┬ junction to connect with the │ in the help line.
@@ -2033,7 +2041,8 @@ func (m tuiModel) viewList() tea.View {
 	status := m.listStatus(visible)
 	if m.filterInput.Focused() {
 		junction = m.filterHelpPipeCol()
-		footer = bloom.Text(layout.ExpandTabs(m.appendRightStatus(m.renderFilterHelp(), status))).NoWrap()
+		footer = bloom.Text(layout.ExpandTabs(m.appendRightStatus(m.renderFilterHelp(), status))).
+			NoWrap()
 	} else {
 		footer = m.shortcutFooter(m.listHelpPairs(), status)
 	}
@@ -2296,7 +2305,9 @@ func (m tuiModel) renderFullScreenView(header string, vp *reviewViewport, help s
 	} else if geo.TotalRows > geo.Rows {
 		end := min(geo.Row+geo.Rows, geo.TotalRows)
 		pct := int(math.Round(geo.Percent() * 100)) //nolint:mnd // percent
-		status = m.styles.statusOK.Render(fmt.Sprintf("%d-%d/%d (%d%%)", geo.Row+1, end, geo.TotalRows, pct))
+		status = m.styles.statusOK.Render(
+			fmt.Sprintf("%d-%d/%d (%d%%)", geo.Row+1, end, geo.TotalRows, pct),
+		)
 	}
 
 	var body bloom.Child = vp.node()
@@ -2304,7 +2315,10 @@ func (m tuiModel) renderFullScreenView(header string, vp *reviewViewport, help s
 		body = m.slide.layout(vp.width, vp.height, body)
 	}
 	bar := bloom.ScrollbarOf(reviewBodyID).Style(reviewBarStyle())
-	separator := bloom.Fixed(1, bloom.Text(m.styles.separator.Render(layout.Separator(max(0, m.width), -1))).NoWrap())
+	separator := bloom.Fixed(
+		1,
+		bloom.Text(m.styles.separator.Render(layout.Separator(max(0, m.width), -1))).NoWrap(),
+	)
 	var rows []bloom.Child
 	if header != "" {
 		rows = append(rows, bloom.Fixed(1, bloom.Text(header).NoWrap()), separator)

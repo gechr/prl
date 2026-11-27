@@ -29,7 +29,11 @@ func TestPRSlideMovesBothPages(t *testing.T) {
 			from:     tc.from,
 			progress: anim.NewValue(0.5),
 		}
-		require.Equal(t, tc.want, ansi.Strip(bloom.Render(8, 1, s.layout(8, 1, bloom.Text("abcdefgh")))))
+		require.Equal(
+			t,
+			tc.want,
+			ansi.Strip(bloom.Render(8, 1, s.layout(8, 1, bloom.Text("abcdefgh")))),
+		)
 	}
 }
 
@@ -116,9 +120,17 @@ func TestDismissedDetailNavigationIgnoresLateReply(t *testing.T) {
 func TestPRSlideOddWidthHasNoGap(t *testing.T) {
 	s := prSlide{previous: "ABCDEFGHI", progress: anim.NewValue(0.5)}
 	s.from = fx.Right
-	require.Equal(t, "FGHIabcde", ansi.Strip(bloom.Render(9, 1, s.layout(9, 1, bloom.Text("abcdefghi")))))
+	require.Equal(
+		t,
+		"FGHIabcde",
+		ansi.Strip(bloom.Render(9, 1, s.layout(9, 1, bloom.Text("abcdefghi")))),
+	)
 	s.from = fx.Left
-	require.Equal(t, "efghiABCD", ansi.Strip(bloom.Render(9, 1, s.layout(9, 1, bloom.Text("abcdefghi")))))
+	require.Equal(
+		t,
+		"efghiABCD",
+		ansi.Strip(bloom.Render(9, 1, s.layout(9, 1, bloom.Text("abcdefghi")))),
+	)
 }
 
 func TestPRSlideFrameRouting(t *testing.T) {
@@ -281,11 +293,19 @@ func TestOutdatedDiffBlocksReviewActions(t *testing.T) {
 			require.Zero(t, m.actionsInFlight)
 			require.Equal(t, tuiViewDiff, m.view)
 			require.True(t, m.diffInFlight[key])
-			m, _ = updateModel(t, m, diffFetchedMsg{key: key, headGen: m.diffHeadGen[key], err: errApproveTest})
+			m, _ = updateModel(
+				t,
+				m,
+				diffFetchedMsg{key: key, headGen: m.diffHeadGen[key], err: errApproveTest},
+			)
 			m, _ = pressKey(t, m, binding)
 			require.Zero(t, m.actionsInFlight)
 			require.True(t, m.diffInFlight[key], "retry the failed refresh")
-			m, _ = updateModel(t, m, diffFetchedMsg{key: key, headGen: m.diffHeadGen[key], diff: "+current"})
+			m, _ = updateModel(
+				t,
+				m,
+				diffFetchedMsg{key: key, headGen: m.diffHeadGen[key], diff: "+current"},
+			)
 			m, _ = pressKey(t, m, binding)
 			require.Equal(t, 1, m.actionsInFlight)
 		})
@@ -324,7 +344,11 @@ func TestFailedDiffNavigationKeepsRefreshedPatch(t *testing.T) {
 	m.invalidateDiffHead(active)
 	m.refreshCachedDiff(active)
 	m, _ = pressKey(t, m, tuiKeybindNext)
-	m, _ = updateModel(t, m, diffFetchedMsg{key: active, headGen: m.diffHeadGen[active], diff: "+fresh"})
+	m, _ = updateModel(
+		t,
+		m,
+		diffFetchedMsg{key: active, headGen: m.diffHeadGen[active], diff: "+fresh"},
+	)
 	m, _ = updateModel(t, m, diffFetchedMsg{key: makePRKey(second), err: errApproveTest})
 	require.False(t, m.diffLoading)
 	require.Equal(t, active, m.diffKey)

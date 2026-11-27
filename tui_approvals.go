@@ -278,7 +278,14 @@ func (m *tuiModel) statusCmd(key prKey) tea.Cmd {
 	changeGen := m.prChangeGen[key]
 	return m.trackRead(func() tea.Msg {
 		fresh, err := fetchPRStatus(gql, prCopy)
-		return prStatusMsg{key: key, gen: gen, changeGen: changeGen, stamp: stamp, pr: fresh, err: err}
+		return prStatusMsg{
+			key:       key,
+			gen:       gen,
+			changeGen: changeGen,
+			stamp:     stamp,
+			pr:        fresh,
+			err:       err,
+		}
 	})
 }
 
@@ -326,7 +333,10 @@ func (m *tuiModel) applyPRStatus(msg prStatusMsg) {
 		}
 	})
 	if !msg.stamp.fetchedAt.IsZero() {
-		m.diffStatus[msg.key] = reviewStamp{reviewVersion: m.reviewVersion(*m.prForKey(msg.key)), fetchedAt: time.Now()}
+		m.diffStatus[msg.key] = reviewStamp{
+			reviewVersion: m.reviewVersion(*m.prForKey(msg.key)),
+			fetchedAt:     time.Now(),
+		}
 	}
 	m.reconcileVisibility(msg.key)
 	m.rerenderList()

@@ -7,14 +7,13 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-func (m tuiModel) emptyLayer() bloom.LayerNode {
+func (m tuiModel) emptyLayer(height int) bloom.LayerNode {
 	dim, keyStyle := m.styles.helpText, m.styles.helpKey
 	box := m.styles.overlayBox.Padding(1, tuiConfirmPadX)
-	height := m.listSeparatorY()
 	if height <= box.GetVerticalFrameSize()+2 || m.width <= box.GetHorizontalFrameSize()+1 {
 		box = box.Padding(0, 1)
 	}
-	if height <= box.GetVerticalFrameSize() || m.width <= box.GetHorizontalFrameSize() {
+	if height < box.GetVerticalFrameSize()+2 || m.width <= box.GetHorizontalFrameSize() {
 		box = lg.NewStyle()
 	}
 	width := max(1, m.width-box.GetHorizontalFrameSize())
@@ -53,6 +52,14 @@ func (m tuiModel) emptyLayer() bloom.LayerNode {
 		)
 		shortHint = keyStyle.Render("esc") + dim.Render(" clear filter")
 	}
+	if room == 1 {
+		label := dim.Render("No matches · ") + shortHint
+		if method.StringWidth(label) > width {
+			label = shortHint
+		}
+		return bloom.Layer(bloom.Text(label).Truncate()).
+			Size(min(width, method.StringWidth(label)), 1)
+	}
 	hint := bloom.Text(instructions)
 	hintSize := bloom.Measure(width, 0, hint)
 	if hintSize.H >= room {
@@ -65,12 +72,13 @@ func (m tuiModel) emptyLayer() bloom.LayerNode {
 	msgRows := min(room-hintRows, size.H)
 	if size.H > msgRows {
 		// Leave space for recovery keys even when a pasted filter spans many lines.
-		lines := strings.SplitN(method.Wrap(message, width, ""), nl, msgRows+1)
+		lines := strings.SplitN(method.Hardwrap(message, width, true), nl, msgRows+1)
 		if len(lines) > msgRows {
 			lines = lines[:msgRows]
 			lines[msgRows-1] = method.Truncate(lines[msgRows-1]+valueEllipsis, width, valueEllipsis)
-			msg = bloom.Text(strings.Join(lines, nl)).NoWrap()
 		}
+		msg = bloom.Text(strings.Join(lines, nl)).NoWrap()
+		size = bloom.Measure(width, 0, msg)
 	}
 	gap := min(1, room-msgRows-hintRows)
 	panel := bloom.Column(

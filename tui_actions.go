@@ -1012,7 +1012,10 @@ func (m tuiModel) handleViewAction(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	case tuiKeybindApprove, tuiKeybindApproveNoConfirm, tuiKeybindMerge, tuiKeybindApproveMerge:
 		if m.reviewOutdated() {
 			refresh := m.refreshOpenReview()
-			return m, tea.Batch(refresh, tuiFlashMessage(&m, "Refreshing PR before review.", false)), true
+			return m, tea.Batch(
+				refresh,
+				tuiFlashMessage(&m, "Refreshing PR before review.", false),
+			), true
 		}
 	case tuiKeybindOpen:
 		if err := openBrowser(ctx.pr.URL); err != nil {

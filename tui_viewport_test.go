@@ -89,7 +89,12 @@ func TestSelectionScrollStopsOnReleaseOrPointerReturn(t *testing.T) {
 			}
 			h.WaitSettle().AssertNot(lines[len(lines)-1])
 			stopped := h.View()
-			require.Never(t, func() bool { return h.View() != stopped }, 300*time.Millisecond, 15*time.Millisecond)
+			require.Never(
+				t,
+				func() bool { return h.View() != stopped },
+				300*time.Millisecond,
+				15*time.Millisecond,
+			)
 		})
 	}
 }
@@ -152,8 +157,16 @@ func TestInterruptedScrollbarDragKeepsLastPosition(t *testing.T) {
 			m.View()
 			body, ok := m.diffView.root.Frame().Rect(reviewBodyID)
 			require.True(t, ok)
-			m, _ = updateModel(t, m, tea.MouseClickMsg{X: body.Max.X, Y: body.Min.Y, Button: tea.MouseLeft})
-			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: body.Max.X, Y: body.Max.Y - 3, Button: tea.MouseLeft})
+			m, _ = updateModel(
+				t,
+				m,
+				tea.MouseClickMsg{X: body.Max.X, Y: body.Min.Y, Button: tea.MouseLeft},
+			)
+			m, _ = updateModel(
+				t,
+				m,
+				tea.MouseMotionMsg{X: body.Max.X, Y: body.Max.Y - 3, Button: tea.MouseLeft},
+			)
 			m.View()
 			row := m.diffView.offset()
 			require.Positive(t, row)

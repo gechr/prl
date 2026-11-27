@@ -375,7 +375,9 @@ func TestEventPreservesInFlightMutationRead(t *testing.T) {
 	m.eventStreams.pending[key] = eventReviews
 	m.queueReviewEvents()
 	pr.Title = "Updated title"
-	m.applyChangedPRs(changedPRsMsg{gens: gens, items: buildPRRowModels([]PullRequest{pr}, "", nil)})
+	m.applyChangedPRs(
+		changedPRsMsg{gens: gens, items: buildPRRowModels([]PullRequest{pr}, "", nil)},
+	)
 	require.Equal(t, pr.Title, m.prForKey(key).Title)
 	require.Empty(t, m.changedPRs)
 	require.Equal(t, eventReviews, m.pendingEvents[key])

@@ -34,7 +34,8 @@ func (m tuiModel) reviewVersion(pr PullRequest) reviewVersion {
 }
 
 func (m tuiModel) reviewFresh(pr PullRequest, stamp reviewStamp) bool {
-	return stamp.reviewVersion == m.reviewVersion(pr) && m.reviewReadFresh(makePRKey(pr), stamp.fetchedAt)
+	return stamp.reviewVersion == m.reviewVersion(pr) &&
+		m.reviewReadFresh(makePRKey(pr), stamp.fetchedAt)
 }
 
 func (m tuiModel) reviewReadFresh(key prKey, fetchedAt time.Time) bool {
@@ -109,7 +110,10 @@ func (m *tuiModel) handleDetailFetched(msg detailFetchedMsg) tea.Cmd {
 	}
 	if msg.err != nil {
 		if awaited || active {
-			return tea.Batch(flashResult(m, "Detail failed:", fmt.Sprint(msg.err), "", true), m.scheduleDetailRefresh())
+			return tea.Batch(
+				flashResult(m, "Detail failed:", fmt.Sprint(msg.err), "", true),
+				m.scheduleDetailRefresh(),
+			)
 		}
 		return nil
 	}
@@ -164,7 +168,8 @@ func (m *tuiModel) showDetail(key prKey, detail PRDetail, idx int, from fx.Direc
 	var prefetch tea.Cmd
 	if _, next := m.detailNeighbors(); next >= 0 {
 		pr := m.rows[next].Item.PR
-		if cached, ok := m.detailCache[makePRKey(pr)]; !ok || !m.reviewFresh(pr, cached.reviewStamp) {
+		if cached, ok := m.detailCache[makePRKey(pr)]; !ok ||
+			!m.reviewFresh(pr, cached.reviewStamp) {
 			prefetch = m.fetchDetailCmd(next)
 		}
 	}

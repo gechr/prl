@@ -233,14 +233,22 @@ func TestResumedReviewWaitsForLiveContent(t *testing.T) {
 			key := makePRKey(pr)
 			m := resumeTestModel([]PullRequest{pr})
 			m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
-				if strings.HasSuffix(req.URL.Path, "/reviews") || strings.HasSuffix(req.URL.Path, "/files") {
+				if strings.HasSuffix(req.URL.Path, "/reviews") ||
+					strings.HasSuffix(req.URL.Path, "/files") {
 					return jsonResponse(req, http.StatusOK, "[]"), nil
 				}
-				return jsonResponse(req, http.StatusOK, `{"head":{"sha":"current"},"body":"Live description"}`), nil
+				return jsonResponse(
+					req,
+					http.StatusOK,
+					`{"head":{"sha":"current"},"body":"Live description"}`,
+				), nil
 			})
-			m.actions.diffClient = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
-				return jsonResponse(req, http.StatusOK, "+live patch"), nil
-			}).rest
+			m.actions.diffClient = testActionRunner(
+				t,
+				func(req *http.Request) (*http.Response, error) {
+					return jsonResponse(req, http.StatusOK, "+live patch"), nil
+				},
+			).rest
 			saved := savedSession{
 				Active: key, View: tc.view,
 				Diff: "+saved patch", Detail: PRDetail{Body: "Saved description"},
@@ -289,7 +297,11 @@ func TestFailedNavigationPreservesLiveResumedDetail(t *testing.T) {
 	pr, next := approvalTestPR(1), approvalTestPR(2)
 	key := makePRKey(pr)
 	m := resumeTestModel([]PullRequest{pr, next})
-	saved := savedSession{View: tuiViewDetail, Active: key, Detail: PRDetail{Body: "Saved description"}}
+	saved := savedSession{
+		View:   tuiViewDetail,
+		Active: key,
+		Detail: PRDetail{Body: "Saved description"},
+	}
 	saved.restore(&m)
 	m.openDetail(m.resolveIndex(makePRKey(next), -1), 0)
 	m, _ = updateModel(t, m, detailFetchedMsg{

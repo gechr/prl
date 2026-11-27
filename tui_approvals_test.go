@@ -540,7 +540,9 @@ func TestDiffApproveAdvancesInstantlyToPrefetchedDiff(t *testing.T) {
 	first, second := approvalTestPR(1), approvalTestPR(2)
 	m := diffTestModel(first, second)
 	key := makePRKey(second)
-	m.diffCache = map[prKey]diffFetchedMsg{key: {key: key, diff: "+next change", fetchedAt: time.Now()}}
+	m.diffCache = map[prKey]diffFetchedMsg{
+		key: {key: key, diff: "+next change", fetchedAt: time.Now()},
+	}
 	pending, release := holdTUIRequest()
 	defer release()
 	m.actions = testActionRunner(t, func(req *http.Request) (*http.Response, error) {
@@ -961,7 +963,9 @@ func TestDiffArrowKeysNavigateQueue(t *testing.T) {
 	m := diffTestModel(first, second)
 	k2 := makePRKey(second)
 	m.diff = "+first change"
-	m.diffCache = map[prKey]diffFetchedMsg{k2: {key: k2, diff: "+second change", fetchedAt: time.Now()}}
+	m.diffCache = map[prKey]diffFetchedMsg{
+		k2: {key: k2, diff: "+second change", fetchedAt: time.Now()},
+	}
 	var reads atomic.Int32
 	firstFetch, release := holdTUIRequest()
 	defer release()
