@@ -2,12 +2,12 @@ package main
 
 import (
 	"image/color"
-	"strings"
 	"testing"
 
 	"bloomfx.dev/bloom/canvas"
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
+	"getsteep.dev/steep/reel"
+	"getsteep.dev/steep/reel/vt"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,9 +84,26 @@ func TestPresetMenuHidesListHighlight(t *testing.T) {
 	}
 }
 
-func TestFilterPanelClipsNarrowRows(t *testing.T) {
+func TestFilterPanelWrapsAndFollowsSelection(t *testing.T) {
 	m := screenRegressionModel(t, 40, 12)
 	m.openOptions()
-	lines := strings.Split(ansi.Strip(m.View().Content), nl)
-	require.Regexp(t, `State  open  closed  merged +│$`, lines[2])
+	h := newTUIHarness(t, m)
+	h.Wait("ready  all").Assert("enter apply")
+	h.Locate(reel.Contains("ready  all")).LeftClick()
+	h.KeyDown(reel.Repeat(len(filterOptionDefs) - 1)).Wait("self-required")
+	h.KeyRight().KeyUp(reel.Repeat(len(filterOptionDefs) - 1)).Wait("ready  all")
+	ready := h.Locate(reel.Contains("ready  all"))
+	require.NotZero(t, cellStyle(h, ready).Attrs&vt.AttrBold)
+	h.KeyEsc().WaitNot("enter apply").Key("O").Wait("ready  all")
+	require.Zero(t, cellStyle(h, h.Locate(reel.Contains("ready  all"))).Attrs&vt.AttrBold)
+}
+
+func TestFilterScrollbarLeavesRoomForChoices(t *testing.T) {
+	m := screenRegressionModel(t, 120, 9)
+	m.openOptions()
+	m.optionsPicker.Cursor = int(filterRowReview)
+	h := newTUIHarness(t, m)
+	review := h.Locate(reel.Contains("Review  required"))
+	last := h.Locate(reel.After(reel.Contains("self-required"), reel.Contains("none  all")))
+	require.Equal(t, review.Y, last.Y)
 }

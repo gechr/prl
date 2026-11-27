@@ -15,8 +15,20 @@ import (
 	xslices "github.com/gechr/x/slices"
 )
 
-// newFilterPicker builds a picker.Model from the current filter state.
-func (m tuiModel) newFilterPicker() *picker.Model {
+type filterPicker struct {
+	picker.Model
+
+	offset, limit int
+	follow        bool
+	measuredAt    image.Point
+}
+
+func (p *filterPicker) scrollTo(offset int) tea.Cmd {
+	p.offset = min(p.limit, max(0, offset))
+	return nil
+}
+
+func (m tuiModel) newFilterPicker() *filterPicker {
 	rows := make([]picker.Row, len(filterOptionDefs))
 	for i, def := range filterOptionDefs {
 		rows[i] = picker.Row{Label: def.label, Choices: choiceLabels(m.filterChoices(filterRow(i)))}
@@ -52,7 +64,7 @@ func (m tuiModel) newFilterPicker() *picker.Model {
 		{Key: "enter", Desc: "apply"},
 		{Key: "esc", Desc: "cancel"},
 	}
-	return &p
+	return &filterPicker{Model: p, follow: true}
 }
 
 // filterChoiceTrue/False are canonical string values for bool filter choices.
@@ -347,6 +359,7 @@ func (m tuiModel) releaseCLIFilter(row filterRow) {
 }
 
 func (m tuiModel) updateOptionsOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.optionsPicker.follow = true
 	switch msg.String() {
 	case key.Esc: // the only way to discard staged choices
 		m.showOptions = false
@@ -683,7 +696,12 @@ func matchesReviewDecision(pr PullRequest, review string) bool {
 	return true
 }
 
-func (m tuiModel) filterPanel() bloom.Child {
+const (
+	activeFilterRowID bloom.ID = "active-filter-row"
+	activeChoiceID    bloom.ID = "active-filter-choice"
+)
+
+func (m tuiModel) filterRows(width int) bloom.Child {
 	p := m.optionsPicker
 	s := p.Styles
 	method := m.reviewWidthMethod()
@@ -699,8 +717,8 @@ func (m tuiModel) filterPanel() bloom.Child {
 			cursor = s.Cursor
 		}
 		label := strings.Repeat(" ", labelWidth-method.StringWidth(row.Label)) + row.Label
-		prefix := bloom.Text(cursor + s.Label.Render(label)).NoWrap()
-		cells := []bloom.Child{bloom.Fixed(method.StringWidth(cursor)+labelWidth, prefix)}
+		prefix := bloom.Text(method.Hardwrap(cursor+s.Label.Render(label), width, true))
+		cells := []bloom.Child{prefix}
 		for j, choice := range row.Choices {
 			style := s.Inactive
 			switch j {
@@ -709,32 +727,93 @@ func (m tuiModel) filterPanel() bloom.Child {
 			case p.Defaults[i]:
 				style = s.Default
 			}
-			cell := bloom.Text(style.Render(choice)).NoWrap().On(on.Mouse(func(e on.Event) tea.Cmd {
-				if click, ok := e.Msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
-					p.Cursor, p.Values[i], p.IsReset[i] = i, j, false
-				}
-				return nil
-			}))
-			cells = append(cells, bloom.Fixed(method.StringWidth(choice), cell))
+			cell := bloom.Text(style.Render(method.Hardwrap(choice, width, true))).
+				On(on.Mouse(func(e on.Event) tea.Cmd {
+					if click, ok := e.Msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft {
+						p.Cursor, p.Values[i], p.IsReset[i] = i, j, false
+					}
+					return nil
+				}))
+			if i == p.Cursor && j == p.Values[i] {
+				cell = cell.ID(activeChoiceID)
+			}
+			cells = append(cells, cell)
 		}
 		const choiceGap = 2
-		var line bloom.Child = bloom.Row(cells...).Gap(choiceGap)
+		var line bloom.Child = bloom.Wrap(cells...).Gap(choiceGap, 0)
 		if i == p.Cursor {
-			line = bloom.Box(lg.NewStyle().Background(colorCursorLine), line)
+			line = bloom.Box(lg.NewStyle().Background(colorCursorLine), line).ID(activeFilterRowID)
 		}
-		rows = append(rows, bloom.Fixed(1, line))
+		rows = append(rows, line)
 	}
+	return bloom.Column(rows...)
+}
 
-	var hints []string
-	for _, hint := range p.Hints {
-		hints = append(hints, s.HelpKey.Render(hint.Key)+s.HelpText.Render(" "+hint.Desc))
+func (m tuiModel) filterLayer() bloom.LayerNode {
+	p := m.optionsPicker
+	box := p.Styles.Box
+	if m.width <= box.GetHorizontalFrameSize()+tuiScrollbarWidth ||
+		m.height < box.GetVerticalFrameSize()+len(p.Rows) {
+		box = box.Padding(0)
 	}
-	rows = append(
-		rows,
-		bloom.Fixed(1, bloom.Space()),
-		bloom.Text(strings.Join(hints, "  ")).NoWrap(),
+	if m.width <= box.GetHorizontalFrameSize()+tuiScrollbarWidth ||
+		m.height <= box.GetVerticalFrameSize()+1 {
+		box = lg.NewStyle()
+	}
+	availableWidth := max(1, m.width-box.GetHorizontalFrameSize())
+	height := max(1, m.height-box.GetVerticalFrameSize())
+	var hints []bloom.Child
+	for _, hint := range p.Hints {
+		hints = append(
+			hints,
+			bloom.Text(p.Styles.HelpKey.Render(hint.Key)+p.Styles.HelpText.Render(" "+hint.Desc)),
+		)
+	}
+	const hintGap = 2
+	footer := bloom.Wrap(hints...).Gap(hintGap, 0)
+	body := m.filterRows(availableWidth)
+	naturalWidth := bloom.Measure(0, 0, body).W
+	footerWidth := bloom.Measure(0, 0, footer).W
+	width := min(availableWidth, max(naturalWidth, footerWidth))
+	footH := min(height-1, bloom.Measure(width, 0, footer).H)
+	gap := min(1, height-1-footH)
+	visible := height - footH - gap
+	total := bloom.Measure(width, 0, body).H
+	bodyWidth := width
+	bar := total > visible && width > tuiScrollbarWidth
+	if bar {
+		width = min(availableWidth, max(naturalWidth+tuiScrollbarWidth, footerWidth))
+		bodyWidth = width - tuiScrollbarWidth
+		body = m.filterRows(bodyWidth)
+		total = bloom.Measure(bodyWidth, 0, body).H
+	}
+	visible = min(total, visible)
+	p.limit = total - visible
+	size := image.Pt(m.width, m.height)
+	if p.limit > 0 && (p.follow || p.measuredAt != size) {
+		frame := bloom.Solve(bodyWidth, total, body)
+		rect, _ := frame.Rect(activeFilterRowID)
+		if rect.Dy() > visible {
+			rect, _ = frame.Rect(activeChoiceID)
+		}
+		p.offset = max(rect.Max.Y-visible, min(rect.Min.Y, p.offset))
+	}
+	p.scrollTo(p.offset)
+	p.measuredAt, p.follow = size, false
+	var viewport bloom.Child = bloom.Scroll(body, p.offset)
+	if bar {
+		track := bloom.Scrollbar(total, visible, p.offset).
+			Style(reviewBarStyle()).
+			OnScroll(p.scrollTo)
+		viewport = bloom.Row(bloom.Fill(viewport), bloom.Fixed(tuiScrollbarWidth, track))
+	}
+	panel := bloom.Column(
+		bloom.Fixed(visible, viewport),
+		bloom.Fixed(gap, bloom.Space()),
+		bloom.Fixed(footH, footer),
 	)
-	return bloom.Box(s.Box, bloom.Column(rows...)).ID(optionsModalID)
+	return m.screen.modalLayer(bloom.Box(box, panel).ID(optionsModalID)).Size(
+		width+box.GetHorizontalFrameSize(), visible+gap+footH+box.GetVerticalFrameSize())
 }
 
 func applyTUIFilterDefaults(cli *CLI, cfg *Config) bool {

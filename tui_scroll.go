@@ -19,6 +19,7 @@ const (
 	wheelTargetConfirm
 	wheelTargetPresetMenu
 	wheelTargetHelp
+	wheelTargetOptions
 )
 
 func resolveWheelTarget(model tea.Model) (wheelTarget, bool) {
@@ -36,7 +37,7 @@ func (m tuiModel) wheelScrollTarget() (wheelTarget, bool) {
 		return wheelTargetHelp, true
 	}
 	if m.showOptions {
-		return wheelTargetNone, false
+		return wheelTargetOptions, true
 	}
 	if m.presetMenu.open {
 		return wheelTargetPresetMenu, true
@@ -69,6 +70,9 @@ func (m *tuiModel) applyWheelScroll(target wheelTarget, delta int) {
 	switch target {
 	case wheelTargetNone:
 		return
+	case wheelTargetOptions:
+		p := m.optionsPicker
+		p.scrollTo(p.offset + delta)
 	case wheelTargetHelp:
 		h := m.currentHelp()
 		h.scrollTo(h.offset + delta)

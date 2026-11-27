@@ -25,7 +25,6 @@ import (
 	"github.com/gechr/primer/helpbar"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
-	"github.com/gechr/primer/picker"
 	"github.com/gechr/primer/render"
 	"github.com/gechr/primer/scrollbar"
 	"github.com/gechr/primer/scrollwheel"
@@ -469,7 +468,7 @@ type tuiModel struct {
 
 	// Filter options overlay.
 	showOptions     bool
-	optionsPicker   *picker.Model
+	optionsPicker   *filterPicker
 	presetMenu      presetMenuState
 	hover           hoverState
 	collapsedStacks prKeys
@@ -1034,6 +1033,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	tm.syncConfirmDialog()
+	if m.showOptions && !tm.showOptions && tm.screen != nil && tm.screen.pointer.last.Button == tea.MouseLeft {
+		tm.screen.resetRoot(tm.reviewWidthMethod())
+	}
 	if tm.view == tuiViewList && m.view != tuiViewList && tm.screen != nil &&
 		tm.screen.pointer.last.Button == tea.MouseLeft {
 		// A release in the review viewport never reached the list scrollbar.
@@ -2055,7 +2057,7 @@ func (m tuiModel) viewList() tea.View {
 	case m.help != nil:
 		page = bloom.Overlay(page, m.helpLayer())
 	case m.showOptions:
-		page = bloom.Overlay(page, screen.modalLayer(m.filterPanel()))
+		page = bloom.Overlay(page, m.filterLayer())
 	case m.confirmUsesDialog() && screen.dialog != nil:
 		page = bloom.Overlay(page, m.confirmLayer())
 	case m.presetMenu.open:
