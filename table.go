@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"bloomfx.dev/bloom/flex"
 	"github.com/gechr/clog"
 	"github.com/gechr/primer/table"
 	"github.com/gechr/x/ansi"
@@ -304,85 +305,38 @@ var columnWidthEstimateCompact = map[string]int{
 	valueCreated: 7, valueUpdated: 7,
 }
 
-// Column groups to progressively hide when the terminal is too narrow, in order.
-// Created is hidden first (least important), then updated, then title as a last resort.
-// Index and ref are never hidden.
-var hideOrder = [][]string{
-	{valueCreated}, // hide created first
-	{valueUpdated}, // then updated
-	{colTitle},     // title last resort
-}
+// Optional columns in the order they disappear as the terminal narrows.
+var collapsibleColumns = []string{valueCreated, valueUpdated, colTitle}
 
-// computeLayout determines compact time mode and which columns to hide based on
-// the terminal width and active column set. Actual title truncation is handled
-// by the grid's flex column, so no title budget is computed here.
 func computeLayout(termWidth int, columns []string) tableLayout {
 	if termWidth <= 0 {
 		return tableLayout{}
 	}
+	compact := termWidth < compactTimeThreshold && hasTimeColumns(columns)
+	tracks := make([]flex.Track, len(columns))
+	for i, name := range columns {
+		tracks[i] = flex.Fixed(estimatedColumnWidth(name, compact))
+		// Zero keeps unlisted columns visible.
+		tracks[i].Collapse = slices.Index(collapsibleColumns, name) + 1
+	}
 
+	// The shared table renderer measures the visible cells and truncates the title.
 	hidden := make(map[string]bool)
-
-	// Effective columns after hiding.
-	effective := func() []string {
-		var out []string
-		for _, c := range columns {
-			if !hidden[c] {
-				out = append(out, c)
-			}
-		}
-		return out
-	}
-
-	compact := false
-	eff := effective()
-
-	// Switch to compact time when terminal is narrow and time columns are present.
-	if termWidth < compactTimeThreshold && hasTimeColumns(eff) {
-		compact = true
-	}
-
-	// Progressively hide column groups if estimated total exceeds terminal width.
-	for _, group := range hideOrder {
-		if estimatedWidth(eff, compact) <= termWidth {
-			break
-		}
-		changed := false
-		for _, candidate := range group {
-			if hasColumn(columns, candidate) && !hidden[candidate] {
-				hidden[candidate] = true
-				changed = true
-			}
-		}
-		if changed {
-			eff = effective()
+	for i, size := range flex.Split(nil, termWidth, columnGap, tracks, flex.ShrinkByBasis) {
+		if size == flex.Collapsed {
+			hidden[columns[i]] = true
 		}
 	}
-
 	return tableLayout{compact: compact, hidden: hidden}
 }
 
-// estimatedWidth returns the estimated total table width for the given columns.
-func estimatedWidth(columns []string, compact bool) int {
-	total := 0
-	for _, col := range columns {
-		w := columnWidthEstimate[col]
-		if compact {
-			if cw, ok := columnWidthEstimateCompact[col]; ok {
-				w = cw
-			}
+func estimatedColumnWidth(name string, compact bool) int {
+	if compact {
+		if width, ok := columnWidthEstimateCompact[name]; ok {
+			return width
 		}
-		total += w
 	}
-	if len(columns) > 1 {
-		total += (len(columns) - 1) * columnGap
-	}
-	return total
-}
-
-// hasColumn returns true if the column name appears in the list.
-func hasColumn(columns []string, name string) bool {
-	return slices.Contains(columns, name)
+	return columnWidthEstimate[name]
 }
 
 // hasTimeColumns returns true if any time column (created, updated) is present.

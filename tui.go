@@ -2777,18 +2777,6 @@ func (m tuiModel) tableRenderer() *table.Renderer[PRRowModel] {
 	return m.tableRendererFor(len(m.rows))
 }
 
-func estimateHeaderWidth(name string, compact bool) int {
-	if compact {
-		if w, ok := columnWidthEstimateCompact[name]; ok {
-			return w
-		}
-	}
-	if w, ok := columnWidthEstimate[name]; ok {
-		return w
-	}
-	return 0
-}
-
 func renderEstimatedHeader(
 	renderer *table.Renderer[PRRowModel],
 	termWidth int,
@@ -2804,7 +2792,7 @@ func renderEstimatedHeader(
 	compact := termWidth > 0 && termWidth < compactTimeThreshold && hasTimeColumns(colNames)
 	sampleWidths := make([]int, len(cols))
 	for i, col := range cols {
-		sampleWidths[i] = estimateHeaderWidth(col.Name, compact)
+		sampleWidths[i] = estimatedColumnWidth(col.Name, compact)
 	}
 	return renderer.RenderHeaderOnly(sampleWidths)
 }

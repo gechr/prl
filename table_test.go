@@ -939,11 +939,11 @@ func TestResolveColumns_ConfigDefaultBeatsAuthorInjection(t *testing.T) {
 	require.Equal(t, []string{colNumber}, resolveColumns(flagged))
 }
 
-func TestEstimatedWidth_CompactShorter(t *testing.T) {
-	cols := defaultColumns()
-	long := estimatedWidth(cols, false)
-	compact := estimatedWidth(cols, true)
-	require.Less(t, compact, long, "compact layout should be narrower")
+func TestCompactTimestampsKeepBothDatesAtExactFit(t *testing.T) {
+	cols := []string{valueUpdated, colRef, valueCreated}
+	const width = 7 + columnGap + 20 + columnGap + 7 // two compact dates around the PR ref
+	require.Empty(t, computeLayout(width, cols).hidden)
+	require.Equal(t, map[string]bool{valueCreated: true}, computeLayout(width-1, cols).hidden)
 }
 
 func testCLI() *CLI {
