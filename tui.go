@@ -1181,8 +1181,8 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.view == tuiViewList && msg.Button == tea.MouseLeft {
-			if hint, ok := m.listHelpHintAt(msg.X, msg.Y); ok {
-				return m.update(key.Replay(hint.Key))
+			if binding, ok := m.footerKeyAt(msg.X, msg.Y); ok {
+				return m.update(key.Replay(binding))
 			}
 			if stack := m.stackGlyphAt(msg.X, msg.Y); stack != "" {
 				m.toggleStack(stack)
@@ -1202,9 +1202,6 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.hover = hoverState{control: m.screen.hit(msg.X, msg.Y)}
 			if _, ok := m.rowIndexAt(msg.Y); ok && !m.screen.contains(scrollbarID, msg.X, msg.Y) {
 				m.hover.rowY, m.hover.rowOK = msg.Y, true
-			}
-			if _, ok := m.listHelpHintIndex(msg.X, msg.Y); ok {
-				m.hover.helpX, m.hover.helpY, m.hover.helpOK = msg.X, msg.Y, true
 			}
 		}
 		if m.presetMenu.open {
@@ -2040,18 +2037,18 @@ func (m tuiModel) viewList() tea.View {
 	// When filter is focused, place a ┬ junction to connect with the │ in the help line.
 	presets := m.presetControls()
 	junction := -1
-	var help string
+	var footer bloom.Child
+	status := m.listStatus(visible)
 	if m.filterInput.Focused() {
 		junction = m.filterHelpPipeCol()
-		help = m.renderFilterHelp()
+		footer = bloom.Text(layout.ExpandTabs(m.appendRightStatus(m.renderFilterHelp(), status))).NoWrap()
 	} else {
-		help = m.listHelpBar().Render()
+		footer = m.shortcutFooter(m.listHelpPairs(), status)
 	}
-	footer := layout.ExpandTabs(m.appendRightStatus(help, m.listStatus(visible)))
 	var page bloom.Child = bloom.Column(
 		bloom.Fixed(m.listSeparatorY(), list),
 		bloom.Fixed(1, m.listSeparator(junction, presets)),
-		bloom.Fill(bloom.Text(footer).NoWrap()),
+		bloom.Fill(footer),
 	)
 	switch {
 	case m.help != nil:
@@ -3078,16 +3075,8 @@ func (m tuiModel) renderFlashStatus() string {
 }
 
 func (m tuiModel) appendRightStatus(help, status string) string {
-	footer, _ := m.fitRightStatus(help, status)
-	return footer
-}
-
-// fitRightStatus right-aligns status on help's last line, dropping trailing
-// hints until both fit. It also returns how many columns of the last help line
-// survive, so clicks past them never reach a dropped hint.
-func (m tuiModel) fitRightStatus(help, status string) (string, int) {
 	if status == "" || m.width <= 0 {
-		return help, math.MaxInt
+		return help
 	}
 	usableWidth := max(1, m.width-1)
 	lastNL := strings.LastIndex(help, "\n")
@@ -3102,7 +3091,7 @@ func (m tuiModel) fitRightStatus(help, status string) (string, int) {
 	for {
 		pad := usableWidth - lg.Width(lastLine) - statusWidth
 		if pad > 0 {
-			return prefix + lastLine + strings.Repeat(" ", pad) + status, lg.Width(lastLine)
+			return prefix + lastLine + strings.Repeat(" ", pad) + status
 		}
 		before, _, found := strings.CutLast(lastLine, helpGap)
 		if !found {
@@ -3112,9 +3101,9 @@ func (m tuiModel) fitRightStatus(help, status string) (string, int) {
 	}
 
 	if statusWidth < usableWidth {
-		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status, 0
+		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status
 	}
-	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis), 0
+	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
 }
 
 // listStatus is the list footer's right-aligned status: a flash message, or
@@ -3156,49 +3145,6 @@ func (m tuiModel) renderHelp(pairs []key.Hint) string {
 // helpLines returns the number of lines the help bar occupies at the current width.
 func (m tuiModel) helpLines(pairs []key.Hint) int {
 	return m.helpBar(pairs).Lines()
-}
-
-// listHelpHintAt returns the list help hint drawn at (x, y). The whole
-// "key desc" part is the button. The right-aligned status can drop trailing
-// hints from the last line, so only the columns fitRightStatus keeps count.
-func (m tuiModel) listHelpHintAt(x, y int) (key.Hint, bool) {
-	i, ok := m.listHelpHintIndex(x, y)
-	if !ok {
-		return key.Hint{}, false
-	}
-	return m.listHelpPairs()[i], true
-}
-
-// listHelpHintIndex is listHelpHintAt's index into listHelpPairs.
-func (m tuiModel) listHelpHintIndex(x, y int) (int, bool) {
-	if !m.canOpenPresetMenu() || m.filterInput.Focused() {
-		return 0, false
-	}
-	top := m.listSeparatorY() + 1
-	bar := m.helpBar(m.listHelpPairs())
-	i, ok := bar.Renderer.HintAt(bar.Hints, x, y-top)
-	if !ok {
-		return 0, false
-	}
-	if y-top == bar.Lines()-1 {
-		if _, kept := m.fitRightStatus(bar.Render(), m.listStatus(m.listLines())); x >= kept {
-			return 0, false
-		}
-	}
-	return i, true
-}
-
-// listHelpBar is the list help bar, with the hint under the pointer painted
-// like the other hover highlights. The pointer cell is resolved on each
-// render, so the highlight follows whatever hint now sits under it.
-func (m tuiModel) listHelpBar() helpbar.Model {
-	bar := m.helpBar(m.listHelpPairs())
-	if m.hover.helpOK {
-		if i, ok := m.listHelpHintIndex(m.hover.helpX, m.hover.helpY); ok {
-			bar.Renderer.Hover, bar.Renderer.HoverBG = &i, hoverBG
-		}
-	}
-	return bar
 }
 
 // hasFilteredRows reports whether the query returned any loaded PRs.

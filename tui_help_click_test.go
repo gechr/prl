@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"bloomfx.dev/bloom"
+	tea "charm.land/bubbletea/v2"
 	"getsteep.dev/steep/reel"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
@@ -39,27 +41,31 @@ func TestHelpHintsDroppedForStatusAreNotButtons(t *testing.T) {
 	// that can push trailing hints off the help line.
 	m := numberedListTestModel(30)
 	m.height = 12
+	m.ensureScreen()
 	dropped := 0
 	// 47, 72 and 140 drop a hint for the status, 80 and 120 do not.
 	for _, width := range []int{47, 72, 80, 120, 140} {
 		m.width = width
 		lines, top := footerLines(m)
 		footer := strings.Join(lines, nl)
+		labels := make(map[string]string)
 		for _, hint := range m.listHelpPairs() {
-			if !strings.Contains(footer, helpHintText(m, hint)) {
+			labels[hint.Key] = helpHintText(m, hint)
+			if !strings.Contains(footer, labels[hint.Key]) {
 				dropped++
 			}
 		}
 		for i, line := range lines {
 			for x := range width {
-				hint, ok := m.listHelpHintAt(x, top+i)
+				binding, ok := m.footerKeyAt(x, top+i)
 				if !ok {
 					continue
 				}
 				// The clicked cell must sit inside the hint's drawn text.
-				text := helpHintText(m, hint)
+				text := labels[binding]
+				require.NotEmpty(t, text)
 				idx := strings.Index(line, text)
-				require.NotEqual(t, -1, idx, "width=%d x=%d hits undrawn %q", width, x, hint.Key)
+				require.NotEqual(t, -1, idx, "width=%d x=%d hits undrawn %q", width, x, binding)
 				start := ansi.StringWidth(line[:idx])
 				require.GreaterOrEqual(t, x, start, "width=%d x=%d", width, x)
 				require.Less(t, x, start+ansi.StringWidth(text), "width=%d x=%d", width, x)
@@ -102,4 +108,14 @@ func TestHelpHintHoverHighlightsTheHint(t *testing.T) {
 	require.Equal(t, text, h.View())
 	h.Locate(reel.Contains("TITLE")).Hover()
 	waitCellStyle(t, h, hint, func(s reel.CellStyle) bool { return s == base })
+}
+
+func TestDisabledFooterHasNoHoverHighlight(t *testing.T) {
+	m := screenRegressionModel(t, 120, 30)
+	m.diffLoading = true
+	before := m.View().Content
+	button, ok := m.screen.root.Frame().Rect(bloom.ID(footerKeyPrefix + tuiKeybindHelp))
+	require.True(t, ok)
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: button.Min.X, Y: button.Min.Y})
+	require.Equal(t, before, m.View().Content)
 }

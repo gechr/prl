@@ -437,10 +437,12 @@ func TestClicksBelowTheListLeaveTheCursor(t *testing.T) {
 	m := approvalTestModel("", prs...)
 	m.cfg = &Config{}
 	m.header, m.height = "PR", 12
+	m.ensureScreen()
+	m.View()
 	// Help hints are buttons with their own actions, so skip them.
 	for y := m.listSeparatorY(); y < m.height; y++ {
 		for x := range m.width {
-			if _, ok := m.listHelpHintAt(x, y); ok {
+			if _, ok := m.footerKeyAt(x, y); ok {
 				continue
 			}
 			after, _ := updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
