@@ -25,7 +25,7 @@ require (
 	github.com/gechr/conductor v0.2.0
 	github.com/gechr/forge v0.0.10
 	github.com/gechr/gorules v0.0.5
-	github.com/gechr/primer v0.2.14
+	github.com/gechr/primer v0.2.15
 	github.com/gechr/x v0.7.2
 	github.com/goccy/go-yaml v1.19.2
 	github.com/gofrs/flock v0.13.2

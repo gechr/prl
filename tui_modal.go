@@ -3,6 +3,7 @@ package main
 import (
 	"image"
 	"image/color"
+	"sort"
 	"strings"
 
 	"bloomfx.dev/bloom"
@@ -14,6 +15,7 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/form"
+	"github.com/gechr/primer/titlebox"
 )
 
 const (
@@ -52,6 +54,7 @@ type confirmDialog struct {
 	offset         int
 	maxOffset      int
 	manualScroll   bool
+	formRows       []int // rendered row where each logical form line starts, plus the end
 }
 
 func newTUIScreen(method ansi.Method) *tuiScreen {
@@ -108,8 +111,25 @@ func (s *tuiScreen) focusFormAt(click tea.MouseClickMsg) {
 	point := image.Pt(click.X, click.Y)
 	if ok && click.Button == tea.MouseLeft && point.In(rect) {
 		local := point.Sub(rect.Min)
-		s.dialog.form.FocusAt(local.X, local.Y+s.dialog.offset)
+		d := s.dialog
+		row := sort.SearchInts(d.formRows, local.Y+d.offset+1) - 1
+		d.form.FocusAt(local.X, row)
 	}
+}
+
+// Wrap long prompts and selector values while retaining Primer's logical row
+// coordinates for mouse input and for keeping the editor's caret in view.
+func (d *confirmDialog) wrapForm(width int, method ansi.Method) string {
+	body := strings.TrimSuffix(d.form.Body(), nl)
+	d.formRows = append(d.formRows[:0], 0)
+	lines := strings.Split(body, nl)
+	for i, line := range lines {
+		if method.StringWidth(line) > width {
+			lines[i] = method.Wrap(line, width, "")
+		}
+		d.formRows = append(d.formRows, d.formRows[i]+1+strings.Count(lines[i], nl))
+	}
+	return strings.Join(lines, nl)
 }
 
 func (d *confirmDialog) scrollTo(offset int) tea.Cmd {
@@ -142,8 +162,9 @@ func (m tuiModel) confirmLayer() bloom.LayerNode {
 		footer, footerWidth = m.confirmButtons()
 		footerHeight, gap = 1, 1
 	} else {
-		body = strings.TrimSuffix(d.form.Body(), nl)
-		hints := d.form.Foot()
+		d.form.SetWidth(min(innerW, m.confirmInputWidth()))
+		body = d.wrapForm(innerW, method)
+		hints := method.Wrap(d.form.Foot(), innerW, "")
 		footer = bloom.Text(hints).NoWrap()
 		footerWidth, footerHeight = canvas.Measure(hints, method)
 	}
@@ -153,7 +174,8 @@ func (m tuiModel) confirmLayer() bloom.LayerNode {
 		innerH = m.height - box.GetVerticalFrameSize()
 		gap = min(gap, max(0, innerH-footerHeight-1))
 	}
-	d.cramped = width > innerW || footerWidth > innerW || innerH <= footerHeight
+	d.cramped = width > innerW || footerWidth > innerW || innerH <= footerHeight ||
+		(d.form != nil && innerW <= titlebox.Chrome)
 	if d.cramped {
 		d.offset, d.maxOffset = 0, 0
 		notice := "terminal too narrow"
@@ -171,7 +193,14 @@ func (m tuiModel) confirmLayer() bloom.LayerNode {
 		d.manualScroll = false
 	} else if d.form != nil && !d.manualScroll {
 		if top, rows, ok := d.form.FocusRegion(); ok {
-			d.offset = max(0, min(top, top+rows-height, d.maxOffset))
+			bottom := d.formRows[min(top+rows, len(d.formRows)-1)]
+			start := d.formRows[top]
+			if bottom-start > height {
+				row, _ := d.form.FocusedRow()
+				start = d.formRows[row]
+				bottom = start + 1
+			}
+			d.offset = min(d.maxOffset, max(0, bottom-height, min(start, d.offset)))
 		}
 	}
 

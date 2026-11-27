@@ -430,6 +430,16 @@ func TestFormResizePreservesDraft(t *testing.T) {
 	m.confirmHasInput = true
 	h := newTUIHarness(t, openPlainConfirm(t, m))
 	h.Wait(m.confirmPrompt).Paste("draft in progress").Wait("draft in progress").
-		Resize(32, 10).Wait("terminal too narrow").
-		Resize(100, 24).Wait("draft in progress")
+		KeyLeft().Resize(32, 10).Wait("draft in progress").
+		Paste("!").Wait("draft in progres!s").
+		Resize(100, 24).Wait("draft in progres!s")
+}
+
+func TestFormScrollFollowsCaretAfterResize(t *testing.T) {
+	m := plainConfirmModel()
+	m.confirmHasInput = true
+	h := newTUIHarness(t, openPlainConfirm(t, m))
+	h.Wait(m.confirmPrompt).Resize(32, 10).Paste(strings.Repeat("earlier line\n", 12) + "last line")
+	h.Wait("last line").Key("home").Paste("edited ").Wait("edited last line")
+	h.Resize(100, 24).Wait("edited last line").KeyEsc().WaitNot(m.confirmPrompt)
 }
