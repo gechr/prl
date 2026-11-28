@@ -92,6 +92,37 @@ func TestListDragDoesNotSelectText(t *testing.T) {
 	require.False(t, released)
 }
 
+func TestListHoverClearsAfterReview(t *testing.T) {
+	for _, id := range []bloom.ID{"pr-row/1", footerKeyPrefix + tuiKeybindQuit} {
+		t.Run(string(id), func(t *testing.T) {
+			m := screenRegressionModel(t, 100, 30)
+			rect, ok := m.screen.root.Frame().Rect(id)
+			require.True(t, ok)
+			at := rect.Min
+			background := func() color.Color {
+				cells := canvas.Parse(m.View().Content, m.reviewWidthMethod())
+				return cells.CellAt(at.X, at.Y).Style.Bg
+			}
+			normal := background()
+			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: at.X, Y: at.Y})
+			require.NotEqual(t, normal, background())
+			pr := m.rows[m.cursor].Item.PR
+			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+			m, _ = updateModel(
+				t,
+				m,
+				detailFetchedMsg{key: makePRKey(pr), reviewVersion: m.reviewVersion(pr)},
+			)
+			require.Equal(t, tuiViewDetail, m.view)
+			m.View()
+			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 0, Y: 0})
+			m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+			require.Equal(t, tuiViewList, m.view)
+			require.Equal(t, normal, background())
+		})
+	}
+}
+
 func TestListScrollbarDropsDragLostInAnotherView(t *testing.T) {
 	m := screenRegressionModel(t, 80, 14)
 	x := m.width - 1

@@ -1044,9 +1044,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tm.screen.pointer.last.Button == tea.MouseLeft {
 		tm.screen.resetRoot(tm.reviewWidthMethod())
 	}
-	if tm.view == tuiViewList && m.view != tuiViewList && tm.screen != nil &&
-		tm.screen.pointer.last.Button == tea.MouseLeft {
-		// A release in the review viewport never reached the list scrollbar.
+	if tm.view == tuiViewList && m.view != tuiViewList && tm.screen != nil {
+		// The review viewport owned pointer movement and any button release.
 		tm.screen.resetRoot(tm.reviewWidthMethod())
 	}
 	if reader != nil && reader != tm.activeReviewViewport() {
