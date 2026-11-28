@@ -58,13 +58,15 @@ func (m tuiModel) footerKeyAt(x, y int) (string, bool) {
 }
 
 func footerButton(text string, id bloom.ID, enabled bool) bloom.TextNode {
-	button := bloom.Text(text).NoWrap().ID(id)
+	// Register hover even while hidden so the first motion after a keypress
+	// can paint the control using the preceding frame's hit targets.
+	style := lg.NewStyle().Inline(true)
 	if enabled {
-		button = button.HoverStyle(lg.NewStyle().Transform(func(text string) string {
+		style = style.Transform(func(text string) string {
 			return layout.PreserveBackground(text, hoverBG)
-		}))
+		})
 	}
-	return button
+	return bloom.Text(text).NoWrap().ID(id).HoverStyle(style)
 }
 
 func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {

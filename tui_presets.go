@@ -2,13 +2,11 @@ package main
 
 import (
 	"slices"
-	"strings"
 
 	"bloomfx.dev/bloom"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/primer/key"
-	"github.com/gechr/primer/layout"
 )
 
 const (
@@ -27,7 +25,7 @@ const (
 	presetIndicatorSuffix = " ├─"
 )
 
-func (m tuiModel) renderPresetControl(name string, style lg.Style, hovered bool, width int) string {
+func (m tuiModel) renderPresetControl(name string, style lg.Style, width int) string {
 	if width <= 0 {
 		return ""
 	}
@@ -41,11 +39,7 @@ func (m tuiModel) renderPresetControl(name string, style lg.Style, hovered bool,
 	if method.StringWidth(name) > labelWidth {
 		name = method.Truncate(name, labelWidth, valueEllipsis)
 	}
-	rendered := style.Bold(true).Render(name) + caret
-	if hovered {
-		return layout.PreserveBackground(rendered, hoverBG)
-	}
-	return rendered
+	return style.Bold(true).Render(name) + caret
 }
 
 type presetMenuState struct {
@@ -126,7 +120,7 @@ func (m tuiModel) presetControls() presetControls {
 	}
 	prWidth, timeWidth := m.presetControlWidths(name)
 	return presetControls{
-		pr:   m.renderPresetControl(name, style, m.hoveredControl == prPresetID, prWidth),
+		pr:   m.renderPresetControl(name, style, prWidth),
 		time: m.renderTimeTag(timeWidth),
 	}
 }
@@ -163,16 +157,6 @@ func (m tuiModel) canOpenPresetMenu(y int) bool {
 		return false
 	}
 	return y >= 3 && y < m.height
-}
-
-func (m tuiModel) presetControlAt(x, y int) bloom.ID {
-	if m.screen != nil && m.canOpenPresetMenu(y) {
-		switch id := hitID(m.screen.root, x, y); id {
-		case prPresetID, timePresetID, filterTagsID:
-			return id
-		}
-	}
-	return ""
 }
 
 func (m tuiModel) canKeepPresetMenuOpen() bool {
@@ -288,7 +272,6 @@ func (m tuiModel) presetMenuLayer(controls presetControls) bloom.LayerNode {
 	const frameWidth = 4 // borders and padding
 	const markerWidth = 2
 	width := min(m.width, labelWidth+frameWidth+markerWidth)
-	innerWidth := max(0, width-frameWidth)
 	rows := bloom.List(len(presets)+1, func(idx int) bloom.Child {
 		name := m.menuAllLabel()
 		style := m.styles.separator.Faint(false)
@@ -310,16 +293,12 @@ func (m tuiModel) presetMenuLayer(controls presetControls) bloom.LayerNode {
 		if active {
 			prefix = "✓ "
 		}
-		line := prefix + name
-		if method.StringWidth(line) > innerWidth {
-			line = method.Truncate(line, innerWidth, valueEllipsis)
-		}
-		line += strings.Repeat(" ", max(0, innerWidth-method.StringWidth(line)))
-		line = style.Bold(active).Render(line)
+		// Style at natural width so Bloom alone truncates using the terminal's width method.
+		var label bloom.Child = bloom.Text(style.Bold(active).Render(prefix + name)).Truncate()
 		if idx == m.presetMenu.cursor {
-			line = layout.PreserveBackground(line, hoverBG)
+			label = bloom.Box(lg.NewStyle().Background(colorSelectionBG), label)
 		}
-		return bloom.Text(" " + line + " ").NoWrap()
+		return bloom.Box(lg.NewStyle().Padding(0, 1), label)
 	}).Offset(m.presetMenu.offset).ID(presetRowsID)
 	box := bloom.Box(m.styles.overlayBox.Padding(0), rows)
 	anchor, label := controls.anchor(m.presetMenu.timeFilter)

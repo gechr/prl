@@ -191,6 +191,10 @@ func TestPresetControlsHoverAndCaretClicks(t *testing.T) {
 			caret.Hover()
 			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
 			requireScreenColor(t, cellStyle(h, caret).Bg, colorSelectionBG)
+			h.KeyDown()
+			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s == base })
+			caret.Hover()
+			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
 			h.Locate(reel.Contains("TITLE")).Hover()
 			waitCellStyle(t, h, caret, func(s reel.CellStyle) bool { return s == base })
 			caret.Hover().LeftClick(caret.X, caret.Y).Wait("✓ " + label)
@@ -218,8 +222,11 @@ func TestPresetHoverPreservesIdleRefreshTimer(t *testing.T) {
 	m.lastInteraction = idleSince
 	testListSeparator(&m)
 	start, _ := testControlBounds(m, prPresetID)
-	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: m.listSeparatorY()})
-	require.Equal(t, prPresetID, m.hoveredControl)
+	y := m.listSeparatorY()
+	before := canvas.Parse(m.View().Content, m.reviewWidthMethod()).CellAt(start, y).Style
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: y})
+	after := canvas.Parse(m.View().Content, m.reviewWidthMethod()).CellAt(start, y).Style
+	require.NotEqual(t, before.Bg, after.Bg)
 	require.Equal(t, idleSince, m.lastInteraction, "hover alone keeps the idle timer")
 	m, _ = updateModel(
 		t,
@@ -256,6 +263,17 @@ func TestPresetHitsFollowWideLabels(t *testing.T) {
 			}
 			require.NotEqual(t, timePresetID, hitID(m.screen.root, start-1, y))
 			require.NotEqual(t, timePresetID, hitID(m.screen.root, end, y))
+			for _, loading := range []bool{false, true} {
+				m.diffLoading = loading
+				m, _ = updateModel(t, m, tea.MouseMotionMsg{X: start, Y: y})
+				require.Equal(
+					t,
+					line,
+					testListSeparator(&m),
+					"hover must preserve the label and caret",
+				)
+			}
+			m.diffLoading = false
 		}
 	}
 }
@@ -282,6 +300,40 @@ func TestPresetMenusCenterOverTheirControls(t *testing.T) {
 		require.InDelta(t, float64(start+end)/2, float64(left+right)/2, 0.5)
 		require.GreaterOrEqual(t, left, 0)
 		require.LessOrEqual(t, right, m.width)
+	}
+}
+
+func TestPresetMenuRowFitsAndKeepsClickablePadding(t *testing.T) {
+	for _, grapheme := range []bool{false, true} {
+		m := listTUIModel(approvalTestPR(1))
+		if grapheme {
+			m.p = m.p.withGraphemeWidth()
+		}
+		m.width, m.height = 19, 48
+		name := strings.Repeat("\u2600\ufe0f\u754c", 6)
+		m.cfg.TUI.Presets.Filters = []TUIPresetConfig{{Name: name, Filter: "ci:pending"}}
+		m.openPresetMenu()
+		m.ensureScreen()
+		view := m.View().Content
+		method := m.reviewWidthMethod()
+		rows, ok := m.screen.root.Frame().Rect(presetRowsID)
+		require.True(t, ok)
+		left, right := rows.Min.X, rows.Max.X-1
+		first := rows.Min.Y
+		cells := canvas.Parse(view, method)
+		bg := cells.CellAt(left+1, first).Style.Bg
+		require.NotNil(t, bg)
+		require.Equal(t, bg, cells.CellAt(right-1, first).Style.Bg)
+		for _, x := range []int{left, right} {
+			require.NotEqual(t, bg, cells.CellAt(x, first).Style.Bg)
+			index, hit := m.presetMenuIndexAt(x, first)
+			require.True(t, hit)
+			require.Zero(t, index)
+		}
+		line := ansi.Strip(strings.Split(view, nl)[first+1])
+		width := right - left - 1
+		want := method.Truncate("  "+name, width, valueEllipsis)
+		require.Equal(t, "│ "+want+strings.Repeat(" ", width-method.StringWidth(want))+" │", line)
 	}
 }
 

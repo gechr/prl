@@ -470,7 +470,7 @@ type tuiModel struct {
 	showOptions     bool
 	optionsPicker   *filterPicker
 	presetMenu      presetMenuState
-	hoveredControl  bloom.ID
+	showPresetHover bool // Keyboard and resize hide hover until the next pointer motion.
 	collapsedStacks prKeys
 	// filterHidden holds rows hidden client-side because they no longer match
 	// the search filters just applied via the overlay, or because an approval
@@ -1059,11 +1059,8 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tm.presetMenu.open = false
 		}
 	}
-	if tm.hoveredControl != "" {
-		rect, visible := tm.screen.root.Frame().Rect(tm.hoveredControl)
-		if !visible || tm.presetMenu.open || !tm.canOpenPresetMenu(rect.Min.Y) {
-			tm.hoveredControl = ""
-		}
+	if !tm.listScrollbarActive() || tm.detailLoading || tm.diffLoading {
+		tm.showPresetHover = false
 	}
 	state, kind := tm.programStatus()
 	if state != previousState || kind != previousKind {
@@ -1093,7 +1090,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A key released after dismissing a modal must not activate a list action.
 		return m, nil
 	case tea.KeyPressMsg, tea.WindowSizeMsg:
-		m.hoveredControl = ""
+		m.showPresetHover = false
 	}
 	if keyMsg, ok := msg.(tea.KeyMsg); ok &&
 		(keyMsg.String() == key.CtrlC || keyMsg.String() == key.CtrlD) &&
@@ -1174,7 +1171,9 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if binding, ok := m.footerKeyAt(msg.X, msg.Y); ok {
 				return m.update(key.Replay(binding))
 			}
-			switch m.presetControlAt(msg.X, msg.Y) {
+		}
+		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu(msg.Y) {
+			switch hitID(m.screen.root, msg.X, msg.Y) {
 			case filterTagsID:
 				m.openOptions()
 				return m, nil
@@ -1210,9 +1209,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseNone {
 			m.touchInteraction()
 		}
-		if !m.presetMenu.open {
-			m.hoveredControl = m.presetControlAt(msg.X, msg.Y)
-		}
+		m.showPresetHover = true
 		if m.presetMenu.open {
 			if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
 				m.presetMenu.cursor = idx
@@ -2048,7 +2045,7 @@ func (m tuiModel) viewList() tea.View {
 	presets := m.presetControls()
 	var page bloom.Child = bloom.Column(
 		bloom.Fixed(listHeight, list),
-		bloom.Fixed(1, m.listSeparator(junction, presets)),
+		bloom.Fixed(1, m.listSeparator(junction, presets, hoverEnabled && m.showPresetHover)),
 		bloom.Fill(footer),
 	)
 	switch {
@@ -2208,7 +2205,7 @@ func renderReviewBadge(pr PullRequest, needsViewer bool) string {
 
 // The rule fills the space to the left of the clickable controls. A focused
 // filter joins it to the help line below at junction.
-func (m tuiModel) listSeparator(junction int, presets presetControls) bloom.Child {
+func (m tuiModel) listSeparator(junction int, presets presetControls, hover bool) bloom.Child {
 	separator := m.styles.separator
 	method := m.reviewWidthMethod()
 	if m.cli == nil {
@@ -2231,17 +2228,17 @@ func (m tuiModel) listSeparator(junction int, presets presetControls) bloom.Chil
 	}
 	if presets.pr != "" && room > gapWidth {
 		if tags := m.filterTagText(room - gapWidth); tags != "" {
-			parts = append(parts, bloom.Text(tags).NoWrap().ID(filterTagsID), gap)
+			parts = append(parts, footerButton(tags, filterTagsID, hover), gap)
 		}
 	}
 	if presets.time != "" {
-		parts = append(parts, bloom.Text(presets.time).NoWrap().ID(timePresetID))
+		parts = append(parts, footerButton(presets.time, timePresetID, hover))
 		if presets.pr != "" {
 			parts = append(parts, gap)
 		}
 	}
 	if presets.pr != "" {
-		parts = append(parts, bloom.Text(presets.pr).NoWrap().ID(prPresetID))
+		parts = append(parts, footerButton(presets.pr, prPresetID, hover))
 	}
 	parts = append(parts, bloom.Text(separator.Render(presetIndicatorSuffix)))
 	return bloom.Row(parts...)
@@ -2261,15 +2258,11 @@ func (m tuiModel) filterTagText(width int) string {
 		return ""
 	}
 	method := m.reviewWidthMethod()
-	text := method.Truncate(
+	return method.Truncate(
 		strings.Join(labels, style.Faint(true).Render(dotSeparator)),
 		width,
 		valueEllipsis,
 	)
-	if m.hoveredControl == filterTagsID {
-		return layout.PreserveBackground(text, hoverBG)
-	}
-	return text
 }
 
 func (m tuiModel) viewDetail() tea.View {
