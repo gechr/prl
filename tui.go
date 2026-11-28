@@ -1947,7 +1947,7 @@ func (m tuiModel) viewList() tea.View {
 	rowText := func(line string, stackHeader bool) string {
 		line = layout.ExpandTabs(line)
 		if stackHeader || rowWidth < m.width {
-			return method.Truncate(line, rowWidth, valueEllipsis)
+			return truncateTableLine(line, rowWidth, method)
 		}
 		return line
 	}
@@ -2049,6 +2049,22 @@ func (m tuiModel) viewList() tea.View {
 	v.MouseMode = tea.MouseModeAllMotion
 	m.applyRepaintMarker(&v)
 	return v
+}
+
+func truncateTableLine(line string, width int, method cansi.Method) string {
+	if width <= 0 || method == cansi.GraphemeWidth {
+		return method.Truncate(line, width, valueEllipsis)
+	}
+	if len(line) <= width || method.StringWidth(line) <= width {
+		return line
+	}
+	clipped := method.Truncate(line, width, valueEllipsis)
+	if clipped == line {
+		// x/ansi v0.12.0 checks grapheme width even in WC-width mode. Force
+		// its ANSI-aware cutter past that check. The original already overflows.
+		clipped = method.Truncate(line+strings.Repeat(" ", width+1), width, valueEllipsis)
+	}
+	return clipped
 }
 
 // rowCursor renders the cursor prefix for row idx, in the approval check's

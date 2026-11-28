@@ -530,6 +530,42 @@ func TestJoinedEmojiRowsFillTheirHighlight(t *testing.T) {
 	}
 }
 
+func TestListRowEllipsisUsesTerminalCells(t *testing.T) {
+	const link = "https://example.org/item"
+	for _, grapheme := range []bool{false, true} {
+		m := numberedListTestModel(40)
+		m.width, m.height = 50, 25
+		if grapheme {
+			m.p = m.p.withGraphemeWidth()
+		}
+		m.ensureScreen()
+		m.View()
+		method := m.reviewWidthMethod()
+		row, ok := m.screen.root.Frame().Rect("pr-row/1")
+		require.True(t, ok)
+		for _, tc := range []struct {
+			glyph    string
+			overflow int
+			last     string
+		}{{"☀️", 0, "Z"}, {"👨‍👩‍👧", 2, valueEllipsis}} {
+			start := row.Min.X + m.listPrefixWidth()
+			fill := row.Max.X - start - method.StringWidth(tc.glyph+"Z") + tc.overflow
+			linked := ansi.SetHyperlink(link) + tc.glyph + "Z" + ansi.SetHyperlink("")
+			m.rows[1].Display = strings.Repeat("x", fill) + linked
+			cells := canvas.Parse(m.View().Content, method)
+			x := start + fill
+			if tc.overflow == 0 {
+				require.Equal(t, tc.glyph, cells.CellAt(x, row.Min.Y).Content)
+				x = row.Max.X - 1
+			}
+			last := cells.CellAt(x, row.Min.Y)
+			require.Equal(t, tc.last, last.Content)
+			require.Equal(t, link, last.Link.URL)
+			require.Empty(t, cells.CellAt(row.Max.X, row.Min.Y).Link.URL)
+		}
+	}
+}
+
 func TestListRowTruncatesAfterExpandingTabs(t *testing.T) {
 	m := numberedListTestModel(40)
 	m.width, m.height = 40, 25
