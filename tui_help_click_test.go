@@ -110,6 +110,83 @@ func TestHelpHintHoverHighlightsTheHint(t *testing.T) {
 	waitCellStyle(t, h, hint, func(s reel.CellStyle) bool { return s == base })
 }
 
+func TestReviewFooterCommentHoverAndClick(t *testing.T) {
+	pr := approvalTestPR(1)
+	for name, view := range map[string]tuiView{"diff": tuiViewDiff, "detail": tuiViewDetail} {
+		t.Run(name, func(t *testing.T) {
+			m := actionViewTestModel(view, pr)
+			m.width = 48 // Wrap the shortcuts onto multiple lines.
+			h := newTUIHarness(t, m)
+			hint := h.Locate(reel.Contains(tuiHelpComment)).Offset(3, 0)
+			base := cellStyle(h, hint)
+			hint.Hover()
+			waitCellStyle(t, h, hint, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+			requireScreenColor(t, cellStyle(h, hint).Bg, colorSelectionBG)
+			hint.LeftClick().Wait("Comment on " + pr.Ref() + "?")
+		})
+	}
+}
+
+func TestReviewFooterDuringNavigation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		view        tuiView
+		loadingDiff bool
+	}{
+		{"diff", tuiViewDiff, true},
+		{"detail", tuiViewDetail, false},
+		{"opening diff from detail", tuiViewDetail, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := actionViewTestModel(tc.view, approvalTestPR(1))
+			m.applyWindowSize(100, 30)
+			m.diffLoading, m.detailLoading = tc.loadingDiff, !tc.loadingDiff
+			m.View()
+			frame := m.activeReviewViewport().root.Frame()
+			for _, binding := range []string{key.ArrowsVertical, tuiKeybindComment} {
+				rect, ok := frame.Rect(bloom.ID(footerKeyPrefix + binding))
+				require.True(t, ok)
+				click := tea.MouseClickMsg{X: rect.Min.X, Y: rect.Min.Y, Button: tea.MouseLeft}
+				_, ok = m.footerKeyAt(click.X, click.Y)
+				require.False(t, ok)
+				m, _ = updateModel(t, m, click)
+				require.Empty(t, m.confirmAction)
+			}
+			dismiss := tuiKeybindQuit
+			if tc.view == tuiViewDiff {
+				dismiss = tuiKeybindDiff
+			}
+			rect, ok := frame.Rect(bloom.ID(footerKeyPrefix + dismiss))
+			require.True(t, ok)
+			m, _ = updateModel(t, m, tea.MouseClickMsg{
+				X: rect.Min.X, Y: rect.Min.Y, Button: tea.MouseLeft,
+			})
+			require.Equal(t, tuiViewList, m.view)
+		})
+	}
+}
+
+func TestReviewFooterKeepsMultilineErrorsOnLastRow(t *testing.T) {
+	for name, view := range map[string]tuiView{"diff": tuiViewDiff, "detail": tuiViewDetail} {
+		t.Run(name, func(t *testing.T) {
+			m := actionViewTestModel(view, approvalTestPR(1))
+			m.applyWindowSize(80, 20)
+			before := strings.Split(ansi.Strip(m.View().Content), nl)
+			m.flash.Msg, m.flash.Err = "Read failed\r\nretry\nwhen ready\ror cancel", true
+			const want = "Read failed retry when ready or cancel"
+			after := strings.Split(ansi.Strip(m.View().Content), nl)
+			require.Len(t, after, len(before))
+			last := len(after) - 1
+			require.Equal(t, before[:last], after[:last])
+			require.True(t, strings.HasSuffix(strings.TrimRight(after[last], " "), want))
+			for x := m.width - 1 - len(want); x < m.width; x++ {
+				_, ok := m.footerKeyAt(x, last)
+				require.False(t, ok, "status cell %d hits a shortcut", x)
+			}
+		})
+	}
+}
+
 func TestDisabledFooterHasNoHoverHighlight(t *testing.T) {
 	m := screenRegressionModel(t, 120, 30)
 	m.diffLoading = true

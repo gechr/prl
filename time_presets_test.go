@@ -196,14 +196,14 @@ func TestTimePresetHitboxesFollowLabels(t *testing.T) {
 			if start != end {
 				require.Equal(t, allTimeLabel+presetControlSuffix, ansi.Cut(line, start, end))
 				require.Equal(t, timePresetSeparator, ansi.Cut(line, end, prStart))
-				require.Equal(t, timePresetID, m.screen.hit(start, m.listSeparatorY()))
+				require.Equal(t, timePresetID, hitID(m.screen.root, start, m.listSeparatorY()))
 			}
 			label := noPresetLabel
 			if preset != "" {
 				label = preset
 			}
 			require.Equal(t, label+presetControlSuffix, ansi.Cut(line, prStart, prEnd))
-			require.Equal(t, prPresetID, m.screen.hit(prStart, m.listSeparatorY()))
+			require.Equal(t, prPresetID, hitID(m.screen.root, prStart, m.listSeparatorY()))
 		}
 	}
 }
@@ -330,7 +330,7 @@ func TestTimePresetLabelsCompressBeforePRLabel(t *testing.T) {
 				require.Equal(t, expected, line)
 				start, end := testControlBounds(m, timePresetID)
 				require.Equal(t, label+presetControlSuffix, ansi.Cut(line, start, end))
-				require.Equal(t, timePresetID, m.screen.hit(start, m.listSeparatorY()))
+				require.Equal(t, timePresetID, hitID(m.screen.root, start, m.listSeparatorY()))
 			}
 			h := newTUIHarness(t, m)
 			h.Locate(reel.Contains(tc.compact + " ▾")).LeftClick().Wait("✓ " + tc.name)

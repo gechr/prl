@@ -90,8 +90,8 @@ func (s *tuiScreen) modalLayer(content bloom.Child) bloom.LayerNode {
 	return s.panelLayer(content).Backdrop(fx.Dim{Amount: modalDim})
 }
 
-func (s *tuiScreen) hit(x, y int) bloom.ID {
-	path := s.root.Frame().Hit(x, y)
+func hitID(root *bloom.Root, x, y int) bloom.ID {
+	path := root.Frame().Hit(x, y)
 	if len(path) == 0 {
 		return ""
 	}

@@ -12,11 +12,40 @@ import (
 
 const footerKeyPrefix = "footer-key/"
 
+func (m tuiModel) footerRoot() *bloom.Root {
+	if reader := m.activeReviewViewport(); reader != nil {
+		return reader.root
+	}
+	if m.screen != nil && m.canOpenPresetMenu() && !m.presetMenu.open && !m.filterInput.Focused() {
+		return m.screen.root
+	}
+	return nil
+}
+
+// The scroll legend describes two keys. During review navigation only the
+// dismiss shortcut can act while the next PR is loading.
+func (m tuiModel) footerKeyEnabled(binding string) bool {
+	if binding == key.ArrowsVertical {
+		return false
+	}
+	switch m.view {
+	case tuiViewDiff:
+		return !m.diffLoading || binding == tuiKeybindDiff
+	case tuiViewDetail:
+		return (!m.diffLoading && !m.detailLoading) || binding == tuiKeybindQuit
+	case tuiViewList:
+		return true
+	}
+	return false
+}
+
 func (m tuiModel) footerKeyAt(x, y int) (string, bool) {
-	if !m.canOpenPresetMenu() || m.filterInput.Focused() || m.screen == nil {
+	root := m.footerRoot()
+	if root == nil {
 		return "", false
 	}
-	return strings.CutPrefix(string(m.screen.hit(x, y)), footerKeyPrefix)
+	binding, ok := strings.CutPrefix(string(hitID(root, x, y)), footerKeyPrefix)
+	return binding, ok && m.footerKeyEnabled(binding)
 }
 
 func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
@@ -26,12 +55,12 @@ func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
 	hover := lg.NewStyle().Transform(func(text string) string {
 		return layout.PreserveBackground(text, hoverBG)
 	})
-	enabled := m.canOpenPresetMenu()
+	enabled := m.footerRoot() != nil
 	buttons := make([]bloom.Child, 0, len(hints))
 	for i, hint := range hints {
 		text := renderer.Render([]key.Hint{hint})
 		button := bloom.Text(text).NoWrap().ID(bloom.ID(footerKeyPrefix + hint.Key))
-		if enabled {
+		if enabled && m.footerKeyEnabled(hint.Key) {
 			button = button.HoverStyle(hover)
 		}
 		var item bloom.Child = button

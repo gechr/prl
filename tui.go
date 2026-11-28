@@ -1163,8 +1163,13 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.presetMenu.open {
 			return m.updatePresetMenuClick(msg)
 		}
+		if msg.Button == tea.MouseLeft {
+			if binding, ok := m.footerKeyAt(msg.X, msg.Y); ok {
+				return m.update(key.Replay(binding))
+			}
+		}
 		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() {
-			switch m.screen.hit(msg.X, msg.Y) {
+			switch hitID(m.screen.root, msg.X, msg.Y) {
 			case filterTagsID:
 				m.openOptions()
 				return m, nil
@@ -1186,9 +1191,6 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.view == tuiViewList && msg.Button == tea.MouseLeft {
-			if binding, ok := m.footerKeyAt(msg.X, msg.Y); ok {
-				return m.update(key.Replay(binding))
-			}
 			if stack := m.stackGlyphAt(msg.X, msg.Y); stack != "" {
 				m.toggleStack(stack)
 				return m, nil
@@ -1204,7 +1206,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.touchInteraction()
 		}
 		if m.canOpenPresetMenu() && !m.presetMenu.open {
-			m.hoveredControl = m.screen.hit(msg.X, msg.Y)
+			m.hoveredControl = hitID(m.screen.root, msg.X, msg.Y)
 		}
 		if m.presetMenu.open {
 			if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
@@ -2118,7 +2120,7 @@ func (m tuiModel) viewDiff() tea.View {
 	return m.renderFullScreenView(
 		header,
 		m.diffView,
-		m.renderHelp(m.diffHelpPairs()),
+		m.diffHelpPairs(),
 	)
 }
 
@@ -2285,15 +2287,19 @@ func (m tuiModel) viewDetail() tea.View {
 	return m.renderFullScreenView(
 		"",
 		m.detailView,
-		m.renderHelp(m.detailHelpPairs()),
+		m.detailHelpPairs(),
 	)
 }
 
-func (m tuiModel) renderFullScreenView(header string, vp *reviewViewport, help string) tea.View {
+func (m tuiModel) renderFullScreenView(
+	header string,
+	vp *reviewViewport,
+	hints []key.Hint,
+) tea.View {
 	if vp == nil {
 		vp = m.reviewViewport(nil, "", "", bloom.WrapNone, 0)
 	}
-	chrome := 1 + lg.Height(help) // separator and footer
+	chrome := 1 + m.helpLines(hints) // separator and footer
 	if header != "" {
 		chrome += 2 // header and separator
 	}
@@ -2325,7 +2331,7 @@ func (m tuiModel) renderFullScreenView(header string, vp *reviewViewport, help s
 	}
 	rows = append(rows,
 		bloom.Fixed(vp.height, bloom.Row(bloom.Fill(body), bloom.Fixed(tuiScrollbarWidth, bar))),
-		separator, bloom.Fill(bloom.Text(m.appendRightStatus(help, status)).NoWrap()),
+		separator, bloom.Fill(m.shortcutFooter(hints, status)),
 	)
 	var page bloom.Child = bloom.Column(rows...)
 	root := vp.root
@@ -3068,7 +3074,9 @@ func (m tuiModel) detailHelpPairs() []key.Hint {
 	return pairs
 }
 
-// renderFlashStatus styles the flash message, or returns "" when there is none.
+var flashLineBreaks = strings.NewReplacer("\r\n", " ", "\r", " ", nl, " ")
+
+// The footer reserves one row for status, including multiline API errors.
 func (m tuiModel) renderFlashStatus() string {
 	if m.flash.Msg == "" {
 		return ""
@@ -3077,7 +3085,7 @@ func (m tuiModel) renderFlashStatus() string {
 	if m.flash.Err {
 		style = m.styles.statusErr
 	}
-	return style.Render(m.flash.Msg)
+	return style.Render(flashLineBreaks.Replace(m.flash.Msg))
 }
 
 func (m tuiModel) appendRightStatus(help, status string) string {
@@ -3142,10 +3150,6 @@ func (m tuiModel) helpBar(pairs []key.Hint) helpbar.Model {
 			Inline: true,
 		},
 	}
-}
-
-func (m tuiModel) renderHelp(pairs []key.Hint) string {
-	return m.helpBar(pairs).Render()
 }
 
 // helpLines returns the number of lines the help bar occupies at the current width.

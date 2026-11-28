@@ -252,10 +252,10 @@ func TestPresetHitsFollowWideLabels(t *testing.T) {
 			require.Equal(t, "▾", canvas.Parse(line, method).CellAt(end-1, 0).Content)
 			y := m.listSeparatorY()
 			for x := start; x < end; x++ {
-				require.Equal(t, timePresetID, m.screen.hit(x, y))
+				require.Equal(t, timePresetID, hitID(m.screen.root, x, y))
 			}
-			require.NotEqual(t, timePresetID, m.screen.hit(start-1, y))
-			require.NotEqual(t, timePresetID, m.screen.hit(end, y))
+			require.NotEqual(t, timePresetID, hitID(m.screen.root, start-1, y))
+			require.NotEqual(t, timePresetID, hitID(m.screen.root, end, y))
 		}
 	}
 }
