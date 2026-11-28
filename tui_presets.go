@@ -88,14 +88,18 @@ func (m tuiModel) menuAllLabel() string {
 }
 
 func (m tuiModel) listSeparatorY() int {
-	y := m.listViewport()
+	return m.listViewport() + m.listHeaderAndFilterRows()
+}
+
+func (m tuiModel) listHeaderAndFilterRows() int {
+	rows := 0
 	if m.header != "" {
-		y++
+		rows++
 	}
 	if m.filterInput.Focused() || m.filterInput.Value() != "" {
-		y++
+		rows++
 	}
-	return y
+	return rows
 }
 
 type presetControls struct {
@@ -153,17 +157,26 @@ func (m tuiModel) presetControlWidths(prLabel string) (int, int) {
 	return 0, min(timeWidth, available)
 }
 
-func (m tuiModel) canOpenPresetMenu() bool {
+func (m tuiModel) canOpenPresetMenu(y int) bool {
 	if m.view != tuiViewList || m.cli == nil || m.cfg == nil || m.help != nil || m.showOptions ||
 		m.confirmAction != "" || m.detailLoading || m.diffLoading || m.width < 5 {
 		return false
 	}
-	y := m.listSeparatorY()
 	return y >= 3 && y < m.height
 }
 
+func (m tuiModel) presetControlAt(x, y int) bloom.ID {
+	if m.screen != nil && m.canOpenPresetMenu(y) {
+		switch id := hitID(m.screen.root, x, y); id {
+		case prPresetID, timePresetID, filterTagsID:
+			return id
+		}
+	}
+	return ""
+}
+
 func (m tuiModel) canKeepPresetMenuOpen() bool {
-	if !m.canOpenPresetMenu() {
+	if !m.canOpenPresetMenu(m.listSeparatorY()) {
 		return false
 	}
 	_, label := m.presetControls().anchor(m.presetMenu.timeFilter)

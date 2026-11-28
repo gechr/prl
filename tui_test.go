@@ -949,37 +949,6 @@ func TestViewDetailFillsTerminalRectangle(t *testing.T) {
 	assertRenderedFullScreen(t, m.viewDetail().Content, m.width, m.height)
 }
 
-func TestAppendRightStatusDoesNotIncreaseFooterLineCount(t *testing.T) {
-	m := tuiModel{width: 24}
-	help := " ↑↓ scroll\nc comment"
-	status := "Diffing owner/repo#42…"
-
-	got := m.appendRightStatus(help, status)
-
-	require.Equal(t, strings.Count(help, nl), strings.Count(got, nl))
-	lines := strings.Split(ansi.Strip(got), nl)
-	require.Len(t, lines, 2)
-	require.LessOrEqual(t, lg.Width(lines[1]), m.width)
-	require.Equal(t, " Diffing owner/repo#42…", lines[1])
-}
-
-func TestAppendRightStatusTruncatesLongStatusToSingleLine(t *testing.T) {
-	m := tuiModel{width: 10}
-
-	got := ansi.Strip(m.appendRightStatus("", "Diffing owner/repo#42…"))
-
-	require.Equal(t, "Diffing …", got)
-	require.LessOrEqual(t, lg.Width(got), m.width)
-}
-
-func TestAppendRightStatusUsesLeftPaddingForExactFit(t *testing.T) {
-	m := tuiModel{width: 21}
-
-	got := ansi.Strip(m.appendRightStatus("", "Diffing foo/bar#123…"))
-
-	require.Equal(t, "Diffing foo/bar#123…", got)
-}
-
 func TestViewListDiffingStatusDoesNotAddFooterLines(t *testing.T) {
 	for width := 20; width <= 120; width++ {
 		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {

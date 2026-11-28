@@ -1020,6 +1020,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return model, cmd
 	}
+	if tm.view == tuiViewList && tm.filterInput.Focused() && tm.flash.Msg != m.flash.Msg {
+		// A flash can take a row from the list while the filter is open.
+		tm.offset = tm.scrolledOffset()
+	}
 	cmd = tea.Batch(
 		cmd, inputCmd,
 		tm.syncVisibleEventStreams(msg),
@@ -1055,8 +1059,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tm.presetMenu.open = false
 		}
 	}
-	if !tm.canOpenPresetMenu() || tm.presetMenu.open {
-		tm.hoveredControl = ""
+	if tm.hoveredControl != "" {
+		rect, visible := tm.screen.root.Frame().Rect(tm.hoveredControl)
+		if !visible || tm.presetMenu.open || !tm.canOpenPresetMenu(rect.Min.Y) {
+			tm.hoveredControl = ""
+		}
 	}
 	state, kind := tm.programStatus()
 	if state != previousState || kind != previousKind {
@@ -1167,9 +1174,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if binding, ok := m.footerKeyAt(msg.X, msg.Y); ok {
 				return m.update(key.Replay(binding))
 			}
-		}
-		if msg.Button == tea.MouseLeft && m.canOpenPresetMenu() {
-			switch hitID(m.screen.root, msg.X, msg.Y) {
+			switch m.presetControlAt(msg.X, msg.Y) {
 			case filterTagsID:
 				m.openOptions()
 				return m, nil
@@ -1205,8 +1210,8 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button != tea.MouseNone {
 			m.touchInteraction()
 		}
-		if m.canOpenPresetMenu() && !m.presetMenu.open {
-			m.hoveredControl = hitID(m.screen.root, msg.X, msg.Y)
+		if !m.presetMenu.open {
+			m.hoveredControl = m.presetControlAt(msg.X, msg.Y)
 		}
 		if m.presetMenu.open {
 			if idx, ok := m.presetMenuIndexAt(msg.X, msg.Y); ok {
@@ -1616,6 +1621,7 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case key.Enter:
 			m.filterInput.Blur()
+			m.offset = m.scrolledOffset()
 			return m, nil
 		case key.Esc, key.CtrlC, key.CtrlD:
 			m.filterInput.SetValue("")
@@ -1694,14 +1700,9 @@ func (m tuiModel) updateListView(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.quit()
 
 	case tuiKeybindFilter:
-		// The filter bar takes one row from the viewport; bump offset so the
-		// cursor row doesn't get pushed off-screen.
-		viewport := m.listViewport() - 1 // account for incoming filter bar
-		pos := m.cursorLinePosition()
-		if pos >= 0 && pos >= m.offset+viewport {
-			m.offset = pos - viewport + 1
-		}
-		return m, m.filterInput.Focus()
+		cmd := m.filterInput.Focus()
+		m.offset = m.scrolledOffset()
+		return m, cmd
 
 	case key.Enter:
 		pr := m.currentPR()
@@ -1929,7 +1930,15 @@ func (m tuiModel) renderView() tea.View {
 func (m tuiModel) viewList() tea.View {
 	screen := m.ensureScreen()
 	visible := m.listLines()
-	viewport := m.listViewport()
+	var viewport int
+	var footer bloom.Child
+	junction := -1
+	if m.filterInput.Focused() {
+		footer, viewport, junction = m.filterFooter(visible)
+	} else {
+		viewport = m.listViewport()
+		footer = m.shortcutFooter(m.listHelpPairs(), m.listStatus(visible, viewport))
+	}
 	rowWidth := m.width
 	if len(visible) > viewport {
 		rowWidth = max(0, rowWidth-tuiScrollbarWidth)
@@ -1957,7 +1966,8 @@ func (m tuiModel) viewList() tea.View {
 	rowHover := lg.NewStyle().Transform(func(line string) string {
 		return layout.PreserveBackgroundWidth(line, hoverBG, rowWidth)
 	})
-	hoverEnabled := m.canOpenPresetMenu() && !m.presetMenu.open
+	listHeight := viewport + m.listHeaderAndFilterRows()
+	hoverEnabled := m.canOpenPresetMenu(listHeight) && !m.presetMenu.open
 	listRow := func(line string, idx, pos int) bloom.Child {
 		node := rowNode(line)
 		if hoverEnabled && idx >= 0 && idx != m.cursor {
@@ -2035,21 +2045,9 @@ func (m tuiModel) viewList() tea.View {
 	}
 	var list bloom.Child = bloom.Column(rows...)
 
-	// Separator line, with active tags embedded inline when present.
-	// When filter is focused, place a ┬ junction to connect with the │ in the help line.
 	presets := m.presetControls()
-	junction := -1
-	var footer bloom.Child
-	status := m.listStatus(visible)
-	if m.filterInput.Focused() {
-		junction = m.filterHelpPipeCol()
-		footer = bloom.Text(layout.ExpandTabs(m.appendRightStatus(m.renderFilterHelp(), status))).
-			NoWrap()
-	} else {
-		footer = m.shortcutFooter(m.listHelpPairs(), status)
-	}
 	var page bloom.Child = bloom.Column(
-		bloom.Fixed(m.listSeparatorY(), list),
+		bloom.Fixed(listHeight, list),
 		bloom.Fixed(1, m.listSeparator(junction, presets)),
 		bloom.Fill(footer),
 	)
@@ -2739,9 +2737,9 @@ func (m tuiModel) adjustedCursor() int {
 }
 
 func (m tuiModel) scrolledOffset() int {
-	viewport := m.listViewport()
 	visible := m.listLines()
-	pos := m.cursorLinePosition()
+	viewport := m.listViewportFor(visible)
+	pos := m.cursorLinePosition(visible)
 	top := pos
 	if pos > 0 && viewport > 1 && visible[pos-1].row < 0 {
 		top-- // keep a stack header visible with its first member
@@ -2929,46 +2927,6 @@ func (m tuiModel) listHelpPairs() []key.Hint {
 	return pairs
 }
 
-func (m tuiModel) renderFilterSyntaxHints() string {
-	return key.Renderer{
-		Styles: key.Styles{
-			Key:  styleHeading.Bold(true),
-			Text: styleFilter,
-		},
-		Gap: "  ",
-	}.Render([]key.Hint{
-		{Key: "^", Desc: "start"},
-		{Key: "$", Desc: "end"},
-		{Key: "!", Desc: "negate"},
-	})
-}
-
-const filterHelpGap = "  "
-
-// filterHelpPipeCol returns the visual column of the │ separator in the filter help line.
-func (m tuiModel) filterHelpPipeCol() int {
-	return lg.Width(m.renderFilterSyntaxHints()) + len(filterHelpGap)
-}
-
-func (m tuiModel) renderFilterHelp() string {
-	pairs := []key.Hint{
-		{Key: key.ArrowsVertical, Desc: "prev/next"},
-		{Key: key.Enter, Desc: "apply"},
-		{Key: key.Esc, Desc: "exit"},
-	}
-	base := key.Renderer{
-		Styles: key.Styles{
-			Key:  m.styles.helpKey,
-			Text: m.styles.helpText,
-		},
-		Gap:    helpGap,
-		Prefix: new(""),
-		Inline: true,
-	}.Render(pairs)
-	sep := m.styles.separator.Render("│")
-	return m.renderFilterSyntaxHints() + filterHelpGap + sep + filterHelpGap + base
-}
-
 func (m tuiModel) diffHelpPairs() []key.Hint {
 	pairs := []key.Hint{
 		{Key: key.ArrowsVertical, Desc: tuiHelpScroll},
@@ -3088,46 +3046,13 @@ func (m tuiModel) renderFlashStatus() string {
 	return style.Render(flashLineBreaks.Replace(m.flash.Msg))
 }
 
-func (m tuiModel) appendRightStatus(help, status string) string {
-	if status == "" || m.width <= 0 {
-		return help
-	}
-	usableWidth := max(1, m.width-1)
-	lastNL := strings.LastIndex(help, "\n")
-	prefix := ""
-	lastLine := help
-	if lastNL >= 0 {
-		prefix = help[:lastNL+1]
-		lastLine = help[lastNL+1:]
-	}
-	statusWidth := lg.Width(status)
-
-	for {
-		pad := usableWidth - lg.Width(lastLine) - statusWidth
-		if pad > 0 {
-			return prefix + lastLine + strings.Repeat(" ", pad) + status
-		}
-		before, _, found := strings.CutLast(lastLine, helpGap)
-		if !found {
-			break
-		}
-		lastLine = before
-	}
-
-	if statusWidth < usableWidth {
-		return prefix + strings.Repeat(" ", usableWidth-statusWidth) + status
-	}
-	return prefix + xansi.Truncate(status, usableWidth, valueEllipsis)
-}
-
 // listStatus is the list footer's right-aligned status: a flash message, or
 // the range of displayed group numbers when the list overflows the viewport.
-func (m tuiModel) listStatus(lines []tuiListLine) string {
+func (m tuiModel) listStatus(lines []tuiListLine, viewport int) string {
 	if m.flash.Msg != "" {
 		return m.renderFlashStatus()
 	}
 	total := len(lines)
-	viewport := m.listViewport()
 	if total <= viewport {
 		return ""
 	}
@@ -3247,7 +3172,7 @@ func (m tuiModel) mergeRefresh(newRows []TableRow) tuiModel {
 	if m.cursor >= 0 && m.cursor < len(oldRows) {
 		cursorKey = makePRKey(oldRows[m.cursor].Item.PR)
 	}
-	screenLine := m.cursorLinePosition() - m.offset
+	screenLine := m.cursorLinePosition(m.listLines()) - m.offset
 	newCursor := min(m.cursor, max(0, len(newRows)-1))
 	for i, row := range newRows {
 		if makePRKey(row.Item.PR) == cursorKey {
@@ -3261,7 +3186,7 @@ func (m tuiModel) mergeRefresh(newRows []TableRow) tuiModel {
 	m.restoreFoldedCursor()
 	m.cursor = m.adjustedCursor()
 	if m.offset > 0 {
-		m.offset = max(0, m.cursorLinePosition()-screenLine)
+		m.offset = max(0, m.cursorLinePosition(m.listLines())-screenLine)
 	}
 	m.offset = m.scrolledOffset()
 	return m
@@ -3269,7 +3194,7 @@ func (m tuiModel) mergeRefresh(newRows []TableRow) tuiModel {
 
 // reindexRows remaps the cursor from oldRows order to newRows order using PR identity.
 func (m tuiModel) reindexRows(oldRows, newRows []TableRow) tuiModel {
-	screenLine := m.cursorLinePosition() - m.offset
+	screenLine := m.cursorLinePosition(m.listLines()) - m.offset
 	if m.cursor >= 0 && m.cursor < len(oldRows) {
 		key := makePRKey(oldRows[m.cursor].Item.PR)
 		for i, row := range newRows {
@@ -3284,7 +3209,7 @@ func (m tuiModel) reindexRows(oldRows, newRows []TableRow) tuiModel {
 	m.restoreFoldedCursor()
 	m.cursor = m.adjustedCursor()
 	if m.offset > 0 {
-		m.offset = max(0, m.cursorLinePosition()-screenLine)
+		m.offset = max(0, m.cursorLinePosition(m.listLines())-screenLine)
 	}
 	m.offset = m.scrolledOffset()
 	return m

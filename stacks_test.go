@@ -272,12 +272,12 @@ func TestStackFooterUsesDisplayedGroupNumbers(t *testing.T) {
 		{3, "1-2/2 (100%)"},
 	} {
 		m.offset = tc.offset
-		require.Equal(t, tc.want, ansi.Strip(m.listStatus(m.listLines())))
+		require.Equal(t, tc.want, ansi.Strip(m.listStatus(m.listLines(), m.listViewport())))
 	}
 	m.toggleStack(m.rows[0].Item.StackKey)
-	require.Empty(t, m.listStatus(m.listLines()))
+	require.Empty(t, m.listStatus(m.listLines(), m.listViewport()))
 	m.height--
-	require.Equal(t, "1-1/2 (50%)", ansi.Strip(m.listStatus(m.listLines())))
+	require.Equal(t, "1-1/2 (50%)", ansi.Strip(m.listStatus(m.listLines(), m.listViewport())))
 }
 
 func TestStackViewportAccountsForHeader(t *testing.T) {
@@ -287,10 +287,10 @@ func TestStackViewportAccountsForHeader(t *testing.T) {
 	m.offset = m.scrolledOffset()
 	viewport := m.listViewport()
 	require.Positive(t, m.offset)
-	require.Less(t, m.cursorLinePosition(), m.offset+viewport)
+	require.Less(t, m.cursorLinePosition(m.listLines()), m.offset+viewport)
 	m.ensureScreen()
 	m.View()
-	idx, ok := m.rowIndexAt(m.cursorLinePosition() - m.offset + 1)
+	idx, ok := m.rowIndexAt(m.cursorLinePosition(m.listLines()) - m.offset + 1)
 	require.True(t, ok)
 	require.Equal(t, m.cursor, idx)
 }
@@ -363,10 +363,11 @@ func TestStackRefreshRetainsFoldAndVisibleCursor(t *testing.T) {
 	model, _ := m.Update(refreshResultMsg{items: items})
 	fresh, ok := model.(tuiModel)
 	require.True(t, ok)
-	require.Len(t, fresh.listLines(), 2)
+	lines := fresh.listLines()
+	require.Len(t, lines, 2)
 	require.Contains(t, fresh.visibleIndices(), fresh.cursor)
 	require.Nil(t, fresh.currentPR())
-	require.Equal(t, "▸  ", fresh.listLines()[fresh.cursorLinePosition()].tree)
+	require.Equal(t, "▸  ", lines[fresh.cursorLinePosition(lines)].tree)
 }
 
 func TestStackFilteringKeepsHeadersOutOfActions(t *testing.T) {

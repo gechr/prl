@@ -56,7 +56,7 @@ func (m tuiModel) listScrollbarActive() bool {
 
 func (m *tuiModel) setListScrollOffset(offset int) {
 	lines := m.listLines()
-	height := m.listViewport()
+	height := m.listViewportFor(lines)
 	m.offset = max(0, min(offset, len(lines)-height))
 	if height == 1 && m.offset+1 < len(lines) && lines[m.offset].row < 0 {
 		m.offset++ // an expanded stack header alone has no keyboard target

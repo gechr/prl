@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -34,6 +35,119 @@ func TestHelpHintClickPressesItsKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFilterFooterApplyAndExit(t *testing.T) {
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	first.Title, second.Title = "Cedar", "Birch"
+	m := listTUIModel(first, second)
+	h := newTUIHarness(t, m)
+	h.Key("/").Paste("Cedar").WaitNot("Birch").Assert("enter apply")
+	h.Resize(32, 12).
+		Wait("enter apply").
+		Wait("↕ prev/next").
+		Assert([]string{"^ start", "$ end", "! negate"})
+	apply := h.Locate(reel.Contains("enter apply")).Offset(6, 0)
+	exit := h.Locate(reel.Contains("esc exit"))
+	require.Less(t, exit.Y, h.Locate(reel.Contains("! negate")).Y)
+	base := cellStyle(h, apply)
+	apply.Hover()
+	waitCellStyle(t, h, apply, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+	requireScreenColor(t, cellStyle(h, apply).Bg, colorSelectionBG)
+	apply.LeftClick().WaitNot("enter apply").Resize(120, 25).Wait("Cedar").AssertNot("Birch")
+	h.Key("/").Wait("esc exit")
+	h.Locate(reel.Contains("esc exit")).Offset(4, 0).LeftClick().Wait("Birch").AssertNot("esc exit")
+}
+
+func TestFilterFooterStatusKeepsActionsClickable(t *testing.T) {
+	for _, width := range []int{14, 36, 120} {
+		m := numberedListTestModel(30)
+		m.width, m.height = width, 14
+		m.filterInput.Focus()
+		m.ensureScreen()
+		m.flash.Msg = strings.Repeat("x", width)
+		lines, top := footerLines(m)
+		for _, hint := range []key.Hint{{Key: key.Enter, Desc: "apply"}, {Key: key.Esc, Desc: "exit"}} {
+			rect, ok := m.screen.root.Frame().Rect(bloom.ID(filterKeyPrefix + hint.Key))
+			require.True(t, ok)
+			require.Equal(
+				t,
+				hint.Key+" "+hint.Desc,
+				ansi.Cut(lines[rect.Min.Y-top], rect.Min.X, rect.Max.X),
+			)
+			for x := rect.Min.X; x < rect.Max.X; x++ {
+				binding, hit := m.footerKeyAt(x, rect.Min.Y)
+				require.True(t, hit)
+				require.Equal(t, hint.Key, binding)
+			}
+		}
+		status := strings.TrimSpace(lines[len(lines)-1])
+		require.Equal(t, strings.Repeat("x", width-2)+valueEllipsis, status)
+		for x := range width {
+			_, hit := m.footerKeyAt(x, m.height-1)
+			require.False(t, hit)
+		}
+	}
+}
+
+func TestFilterFooterFitsOneRow(t *testing.T) {
+	m := numberedListTestModel(2)
+	m.width, m.height = 14, 5
+	m.filterInput.Focus()
+	m.ensureScreen()
+	lines, _ := footerLines(m)
+	require.Len(t, lines, 1)
+	require.Equal(t, "apply  exit", strings.TrimSpace(lines[0]))
+	for x, want := range map[int]string{1: key.Enter, 8: key.Esc} {
+		binding, ok := m.footerKeyAt(x, m.height-1)
+		require.True(t, ok)
+		require.Equal(t, want, binding)
+	}
+}
+
+func TestFilterFooterIgnoresStaleHitTargets(t *testing.T) {
+	m := numberedListTestModel(2)
+	m.width = 120
+	m.ensureScreen()
+	m.View()
+	frame := m.screen.root.Frame()
+	listEnter, ok := frame.Rect(bloom.ID(footerKeyPrefix + key.Enter))
+	require.True(t, ok)
+	m, _ = pressKey(t, m, tuiKeybindFilter)
+	_, ok = m.footerKeyAt(listEnter.Min.X, listEnter.Min.Y)
+	require.False(t, ok)
+
+	m.View()
+	apply, ok := m.screen.root.Frame().Rect(bloom.ID(filterKeyPrefix + key.Enter))
+	require.True(t, ok)
+	for _, cover := range []func(*tuiModel){
+		func(m *tuiModel) { m.help = &helpSheet{} },
+		func(m *tuiModel) { m.showOptions = true },
+		func(m *tuiModel) { m.presetMenu.open = true },
+		func(m *tuiModel) { m.confirmAction = tuiActionInfo },
+	} {
+		covered := m
+		cover(&covered)
+		_, ok = covered.footerKeyAt(apply.Min.X, apply.Min.Y)
+		require.False(t, ok)
+	}
+	m, _ = pressKey(t, m, key.Enter)
+	_, ok = m.footerKeyAt(apply.Min.X, apply.Min.Y)
+	require.False(t, ok)
+}
+
+func TestFilterStatusKeepsCursorVisible(t *testing.T) {
+	m := numberedListTestModel(40)
+	m.width, m.height = 80, 14
+	m.filterInput.Focus()
+	for range 30 {
+		m, _ = pressKey(t, m, key.Down)
+		require.Less(t, m.cursor, m.offset+m.listViewport())
+	}
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 90, Height: 14})
+	m, _ = pressKey(t, m, key.Down)
+	m, _ = updateModel(t, m, bloom.CopyMsg{Err: errors.New("clipboard unavailable")})
+	require.Less(t, m.cursor, m.offset+m.listViewport())
 }
 
 func TestHelpHintsDroppedForStatusAreNotButtons(t *testing.T) {

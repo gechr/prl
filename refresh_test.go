@@ -219,13 +219,13 @@ func TestRefreshKeepsCursorScreenLine(t *testing.T) {
 	m := approvalTestModel("", prs...)
 	m.cursor, m.offset = 12, 8
 	key := m.rowKeyAt(m.cursor)
-	line := m.cursorLinePosition() - m.offset
+	line := m.cursorLinePosition(m.listLines()) - m.offset
 	newPRs := append([]PullRequest{refreshTestPR(26)}, prs...)
 	newModel := approvalTestModel("", newPRs...)
 	m.replaceListItems(newModel.items)
 	m = m.mergeRefresh(newModel.rows)
 	require.Equal(t, key, m.rowKeyAt(m.cursor))
-	require.Equal(t, line, m.cursorLinePosition()-m.offset)
+	require.Equal(t, line, m.cursorLinePosition(m.listLines())-m.offset)
 	newPRs = append(newPRs[:m.cursor:m.cursor], newPRs[m.cursor+1:]...)
 	newModel = approvalTestModel("", newPRs...)
 	oldCursor := m.cursor
@@ -294,10 +294,10 @@ func TestFocusCatchupKeepsFooterQuiet(t *testing.T) {
 	m.lastRefreshAt = time.Now()
 	m.items[0].PR.statusFetchedAt = time.Now().Add(-2*time.Minute - time.Second)
 	m.rows[0].Item = m.items[0]
-	require.Empty(t, m.listStatus(m.listLines()))
+	require.Empty(t, m.listStatus(m.listLines(), m.listViewport()))
 	m.lastRefreshAt = time.Now().Add(-4*time.Minute - time.Second)
 	m.refreshing = true
-	require.Empty(t, m.listStatus(m.listLines()))
+	require.Empty(t, m.listStatus(m.listLines(), m.listViewport()))
 }
 
 func TestGraphQLQueriesPreserveConditionalResponses(t *testing.T) {

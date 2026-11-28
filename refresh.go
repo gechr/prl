@@ -32,7 +32,7 @@ func (p listRefreshPolicy) maxAge(pr PullRequest, status MergeStatus) time.Durat
 func (m tuiModel) viewportLines() []tuiListLine {
 	lines := m.listLines()
 	start := min(m.offset, len(lines))
-	end := min(start+m.listViewport(), len(lines))
+	end := min(start+m.listViewportFor(lines), len(lines))
 	return lines[start:end]
 }
 

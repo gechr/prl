@@ -145,7 +145,8 @@ func TestEmptyPanelKeepsFilterInputVisible(t *testing.T) {
 	h := newTUIHarness(t, m)
 	input := reel.Matches(regexp.MustCompile("(?m)^/[^\n]*nomatch"))
 	h.Key("/").Paste("nomatch").WaitFor(input).Assert("PR")
-	h.Resize(40, 8).Wait("esc clear filter").WaitFor(input)
+	h.Resize(40, 8).Wait("clear the filter").WaitFor(input)
+	h.Resize(40, 6).Wait("esc clear filter").WaitFor(input)
 	h.KeyEsc().Wait("❯ 1")
 }
 

@@ -113,9 +113,20 @@ func (m *tuiModel) applyListWheelScroll(delta int) {
 }
 
 func (m tuiModel) listViewport() int {
+	return m.listViewportFor(nil)
+}
+
+func (m tuiModel) listViewportFor(lines []tuiListLine) int {
+	if m.filterInput.Focused() {
+		if lines == nil {
+			lines = m.listLines()
+		}
+		_, viewport, _ := m.filterFooter(lines)
+		return viewport
+	}
 	//nolint:mnd // 1 for header + 1 for separator + help lines (variable).
 	h := 2 + m.helpLines(m.listHelpPairs())
-	if m.filterInput.Value() != "" || m.filterInput.Focused() {
+	if m.filterInput.Value() != "" {
 		h++
 	}
 	if m.height <= h {

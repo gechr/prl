@@ -8,15 +8,20 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
+	"github.com/gechr/primer/scrollbar"
 )
 
-const footerKeyPrefix = "footer-key/"
+const (
+	footerKeyPrefix = "footer-key/"
+	filterKeyPrefix = "filter-key/"
+)
 
 func (m tuiModel) footerRoot() *bloom.Root {
 	if reader := m.activeReviewViewport(); reader != nil {
 		return reader.root
 	}
-	if m.screen != nil && m.canOpenPresetMenu() && !m.presetMenu.open && !m.filterInput.Focused() {
+	if m.screen != nil && m.listScrollbarActive() &&
+		(m.filterInput.Focused() || m.canOpenPresetMenu(m.listSeparatorY())) {
 		return m.screen.root
 	}
 	return nil
@@ -44,25 +49,37 @@ func (m tuiModel) footerKeyAt(x, y int) (string, bool) {
 	if root == nil {
 		return "", false
 	}
-	binding, ok := strings.CutPrefix(string(hitID(root, x, y)), footerKeyPrefix)
+	prefix := footerKeyPrefix
+	if m.view == tuiViewList && m.filterInput.Focused() {
+		prefix = filterKeyPrefix
+	}
+	binding, ok := strings.CutPrefix(string(hitID(root, x, y)), prefix)
 	return binding, ok && m.footerKeyEnabled(binding)
+}
+
+func footerButton(text string, id bloom.ID, enabled bool) bloom.TextNode {
+	button := bloom.Text(text).NoWrap().ID(id)
+	if enabled {
+		button = button.HoverStyle(lg.NewStyle().Transform(func(text string) string {
+			return layout.PreserveBackground(text, hoverBG)
+		}))
+	}
+	return button
 }
 
 func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
 	renderer := m.helpBar(nil).Renderer
 	renderer.Prefix = new("")
 	method := m.reviewWidthMethod()
-	hover := lg.NewStyle().Transform(func(text string) string {
-		return layout.PreserveBackground(text, hoverBG)
-	})
 	enabled := m.footerRoot() != nil
 	buttons := make([]bloom.Child, 0, len(hints))
 	for i, hint := range hints {
 		text := renderer.Render([]key.Hint{hint})
-		button := bloom.Text(text).NoWrap().ID(bloom.ID(footerKeyPrefix + hint.Key))
-		if enabled && m.footerKeyEnabled(hint.Key) {
-			button = button.HoverStyle(hover)
-		}
+		button := footerButton(
+			text,
+			bloom.ID(footerKeyPrefix+hint.Key),
+			enabled && m.footerKeyEnabled(hint.Key),
+		)
 		var item bloom.Child = button
 		if i == 0 {
 			item = bloom.Row(bloom.Fixed(1, bloom.Space()), button)
@@ -91,4 +108,85 @@ func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
 	flow = bloom.Wrap(buttons...).Gap(len(helpGap), 0)
 	last := bloom.Layer(bloom.Text(status).NoWrap()).Anchor(bloom.Start, bloom.End).Offset(start, 0)
 	return bloom.Column(bloom.Fixed(height, bloom.Overlay(flow, last)))
+}
+
+// Keep the syntax divider on a single line. When the hints wrap, put the
+// actions first so a short window can clip the legends without hiding them.
+func (m tuiModel) filterHints(maxRows int) (bloom.WrapNode, bloom.WrapNode, int) {
+	method := m.reviewWidthMethod()
+	gap := len(helpGap)
+	renderer := m.helpBar(nil).Renderer
+	renderer.Prefix = new("")
+	render := func(binding, desc string) string {
+		return renderer.Render([]key.Hint{{Key: binding, Desc: desc}})
+	}
+	enabled := m.listScrollbarActive()
+	applyText, exitText := render(key.Enter, "apply"), render(key.Esc, "exit")
+	if m.width < method.StringWidth(applyText) ||
+		(maxRows == 1 && m.width < method.StringWidth(applyText+exitText)+gap) {
+		applyText = renderer.Styles.Key.Render("apply")
+		exitText = renderer.Styles.Key.Render("exit")
+	}
+	apply := footerButton(applyText, filterKeyPrefix+key.Enter, enabled)
+	exit := footerButton(exitText, filterKeyPrefix+key.Esc, enabled)
+	navigate := bloom.Text(render(key.ArrowsVertical, "prev/next")).NoWrap()
+	renderer.Styles = key.Styles{Key: styleHeading.Bold(true), Text: styleFilter}
+	start := bloom.Text(render("^", "start")).NoWrap()
+	end := bloom.Text(render("$", "end")).NoWrap()
+	negate := bloom.Text(render("!", "negate")).NoWrap()
+
+	syntax := bloom.Row(bloom.Fixed(1, bloom.Space()), bloom.Wrap(start, end, negate).Gap(gap, 0))
+	pipe := bloom.Text(m.styles.separator.Render("│")).NoWrap()
+	actions := bloom.Wrap(apply, exit).Gap(gap, 0)
+	hints := bloom.Wrap(syntax, pipe, navigate, apply, exit).Gap(gap, 0)
+	if bloom.Measure(0, 0, hints).W <= m.width {
+		return hints, actions, bloom.Measure(0, 0, syntax).W + gap
+	}
+	return bloom.Wrap(apply, exit, navigate, start, end, negate).Gap(gap, 0), actions, -1
+}
+
+func (m tuiModel) filterFooter(lines []tuiListLine) (bloom.Child, int, int) {
+	room := m.height - m.listHeaderAndFilterRows() - 1 // Leave room for the separator.
+	maxRows := max(1, room-1)                          // Keep one PR visible while editing.
+	hints, actions, junction := m.filterHints(maxRows)
+	size := bloom.Measure(m.width, 0, hints)
+	rows := min(size.H, maxRows)
+	viewport := max(1, room-rows)
+	status := m.listStatus(lines, viewport)
+	if status == "" || m.width <= 0 {
+		return hints, viewport, junction
+	}
+
+	method := m.reviewWidthMethod()
+	usable := max(1, m.width-1)
+	free := usable - size.W - len(helpGap)
+	statusWidth := method.StringWidth(status)
+	if m.flash.Msg == "" {
+		// Keep the viewport height stable as the range gains digits during a scroll.
+		total := lines[len(lines)-1].group
+		statusWidth = len(scrollbar.Position(total-1, total, total))
+	}
+	if statusWidth > free {
+		actionSize := bloom.Measure(m.width, 0, actions)
+		if maxRows > actionSize.H {
+			// The range includes only the PR rows above the final footer.
+			rows = min(rows, maxRows-1)
+			viewport = max(1, room-rows-1)
+			status = method.Truncate(m.listStatus(lines, viewport), usable, valueEllipsis)
+			last := bloom.Row(
+				bloom.Space(),
+				bloom.Text(status).NoWrap(),
+				bloom.Fixed(1, bloom.Space()),
+			)
+			return bloom.Column(bloom.Fixed(rows, hints), bloom.Fixed(1, last)), viewport, junction
+		}
+		hints, junction = actions, -1
+		free = usable - actionSize.W - len(helpGap)
+		if free <= 0 {
+			return hints, viewport, junction
+		}
+		status = method.Truncate(status, free, valueEllipsis)
+	}
+	last := bloom.Layer(bloom.Text(status).NoWrap()).Anchor(bloom.End, bloom.End).Offset(-1, 0)
+	return bloom.Overlay(hints, last), viewport, junction
 }

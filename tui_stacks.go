@@ -135,8 +135,8 @@ func (m tuiModel) listLines() []tuiListLine {
 	return lines
 }
 
-func (m tuiModel) cursorLinePosition() int {
-	for pos, line := range m.listLines() {
+func (m tuiModel) cursorLinePosition(lines []tuiListLine) int {
+	for pos, line := range lines {
 		if line.row == m.cursor {
 			return pos
 		}
