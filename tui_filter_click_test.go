@@ -116,23 +116,35 @@ func TestOptionsOverlayIgnoresOtherClicks(t *testing.T) {
 
 func TestOptionsOverlayClickedChoiceAppliesOrCancels(t *testing.T) {
 	h := newTUIHarness(t, filterClickTestModel())
-	filterChoiceButton(t, h, filterRowCI, ciStatusFailure).LeftClick().Key("enter").
-		WaitNot("enter apply").Assert("ci:fail")
+	filterChoiceButton(t, h, filterRowCI, ciStatusFailure).LeftClick()
+	h.Locate(reel.Contains("enter apply")).LeftClick().WaitNot("enter apply").Assert("ci:fail")
 	st, err := loadTUIState()
 	require.NoError(t, err)
 	require.Equal(t, ciStatusFailure, st.Filters.CI)
 
 	h.Key("O").Wait("enter apply")
-	filterChoiceButton(
-		t,
-		h,
-		filterRowState,
-		valueClosed,
-	).LeftClick().
-		KeyEsc().
-		WaitNot("enter apply")
+	filterChoiceButton(t, h, filterRowState, valueClosed).LeftClick()
+	h.Locate(reel.Contains("esc cancel")).LeftClick().WaitNot("enter apply")
 	h.Key("O").Wait("enter apply")
 	waitFilterChoice(t, h, filterRowState, valueOpen)
+}
+
+func TestOptionsFooterCyclesAndResetsAfterWrapping(t *testing.T) {
+	m := filterClickTestModel()
+	h := newTUIHarness(t, m)
+	filterChoiceButton(t, h, filterRowBots, valueHide).LeftClick()
+	waitFilterRow(h, filterRowBots)
+	h.Resize(42, 32).Wait("⌫ reset")
+	cycle := h.Locate(reel.Contains("space cycle"))
+	base := cellStyle(h, cycle)
+	cycle.Hover()
+	waitCellStyle(t, h, cycle, func(s reel.CellStyle) bool { return s.Bg != base.Bg })
+	h.RightClick(cycle.X, cycle.Y)
+	waitFilterChoice(t, h, filterRowBots, valueHide)
+	cycle.LeftClick()
+	waitFilterChoice(t, h, filterRowBots, tuiHelpShow)
+	h.Locate(reel.Contains("⌫ reset")).LeftClick()
+	waitFilterChoice(t, h, filterRowBots, valueHide)
 }
 
 func TestOptionTagsUseDotDividers(t *testing.T) {
@@ -185,13 +197,13 @@ func TestOptionsOverlayCoversTagsUnderneath(t *testing.T) {
 				continue
 			}
 			covered++
+			m.View()
 			after, _ := updateModel(t, m, tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-			require.True(
+			require.Same(
 				t,
-				after.showOptions,
-				"height=%d x=%d hits the dialog, not the tags",
-				height,
-				x,
+				m.optionsPicker,
+				after.optionsPicker,
+				"underlying tags would reopen the picker",
 			)
 		}
 	}

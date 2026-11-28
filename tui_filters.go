@@ -57,13 +57,6 @@ func (m tuiModel) newFilterPicker() *filterPicker {
 			Selected:  styleTitle.Bold(true),
 		},
 	)
-	p.Hints = []picker.HelpHint{
-		{Key: key.ArrowsLeftRight, Desc: "select"},
-		{Key: "space", Desc: "cycle"},
-		{Key: "⌫", Desc: "reset"},
-		{Key: "enter", Desc: "apply"},
-		{Key: "esc", Desc: "cancel"},
-	}
 	return &filterPicker{Model: p, follow: true}
 }
 
@@ -389,12 +382,22 @@ func (m *tuiModel) openOptions() {
 	m.optionsPicker = m.newFilterPicker()
 }
 
-func (m tuiModel) clickFilterBackdrop(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	if m.screen != nil && msg.Button == tea.MouseLeft {
-		rect, ok := m.screen.root.Frame().Rect(optionsModalID)
-		if ok && !image.Pt(msg.X, msg.Y).In(rect) {
-			return m.applyFilterOptions()
-		}
+func (m tuiModel) clickFilterOptions(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if m.screen == nil || msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	rect, ok := m.screen.root.Frame().Rect(optionsModalID)
+	if !ok {
+		return m, nil
+	}
+	if !image.Pt(msg.X, msg.Y).In(rect) {
+		return m.applyFilterOptions()
+	}
+	if binding, found := strings.CutPrefix(
+		string(hitID(m.screen.root, msg.X, msg.Y)),
+		optionKeyPrefix,
+	); found {
+		return m.updateOptionsOverlay(key.Replay(binding))
 	}
 	return m, nil
 }
@@ -699,6 +702,7 @@ func matchesReviewDecision(pr PullRequest, review string) bool {
 const (
 	activeFilterRowID bloom.ID = "active-filter-row"
 	activeChoiceID    bloom.ID = "active-filter-choice"
+	optionKeyPrefix            = "option-key/"
 )
 
 func (m tuiModel) filterRows(width int) bloom.Child {
@@ -762,15 +766,22 @@ func (m tuiModel) filterLayer() bloom.LayerNode {
 	}
 	availableWidth := max(1, m.width-box.GetHorizontalFrameSize())
 	height := max(1, m.height-box.GetVerticalFrameSize())
-	var hints []bloom.Child
-	for _, hint := range p.Hints {
-		hints = append(
-			hints,
-			bloom.Text(p.Styles.HelpKey.Render(hint.Key)+p.Styles.HelpText.Render(" "+hint.Desc)),
-		)
+	label := func(k, desc string) string {
+		return p.Styles.HelpKey.Render(k) + p.Styles.HelpText.Render(" "+desc)
+	}
+	button := func(binding, desc string) bloom.Child {
+		k := binding
+		if k == key.Backspace {
+			k = "⌫"
+		}
+		return footerButton(label(k, desc), bloom.ID(optionKeyPrefix+binding), true)
 	}
 	const hintGap = 2
-	footer := bloom.Wrap(hints...).Gap(hintGap, 0)
+	footer := bloom.Wrap(
+		bloom.Text(label(key.ArrowsLeftRight, "select")),
+		button(key.Space, "cycle"), button(key.Backspace, "reset"),
+		button(key.Enter, "apply"), button(key.Esc, "cancel"),
+	).Gap(hintGap, 0)
 	body := m.filterRows(availableWidth)
 	naturalWidth := bloom.Measure(0, 0, body).W
 	footerWidth := bloom.Measure(0, 0, footer).W

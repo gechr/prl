@@ -1158,7 +1158,7 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.showOptions {
-			return m.clickFilterBackdrop(msg)
+			return m.clickFilterOptions(msg)
 		}
 		if m.confirmUsesDialog() {
 			return m.updateConfirmDialog(msg)
