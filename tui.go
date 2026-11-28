@@ -1942,11 +1942,13 @@ func (m tuiModel) viewList() tea.View {
 	indexWidth := m.listIndexWidth()
 	indexPad := strings.Repeat(" ", indexWidth)
 	indexGap := m.indexGap()
-	rowNode := func(line string) bloom.TextNode {
-		if rowWidth < m.width {
-			line = m.reviewWidthMethod().Truncate(line, rowWidth, valueEllipsis)
+	method := m.reviewWidthMethod()
+	rowText := func(line string, stackHeader bool) string {
+		line = layout.ExpandTabs(line)
+		if stackHeader || rowWidth < m.width {
+			return method.Truncate(line, rowWidth, valueEllipsis)
 		}
-		return bloom.Text(layout.ExpandTabs(line)).NoWrap()
+		return line
 	}
 
 	var rows []bloom.Child
@@ -1956,72 +1958,52 @@ func (m tuiModel) viewList() tea.View {
 			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
 			prefix = frame + " " + indexPad + indexGap
 		}
-		rows = append(rows, bloom.Fixed(1, rowNode(prefix+m.header)))
+		rows = append(rows, bloom.Fixed(1, bloom.Text(rowText(prefix+m.header, false)).NoWrap()))
 	}
 
-	rowHover := lg.NewStyle().Transform(func(line string) string {
-		return layout.PreserveBackgroundWidth(line, hoverBG, rowWidth)
+	rowBackground := func(line, bg string) string {
+		padding := strings.Repeat(" ", max(0, rowWidth-method.StringWidth(line)))
+		return layout.PreserveBackground(line+padding, bg)
+	}
+	rowHover := lg.NewStyle().Inline(true).Transform(func(line string) string {
+		return rowBackground(line, hoverBG)
 	})
 	listHeight := viewport + m.listHeaderAndFilterRows()
 	hoverEnabled := m.canOpenPresetMenu(listHeight) && !m.presetMenu.open
-	listRow := func(line string, idx, pos int) bloom.Child {
-		node := rowNode(line)
+	var body bloom.Child = bloom.List(len(visible), func(pos int) bloom.Child {
+		entry := visible[pos]
+		idx := entry.row
+		selected := m.selected[m.rowKeyAt(idx)]
+		index := m.renderTuiIndexWidth(entry.label(), selected, indexWidth)
+		stackHeader := entry.header != ""
+		var line string
+		if stackHeader {
+			line = m.stackHeaderLine(entry, index+indexGap)
+		} else {
+			tree := entry.tree
+			if m.p != nil && m.p.theme != nil && m.p.theme.MarkdownText != nil {
+				tree = m.p.theme.MarkdownText.Render(tree)
+			}
+			prefix := m.rowGutter(idx)
+			if idx == m.cursor {
+				prefix = m.rowCursor(idx)
+			}
+			line = prefix + index + indexGap + tree + m.rows[idx].Display
+		}
+		line = rowText(line, stackHeader)
+		if idx == m.cursor && (stackHeader || len(visible) > 1) {
+			bg := cursorLineBG
+			if selected && !stackHeader {
+				bg = cursorLineSelectedBG
+			}
+			line = rowBackground(line, bg)
+		}
+		node := bloom.Text(line).NoWrap()
 		if hoverEnabled && idx >= 0 && idx != m.cursor {
 			// Hover belongs to the screen row when scrolling changes the PR underneath it.
 			node = node.ID(bloom.ID("pr-row/" + strconv.Itoa(pos-m.offset))).HoverStyle(rowHover)
 		}
 		return node
-	}
-	var body bloom.Child = bloom.List(len(visible), func(pos int) bloom.Child {
-		entry := visible[pos]
-		idx := entry.row
-		index := m.renderTuiIndexWidth(entry.label(), m.selected[m.rowKeyAt(idx)], indexWidth)
-		if entry.header != "" {
-			folded := m.collapsedStacks[entry.stackKey]
-			arrowStyle := styleStackArrow
-			if folded {
-				arrowStyle = styleHeading
-			}
-			headerStyle := styleStackHeader.Inherit(arrowStyle).Italic(folded)
-			line := tuiNonCursorPrefix + index + indexGap + arrowStyle.Render(
-				entry.tree,
-			) + headerStyle.Render(
-				entry.header,
-			)
-			if rowWidth > 0 {
-				line = xansi.Truncate(line, rowWidth, valueEllipsis)
-			}
-			if idx == m.cursor {
-				line = m.styles.cursor.Render(
-					tuiCursorPrefix,
-				) + strings.TrimPrefix(
-					line,
-					tuiNonCursorPrefix,
-				)
-				line = layout.PreserveBackgroundWidth(line, cursorLineBG, rowWidth)
-			}
-			return listRow(line, idx, pos)
-		}
-		tree := entry.tree
-		if m.p != nil && m.p.theme != nil && m.p.theme.MarkdownText != nil {
-			tree = m.p.theme.MarkdownText.Render(tree)
-		}
-		display := index + indexGap + tree + m.rows[idx].Display
-		if idx != m.cursor {
-			return listRow(m.rowGutter(idx)+display, idx, pos)
-		}
-		line := m.rowCursor(idx) + display
-		// Inject background color throughout the line so it persists
-		// through existing ANSI codes in the display string.
-		// Skip highlight when there's only one visible result.
-		if len(visible) > 1 {
-			bg := cursorLineBG
-			if m.selected[m.rowKeyAt(idx)] {
-				bg = cursorLineSelectedBG
-			}
-			line = layout.PreserveBackgroundWidth(line, bg, rowWidth)
-		}
-		return rowNode(line)
 	}).Offset(m.offset).ID(prListID)
 	if len(visible) > viewport {
 		body = bloom.Row(

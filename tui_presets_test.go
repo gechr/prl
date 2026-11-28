@@ -481,6 +481,69 @@ func TestRowHoverFollowsTheRowUnderThePointer(t *testing.T) {
 	require.Equal(t, hover, cellStyle(h, row).Bg)
 }
 
+func TestRowHoverPreservesWideTextAndLinks(t *testing.T) {
+	for _, grapheme := range []bool{false, true} {
+		for _, count := range []int{2, 40} { // With and without the list scrollbar.
+			m := numberedListTestModel(count)
+			m.width, m.height = 50, 25
+			if grapheme {
+				m.p = m.p.withGraphemeWidth()
+			}
+			m.rows[1].Display = ansi.SetHyperlink("https://example.org/change") +
+				strings.Repeat("\u2600\ufe0f", 21) + " trailing text close to the edge" +
+				ansi.SetHyperlink("")
+			m.ensureScreen()
+			method := m.reviewWidthMethod()
+			before := canvas.Parse(m.View().Content, method)
+			row, ok := m.screen.root.Frame().Rect("pr-row/1")
+			require.True(t, ok)
+			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: row.Min.X, Y: row.Min.Y})
+			after := canvas.Parse(m.View().Content, method)
+			for x := range m.width {
+				a, b := before.CellAt(x, row.Min.Y), after.CellAt(x, row.Min.Y)
+				require.Equal(t, a.Content, b.Content, "cell %d", x)
+				require.Equal(t, a.Link, b.Link, "cell %d", x)
+				if x < row.Max.X && b.Width > 0 {
+					require.NotEqual(t, a.Style.Bg, b.Style.Bg, "cell %d", x)
+				}
+			}
+		}
+	}
+}
+
+func TestJoinedEmojiRowsFillTheirHighlight(t *testing.T) {
+	m := numberedListTestModel(40)
+	m.p = m.p.withGraphemeWidth()
+	m.width, m.height = 50, 25
+	m.rows[0].Display, m.rows[1].Display = "A 👨‍👩‍👧 change", "Another 👨‍👩‍👧 change"
+	m.ensureScreen()
+	m.View()
+	row, ok := m.screen.root.Frame().Rect("pr-row/1")
+	require.True(t, ok)
+	m, _ = updateModel(t, m, tea.MouseMotionMsg{X: row.Min.X, Y: row.Min.Y})
+	cells := canvas.Parse(m.View().Content, m.reviewWidthMethod())
+	for _, y := range []int{row.Min.Y - 1, row.Min.Y} { // Cursor row and hovered row.
+		bg := cells.CellAt(row.Min.X, y).Style.Bg
+		require.NotNil(t, bg)
+		require.Equal(t, bg, cells.CellAt(row.Max.X-1, y).Style.Bg)
+		require.NotEqual(t, bg, cells.CellAt(row.Max.X, y).Style.Bg)
+	}
+}
+
+func TestListRowTruncatesAfterExpandingTabs(t *testing.T) {
+	m := numberedListTestModel(40)
+	m.width, m.height = 40, 25
+	title := "A\tB\t" + strings.Repeat("x", m.width)
+	m.rows[0].Display, m.rows[1].Display = title, title
+	m.ensureScreen()
+	cells := canvas.Parse(m.View().Content, m.reviewWidthMethod())
+	row, ok := m.screen.root.Frame().Rect("pr-row/1")
+	require.True(t, ok)
+	for _, y := range []int{row.Min.Y - 1, row.Min.Y} {
+		require.Equal(t, valueEllipsis, cells.CellAt(row.Max.X-1, y).Content)
+	}
+}
+
 func TestClicksBelowTheListLeaveTheCursor(t *testing.T) {
 	prs := make([]PullRequest, 30)
 	for i := range prs {

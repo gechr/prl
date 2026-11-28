@@ -25,6 +25,20 @@ func (l tuiListLine) label() string {
 	return strconv.Itoa(l.group) + l.suffix
 }
 
+func (m tuiModel) stackHeaderLine(entry tuiListLine, index string) string {
+	folded := m.collapsedStacks[entry.stackKey]
+	arrow := styleStackArrow
+	if folded {
+		arrow = styleHeading
+	}
+	header := styleStackHeader.Inherit(arrow).Italic(folded)
+	prefix := tuiNonCursorPrefix
+	if entry.row == m.cursor {
+		prefix = m.styles.cursor.Render(tuiCursorPrefix)
+	}
+	return prefix + index + arrow.Render(entry.tree) + header.Render(entry.header)
+}
+
 func (m tuiModel) stacksEnabled() bool {
 	return m.cfg != nil && m.cfg.TUI.Stacks.Enabled
 }
