@@ -22,7 +22,6 @@ import (
 	"github.com/gechr/clog"
 	"github.com/gechr/primer/filter"
 	"github.com/gechr/primer/flash"
-	"github.com/gechr/primer/helpbar"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
 	"github.com/gechr/primer/render"
@@ -3044,26 +3043,6 @@ func (m tuiModel) listStatus(lines []tuiListLine, viewport int) string {
 	end := start + viewport - 1
 	position := scrollbar.Position(lines[start].group-1, lines[end].group, lines[total-1].group)
 	return m.styles.statusOK.Render(position)
-}
-
-func (m tuiModel) helpBar(pairs []key.Hint) helpbar.Model {
-	return helpbar.Model{
-		Hints: pairs,
-		Renderer: key.Renderer{
-			Styles: key.Styles{
-				Key:  m.styles.helpKey,
-				Text: m.styles.helpText,
-			},
-			Gap:    helpGap,
-			Width:  m.width,
-			Inline: true,
-		},
-	}
-}
-
-// helpLines returns the number of lines the help bar occupies at the current width.
-func (m tuiModel) helpLines(pairs []key.Hint) int {
-	return m.helpBar(pairs).Lines()
 }
 
 // hasFilteredRows reports whether the query returned any loaded PRs.

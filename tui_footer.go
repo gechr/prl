@@ -6,14 +6,16 @@ import (
 
 	"bloomfx.dev/bloom"
 	lg "charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/gechr/primer/key"
 	"github.com/gechr/primer/layout"
 	"github.com/gechr/primer/scrollbar"
 )
 
 const (
-	footerKeyPrefix = "footer-key/"
-	filterKeyPrefix = "filter-key/"
+	footerKeyPrefix          = "footer-key/"
+	filterKeyPrefix          = "filter-key/"
+	shortcutBarID   bloom.ID = "shortcut-bar"
 )
 
 func (m tuiModel) footerRoot() *bloom.Root {
@@ -69,16 +71,26 @@ func footerButton(text string, id bloom.ID, enabled bool) bloom.TextNode {
 	return bloom.Text(text).NoWrap().ID(id).HoverStyle(style)
 }
 
-func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
-	renderer := m.helpBar(nil).Renderer
-	renderer.Prefix = new("")
-	method := m.reviewWidthMethod()
-	enabled := m.footerRoot() != nil
-	buttons := make([]bloom.Child, 0, len(hints))
-	for i, hint := range hints {
-		text := renderer.Render([]key.Hint{hint})
+func (m tuiModel) shortcutRenderer() key.Renderer {
+	return key.Renderer{
+		Styles: key.Styles{Key: m.styles.helpKey, Text: m.styles.helpText},
+		Inline: true, Prefix: new(""),
+	}
+}
+
+type shortcutLayout struct {
+	width, height int
+	method        ansi.Method
+	hints         []key.Hint
+	labels        []string
+	frame         *bloom.Frame
+}
+
+func (l *shortcutLayout) buttons(m tuiModel, enabled bool) []bloom.Child {
+	buttons := make([]bloom.Child, 0, len(l.hints))
+	for i, hint := range l.hints {
 		button := footerButton(
-			text,
+			l.labels[i],
 			bloom.ID(footerKeyPrefix+hint.Key),
 			enabled && m.footerKeyEnabled(hint.Key),
 		)
@@ -88,7 +100,52 @@ func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
 		}
 		buttons = append(buttons, item)
 	}
-	flow := bloom.Wrap(buttons...).Gap(len(helpGap), 0)
+	return buttons
+}
+
+func shortcutFlow(buttons []bloom.Child) bloom.WrapNode {
+	return bloom.Wrap(buttons...).Gap(len(helpGap), 0)
+}
+
+// Use one natural-height frame for reserving viewport rows and fitting status.
+// Only a resize, a width-mode change or different shortcuts needs another layout.
+func (m tuiModel) shortcutLayout(hints []key.Hint) *shortcutLayout {
+	method := m.reviewWidthMethod()
+	if m.screen != nil {
+		for i, l := range m.screen.shortcuts {
+			if l != nil && l.width == m.width && l.method == method &&
+				slices.Equal(l.hints, hints) {
+				m.screen.shortcuts[0], m.screen.shortcuts[i] = l, m.screen.shortcuts[0]
+				return l
+			}
+		}
+	}
+	l := &shortcutLayout{width: m.width, height: 1, method: method, hints: slices.Clone(hints)}
+	renderer := m.shortcutRenderer()
+	for _, hint := range hints {
+		l.labels = append(l.labels, renderer.Render([]key.Hint{hint}))
+	}
+	if m.width > 0 {
+		root := bloom.New(bloom.WithWidthMethod(method))
+		root.Render(m.width, 0, shortcutFlow(l.buttons(m, false)).ID(shortcutBarID))
+		l.frame = root.Frame()
+		rect, _ := l.frame.Rect(shortcutBarID)
+		l.height = max(1, rect.Dy())
+	}
+	if m.screen != nil {
+		m.screen.shortcuts[1], m.screen.shortcuts[0] = m.screen.shortcuts[0], l
+	}
+	return l
+}
+
+func (m tuiModel) helpLines(hints []key.Hint) int {
+	return m.shortcutLayout(hints).height
+}
+
+func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
+	l := m.shortcutLayout(hints)
+	buttons := l.buttons(m, m.footerRoot() != nil)
+	flow := shortcutFlow(buttons)
 	if status == "" || m.width <= 0 {
 		return flow
 	}
@@ -96,20 +153,18 @@ func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
 	// The status owns the right end of the last line. Drop whole shortcuts
 	// that would touch it, keeping the other lines and their hit targets.
 	usable := max(1, m.width-1)
-	status = method.Truncate(status, usable, valueEllipsis)
-	start := usable - method.StringWidth(status)
-	height := bloom.Measure(m.width, 0, flow).H
-	frame := bloom.Solve(m.width, height, flow)
+	status = l.method.Truncate(status, usable, valueEllipsis)
+	start := usable - l.method.StringWidth(status)
 	for i := range slices.Backward(buttons) {
-		rect, ok := frame.Rect(bloom.ID(footerKeyPrefix + hints[i].Key))
-		if ok && (rect.Min.Y < height-1 || rect.Max.X < start) {
+		rect, ok := l.frame.Rect(bloom.ID(footerKeyPrefix + hints[i].Key))
+		if ok && (rect.Min.Y < l.height-1 || rect.Max.X < start) {
 			break
 		}
 		buttons = buttons[:i]
 	}
-	flow = bloom.Wrap(buttons...).Gap(len(helpGap), 0)
+	flow = shortcutFlow(buttons)
 	last := bloom.Layer(bloom.Text(status).NoWrap()).Anchor(bloom.Start, bloom.End).Offset(start, 0)
-	return bloom.Column(bloom.Fixed(height, bloom.Overlay(flow, last)))
+	return bloom.Column(bloom.Fixed(l.height, bloom.Overlay(flow, last)))
 }
 
 // Keep the syntax divider on a single line. When the hints wrap, put the
@@ -117,8 +172,7 @@ func (m tuiModel) shortcutFooter(hints []key.Hint, status string) bloom.Child {
 func (m tuiModel) filterHints(maxRows int) (bloom.WrapNode, bloom.WrapNode, int) {
 	method := m.reviewWidthMethod()
 	gap := len(helpGap)
-	renderer := m.helpBar(nil).Renderer
-	renderer.Prefix = new("")
+	renderer := m.shortcutRenderer()
 	render := func(binding, desc string) string {
 		return renderer.Render([]key.Hint{{Key: binding, Desc: desc}})
 	}

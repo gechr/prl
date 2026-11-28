@@ -191,17 +191,53 @@ func TestHelpHintsDroppedForStatusAreNotButtons(t *testing.T) {
 
 // helpHintText is the plain "key desc" text the help bar draws for hint.
 func helpHintText(m tuiModel, hint key.Hint) string {
-	return strings.TrimPrefix(ansi.Strip(m.helpBar([]key.Hint{hint}).Render()), " ")
+	return ansi.Strip(m.shortcutRenderer().Render([]key.Hint{hint}))
+}
+
+func TestShortcutLayoutTracksWidthModeAndLabels(t *testing.T) {
+	m := listTUIModel(approvalTestPR(1))
+	m.ensureScreen()
+	hints := []key.Hint{{Key: "x", Desc: "\u2600\ufe0f"}, {Key: "y", Desc: "go"}}
+	m.width = ansi.WcWidth.StringWidth(" x \u2600\ufe0f" + helpGap + "y go")
+	require.Equal(t, 1, m.helpLines(hints))
+	m.p = m.p.withGraphemeWidth()
+	require.Equal(t, 2, m.helpLines(hints))
+	m.width++
+	require.Equal(t, 1, m.helpLines(hints))
+	hints[1].Desc = "continue"
+	require.Equal(t, 2, m.helpLines(hints))
+	root := bloom.New(bloom.WithWidthMethod(m.reviewWidthMethod()))
+	root.Render(m.width, 2, m.shortcutFooter(hints, ""))
+	visible, ok := root.Frame().Rect(footerKeyPrefix + "y")
+	require.True(t, ok)
+	require.Equal(t, m.helpLines(hints)-1, visible.Min.Y)
+}
+
+func TestReviewFooterSurvivesListSubscriptionUpdates(t *testing.T) {
+	for _, view := range []tuiView{tuiViewDiff, tuiViewDetail} {
+		m := actionViewTestModel(view, approvalTestPR(1))
+		m.ensureScreen()
+		m.eventStreams = newEventStreams(true, nil)
+		hints := m.diffHelpPairs()
+		if view == tuiViewDetail {
+			hints = m.detailHelpPairs()
+		}
+		review := m.shortcutLayout(hints)
+		for range 2 {
+			m, _ = updateModel(t, m, tea.MouseMotionMsg{X: 1, Y: 1})
+			m.View()
+			require.Same(t, review, m.shortcutLayout(hints))
+		}
+	}
 }
 
 // Status text that happens to start where a dropped hint sat must not act as
 // that hint, even when it starts with the hint's key.
 func TestHelpStatusCannotImpersonateDroppedHint(t *testing.T) {
-	m := numberedListTestModel(30)
+	m := numberedListTestModel(3)
 	m.width, m.height = 80, 20
-	plain := strings.Split(ansi.Strip(m.helpBar(m.listHelpPairs()).Render()), nl)
-	last := plain[len(plain)-1]
-	before, _, ok := strings.Cut(last, tuiHelpQuit)
+	lines, _ := footerLines(m)
+	before, _, ok := strings.Cut(lines[len(lines)-1], tuiHelpQuit)
 	require.True(t, ok, "quit is the last hint")
 	x := ansi.StringWidth(before)
 	m.flash.Msg = "q" + strings.Repeat("x", m.width-2-x)

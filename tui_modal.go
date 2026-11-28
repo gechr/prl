@@ -33,7 +33,8 @@ type tuiScreen struct {
 	root       *bloom.Root
 	fg, bg     color.Color
 	pointer    scrollPointer
-	listOffset int // set synchronously by the list scrollbar during Update
+	listOffset int                // set synchronously by the list scrollbar during Update
+	shortcuts  [2]*shortcutLayout // Review and underlying list both need their viewport geometry.
 
 	focus  bloom.Focus
 	dialog *confirmDialog
