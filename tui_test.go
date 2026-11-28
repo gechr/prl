@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -295,6 +296,73 @@ func TestRerenderShowsEstimatedHeaderWithoutRows(t *testing.T) {
 		ansi.Strip(header),
 	)
 	require.GreaterOrEqual(t, colWidths[titleIdx], columnWidthEstimate[colTitle])
+}
+
+func TestHeaderSortUsesDisplayedColumns(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	m := numberedListTestModel(48)
+	m.tty = true
+	m.cli.Columns.Values = []string{colTitle, colRef, colNumber}
+	for i := range m.items {
+		m.items[i].Title = strings.Repeat("x", 80)
+	}
+	m.applyWindowSize(52, 20)
+	m.ensureScreen()
+	m.View()
+	frame := m.screen.root.Frame()
+	body, ok := frame.Rect(prListID)
+	require.True(t, ok)
+	require.Less(t, body.Max.X, m.width)
+	ref, ok := frame.Rect(sortHeaderID(slices.Index(m.sortColumns, colRef), colRef))
+	require.True(t, ok)
+	click := tea.MouseClickMsg{X: body.Max.X, Y: 0, Button: tea.MouseLeft}
+	m, _ = updateModel(t, m, click)
+	require.Empty(t, m.sortColumn)
+
+	// The resize has arrived, but the user can still see the narrow header.
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 130, Height: 20})
+	click.X = ref.Min.X
+	m, _ = updateModel(t, m, click)
+	require.Equal(t, colRef, m.sortColumn)
+	m.View()
+	require.Equal(
+		t,
+		sortHeaderID(slices.Index(m.sortColumns, colTitle), colTitle),
+		hitID(m.screen.root, click.X, click.Y),
+	)
+	m, _ = updateModel(t, m, click)
+	require.Equal(t, colTitle, m.sortColumn)
+
+	m.applyWindowSize(180, 20)
+	m.View()
+	last, ok := m.screen.root.Frame().
+		Rect(sortHeaderID(slices.Index(m.sortColumns, colNumber), colNumber))
+	require.True(t, ok)
+	click.X = last.Min.X + m.colWidths[len(m.colWidths)-1]
+	require.Less(t, click.X, m.width)
+	m, _ = updateModel(t, m, click)
+	require.Equal(t, colTitle, m.sortColumn)
+}
+
+func TestHeaderSortWithRepeatedColumn(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	m := numberedListTestModel(5)
+	m.tty = true
+	m.cli.Columns.Values = []string{colTitle, colTitle}
+	m.applyWindowSize(100, 20)
+	m.ensureScreen()
+	for i := range 2 {
+		m.View()
+		rect, ok := m.screen.root.Frame().Rect(sortHeaderID(i, colTitle))
+		require.True(t, ok)
+		m, _ = updateModel(
+			t,
+			m,
+			tea.MouseClickMsg{X: rect.Min.X, Y: rect.Min.Y, Button: tea.MouseLeft},
+		)
+		require.Equal(t, colTitle, m.sortColumn)
+		require.Equal(t, i == 0, m.sortAsc)
+	}
 }
 
 func TestRefreshResultClearsRowsButKeepsHeader(t *testing.T) {

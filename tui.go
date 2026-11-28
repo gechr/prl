@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"image"
 	"image/color"
 	"math"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"github.com/gechr/primer/table"
 	xansi "github.com/gechr/x/ansi"
 	"github.com/gechr/x/human"
+	xslices "github.com/gechr/x/slices"
 	xterminal "github.com/gechr/x/terminal"
 )
 
@@ -437,8 +439,9 @@ type tuiModel struct {
 	items                []PRRowModel // canonical data for rerender on resize/refresh
 	rows                 []TableRow   // current rendered order; row.Item is the action target
 	header               string
-	colWidths            []int // visible column widths for header click hit-testing
-	stackSuffixWidth     int   // measured with the table, including filtered and folded rows
+	colWidths            []int // widths and names of the rendered table columns
+	sortColumns          []string
+	stackSuffixWidth     int // measured with the table, including filtered and folded rows
 	sortColumn           string
 	sortAsc              bool
 	cursor               int
@@ -1188,13 +1191,12 @@ func (m tuiModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.listScrollbarActive() && m.screen.contains(scrollbarID, msg.X, msg.Y) {
 			return m, nil
 		}
-		if m.view == tuiViewList && msg.Button == tea.MouseLeft && msg.Y == 0 && m.header != "" {
-			col := m.headerColumnAt(msg.X)
-			if col != "" {
+		if m.view == tuiViewList && msg.Button == tea.MouseLeft {
+			id := hitID(m.screen.root, msg.X, msg.Y)
+			if slot, ok := strings.CutPrefix(string(id), sortHeaderPrefix); ok {
+				_, col, _ := strings.Cut(slot, "/")
 				return m.toggleSort(col)
 			}
-		}
-		if m.view == tuiViewList && msg.Button == tea.MouseLeft {
 			if stack := m.stackGlyphAt(msg.X, msg.Y); stack != "" {
 				m.toggleStack(stack)
 				return m, nil
@@ -1959,7 +1961,12 @@ func (m tuiModel) viewList() tea.View {
 			frame := m.spinner.frames[m.spinnerTick%len(m.spinner.frames)]
 			prefix = frame + " " + indexPad + indexGap
 		}
-		rows = append(rows, bloom.Fixed(1, bloom.Text(rowText(prefix+m.header, false)).NoWrap()))
+		start := method.StringWidth(layout.ExpandTabs(prefix))
+		if m.stackSuffixWidth > 0 {
+			start += stackTreeWidth
+		}
+		header := m.sortHeader(rowText(prefix+m.header, false), start, rowWidth)
+		rows = append(rows, bloom.Fixed(1, header))
 	}
 
 	rowBackground := func(line, bg string) string {
@@ -2768,10 +2775,6 @@ func (m tuiModel) tableRendererFor(totalRows int) *table.Renderer[PRRowModel] {
 	return m.p.newTableRenderer(m.cli, m.tty, width, opts...)
 }
 
-func (m tuiModel) tableRenderer() *table.Renderer[PRRowModel] {
-	return m.tableRendererFor(len(m.rows))
-}
-
 func renderEstimatedHeader(
 	renderer *table.Renderer[PRRowModel],
 	termWidth int,
@@ -2816,6 +2819,7 @@ func (m *tuiModel) rerender() (string, []TableRow, []int) {
 	m.stackSuffixWidth = m.measureStackSuffix()
 	termWidth := max(0, m.width-m.tablePrefixWidth(len(m.items)))
 	renderer := m.tableRendererFor(len(m.items))
+	m.sortColumns = xslices.Map(renderer.Columns(), func(col Column) string { return col.Name })
 	if !m.stacksEnabled() {
 		return renderTUITable(renderer, m.items, m.sortColumn, m.sortAsc, termWidth)
 	}
@@ -3193,26 +3197,27 @@ func rowFilterText(row TableRow) string {
 	return strings.Join(parts, " ")
 }
 
-// headerColumnAt maps a click X coordinate to a column name by walking colWidths.
-func (m tuiModel) headerColumnAt(x int) string {
-	x -= m.listPrefixWidth()
-	if x < 0 {
-		return ""
-	}
-	renderer := m.tableRenderer()
-	cols := renderer.Columns()
-	const colGap = 2 // matches grid.defaultColumnPadding
-	pos := 0
-	for i, w := range m.colWidths {
-		end := pos + w
-		if x >= pos && x < end+colGap {
-			if i >= 0 && i < len(cols) {
-				return cols[i].Name
-			}
+const sortHeaderPrefix = "sort-column/"
+
+func sortHeaderID(index int, name string) bloom.ID {
+	return bloom.ID(sortHeaderPrefix + strconv.Itoa(index) + "/" + name)
+}
+
+// Draw the shared table header over its column hit regions. The visible frame
+// retains the column names and clips the regions at the scrollbar gutter.
+func (m tuiModel) sortHeader(line string, start, width int) bloom.Child {
+	cells := []bloom.Child{bloom.Fixed(start, bloom.Space())}
+	count := min(len(m.sortColumns), len(m.colWidths))
+	for i := range count {
+		id := sortHeaderID(i, m.sortColumns[i])
+		size := m.colWidths[i]
+		if i < count-1 {
+			size += columnGap
 		}
-		pos = end + colGap
+		cells = append(cells, bloom.Fixed(size, bloom.Space()).ID(id))
 	}
-	return ""
+	label := bloom.Layer(bloom.Text(line).NoWrap()).Place(image.Rect(0, 0, width, 1))
+	return bloom.Row(bloom.Fixed(width, bloom.Overlay(bloom.Row(cells...), label)))
 }
 
 // rowIndexAt maps a screen Y coordinate to a row index.
@@ -3246,8 +3251,7 @@ func (m tuiModel) rowIndexAt(y int) (int, bool) {
 // toggleSort cycles a column through: default direction -> reverse -> off.
 // Clicking a different column activates it with its default direction.
 func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
-	sortable := m.sortableColumns()
-	if !slices.Contains(sortable, col) {
+	if col == "" || !slices.Contains(m.sortColumns, col) {
 		return m, nil
 	}
 
@@ -3287,18 +3291,6 @@ func (m tuiModel) toggleSort(col string) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
-}
-
-// sortableColumns returns visible column names that have sortable cells.
-func (m tuiModel) sortableColumns() []string {
-	renderer := m.tableRenderer()
-	var result []string
-	for _, col := range renderer.Columns() {
-		if col.Name != "" {
-			result = append(result, col.Name)
-		}
-	}
-	return result
 }
 
 // defaultSortAsc returns the natural sort direction for a column.
