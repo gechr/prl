@@ -24,6 +24,60 @@ func screenRegressionModel(t *testing.T, width, height int) tuiModel {
 	return m
 }
 
+func TestFilterFieldTracksCaretAcrossResize(t *testing.T) {
+	m := screenRegressionModel(t, 10, 22)
+	m.filterInput.Prompt = ""
+	m.filterInput.Focus()
+	const query = "0123456789abcdefghij"
+	m, _ = updateModel(t, m, tea.PasteMsg{Content: query})
+	line := func() string {
+		return strings.Split(ansi.Strip(m.View().Content), nl)[m.listSeparatorY()-1]
+	}
+	require.Equal(t, "/cdefghij ", line())
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
+	require.Equal(t, "/012345678", line())
+	m.filterInput.SetCursor(15)
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 6, Height: 22})
+	require.Equal(t, "/bcdef", line())
+	m, _ = updateModel(t, m, tea.WindowSizeMsg{Width: 11, Height: 22})
+	require.Equal(t, "/abcdefghij", line())
+	m, _ = updateModel(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	require.Equal(t, "/012345678…", line())
+	require.Equal(t, query, m.filterInput.Value())
+	require.Equal(t, 15, m.filterInput.Position())
+}
+
+func TestFilterFieldKeepsWideGraphemesAndEndCaret(t *testing.T) {
+	for _, grapheme := range []bool{false, true} {
+		m := screenRegressionModel(t, 13, 22)
+		m.filterInput.Prompt = ""
+		count := 8
+		if grapheme {
+			m.p = m.p.withGraphemeWidth()
+			m.screen.resetRoot(m.reviewWidthMethod())
+			count = 4
+		}
+		m.filterInput.Focus()
+		const sun = "\u2600\ufe0f"
+		query := strings.Repeat(sun, 20) + "END"
+		m, _ = updateModel(t, m, tea.PasteMsg{Content: query})
+		lines := strings.Split(ansi.Strip(m.View().Content), nl)
+		require.Equal(t, "/"+strings.Repeat(sun, count)+"END ", lines[m.listSeparatorY()-1])
+		require.Equal(t, query, m.filterInput.Value())
+	}
+}
+
+func TestFilterWindowClipsAJoinedEmojiAsOneUnit(t *testing.T) {
+	const query = "ab👨‍👩‍👧xyz"
+	var window filterWindow
+	window.fit(query, 0, 7, ansi.WcWidth)
+	require.Equal(t, "ab", window.visible)
+	window.fit(query, -1, 7, ansi.WcWidth)
+	require.Equal(t, "ab…", window.visible)
+	window.fit(query, 0, 7, ansi.GraphemeWidth)
+	require.Equal(t, query, window.visible)
+}
+
 func TestListDragDoesNotSelectText(t *testing.T) {
 	m := screenRegressionModel(t, 80, 14)
 	m, _ = updateModel(t, m, tea.MouseClickMsg{X: 8, Y: 2, Button: tea.MouseLeft})

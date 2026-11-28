@@ -2018,8 +2018,12 @@ func (m tuiModel) viewList() tea.View {
 	rows = append(rows, bloom.Fixed(viewport, body))
 	filterVal := m.filterInput.Value()
 	if m.filterInput.Focused() || filterVal != "" {
-		input := styleHeading.Bold(true).Render("/") + m.filterInput.View()
-		rows = append(rows, bloom.Fixed(1, bloom.Text(input).NoWrap()))
+		rows = append(
+			rows,
+			bloom.Fixed(1, screen.search.line(&m.filterInput, filterVal, m.width, method)),
+		)
+	} else {
+		screen.search = filterWindow{}
 	}
 	var list bloom.Child = bloom.Column(rows...)
 
