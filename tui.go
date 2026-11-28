@@ -438,6 +438,7 @@ type tuiModel struct {
 	rows                 []TableRow   // current rendered order; row.Item is the action target
 	header               string
 	colWidths            []int // visible column widths for header click hit-testing
+	stackSuffixWidth     int   // measured with the table, including filtered and folded rows
 	sortColumn           string
 	sortAsc              bool
 	cursor               int
@@ -2795,7 +2796,8 @@ func renderTUITable(
 	return rt.Header, rows, rt.ColWidths
 }
 
-func (m tuiModel) rerender() (string, []TableRow, []int) {
+func (m *tuiModel) rerender() (string, []TableRow, []int) {
+	m.stackSuffixWidth = m.measureStackSuffix()
 	termWidth := max(0, m.width-m.tablePrefixWidth(len(m.items)))
 	renderer := m.tableRendererFor(len(m.items))
 	if !m.stacksEnabled() {

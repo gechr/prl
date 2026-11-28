@@ -43,7 +43,7 @@ func (m tuiModel) stacksEnabled() bool {
 	return m.cfg != nil && m.cfg.TUI.Stacks.Enabled
 }
 
-func (m tuiModel) stackSuffixWidth() int {
+func (m tuiModel) measureStackSuffix() int {
 	if !m.stacksEnabled() {
 		return 0
 	}
@@ -61,14 +61,14 @@ func (m tuiModel) stackSuffixWidth() int {
 }
 
 func (m tuiModel) stackExtraWidth() int {
-	if suffix := m.stackSuffixWidth(); suffix > 0 {
+	if suffix := m.stackSuffixWidth; suffix > 0 {
 		return suffix + stackTreeWidth
 	}
 	return 0
 }
 
 func (m tuiModel) listIndexWidth() int {
-	return tuiIndexWidth(len(m.rows)) + m.stackSuffixWidth()
+	return tuiIndexWidth(len(m.rows)) + m.stackSuffixWidth
 }
 
 // stackLetter supports stacks beyond 26 entries: a..z, aa..az, ba...

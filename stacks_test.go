@@ -194,6 +194,23 @@ func TestStackListIDsAndHitTesting(t *testing.T) {
 	require.Empty(t, m.stackGlyphAt(m.listPrefixWidth()+5, 2), "PR title clicks do not fold")
 }
 
+func TestStackIndexWidthFollowsRefresh(t *testing.T) {
+	m := newStackTestModel(t)
+	prs := make([]PullRequest, stackAlphabetSize+1)
+	stack := &PRStack{ID: "stack"}
+	for i := range prs {
+		prs[i] = approvalTestPR(i + 1)
+		prs[i].Stack, prs[i].StackPosition = stack, i+1
+	}
+	for _, tc := range []struct {
+		count, width int
+	}{{26, 3}, {27, 4}, {1, 1}, {0, 1}} {
+		items := buildPRRowModels(prs[:tc.count], "", nil)
+		m, _ = updateModel(t, m, refreshResultMsg{items: items})
+		require.Equal(t, tc.width, m.listIndexWidth(), "after refresh with %d entries", tc.count)
+	}
+}
+
 func TestStackConnectorClickFoldsAndExpands(t *testing.T) {
 	for offset := -1; offset <= 2; offset++ {
 		t.Run(fmt.Sprintf("line %d", offset+2), func(t *testing.T) {
