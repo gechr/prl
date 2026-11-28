@@ -2089,7 +2089,7 @@ func (m tuiModel) rowGutter(idx int) string {
 }
 
 func (m tuiModel) viewDiff() tea.View {
-	var header string
+	var header bloom.Child
 	headerStyle := styleLabel.Bold(true)
 	if idx := m.resolveIndex(m.diffKey, -1); idx >= 0 && idx < len(m.rows) {
 		pr := m.rows[idx].Item.PR
@@ -2113,7 +2113,7 @@ func (m tuiModel) viewDiff() tea.View {
 		if m.reviewOutdated() {
 			status = "Diff outdated"
 		}
-		header = m.alignHeader(headerLine, status)
+		header = diffHeader(headerLine, status)
 	}
 	return m.renderFullScreenView(
 		header,
@@ -2126,25 +2126,16 @@ func (m tuiModel) viewDiff() tea.View {
 // right-aligned status is dropped.
 const diffHeaderMinTitle = 20
 
-// alignHeader puts title on the left and status on the right of one line,
-// truncating the title first when space is short.
-func (m tuiModel) alignHeader(title, status string) string {
-	if m.width <= 0 {
-		return title + "  " + status
-	}
+func diffHeader(title, status string) bloom.Child {
 	const gap = 2
-	statusWidth := lg.Width(status)
-	room := m.width - statusWidth - gap
-	if status == "" || room < diffHeaderMinTitle {
-		if lg.Width(title) > m.width {
-			return xansi.Truncate(title, m.width-1, valueEllipsis)
+	label := bloom.Text(title).Truncate()
+	return bloom.LayoutFunc(func(ctx bloom.Context) bloom.Child {
+		if status == "" ||
+			ctx.Width() < diffHeaderMinTitle+gap+ctx.WidthMethod().StringWidth(status) {
+			return label
 		}
-		return title
-	}
-	if lg.Width(title) > room {
-		title = xansi.Truncate(title, room, valueEllipsis)
-	}
-	return title + strings.Repeat(" ", m.width-lg.Width(title)-statusWidth) + status
+		return bloom.Row(bloom.Fill(label), bloom.Text(status).NoWrap()).Gap(gap)
+	})
 }
 
 // renderPRStatusLine summarises a PR's CI, review and viewer-approval state
@@ -2283,14 +2274,14 @@ func (m tuiModel) filterTagText(width int) string {
 
 func (m tuiModel) viewDetail() tea.View {
 	return m.renderFullScreenView(
-		"",
+		nil,
 		m.detailView,
 		m.detailHelpPairs(),
 	)
 }
 
 func (m tuiModel) renderFullScreenView(
-	header string,
+	header bloom.Child,
 	vp *reviewViewport,
 	hints []key.Hint,
 ) tea.View {
@@ -2298,7 +2289,7 @@ func (m tuiModel) renderFullScreenView(
 		vp = m.reviewViewport(nil, "", "", bloom.WrapNone, 0)
 	}
 	chrome := 1 + m.helpLines(hints) // separator and footer
-	if header != "" {
+	if header != nil {
 		chrome += 2 // header and separator
 	}
 	vp.height = max(0, m.height-chrome)
@@ -2324,8 +2315,8 @@ func (m tuiModel) renderFullScreenView(
 		bloom.Text(m.styles.separator.Render(layout.Separator(max(0, m.width), -1))).NoWrap(),
 	)
 	var rows []bloom.Child
-	if header != "" {
-		rows = append(rows, bloom.Fixed(1, bloom.Text(header).NoWrap()), separator)
+	if header != nil {
+		rows = append(rows, bloom.Fixed(1, header), separator)
 	}
 	rows = append(rows,
 		bloom.Fixed(vp.height, bloom.Row(bloom.Fill(body), bloom.Fixed(tuiScrollbarWidth, bar))),

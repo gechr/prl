@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"bloomfx.dev/bloom"
+	"bloomfx.dev/bloom/canvas"
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 	"getsteep.dev/steep/reel"
@@ -845,23 +847,49 @@ func TestRenderPRStatusLineSpacesPills(t *testing.T) {
 	require.Equal(t, want, m.renderPRStatusLine(pr))
 }
 
-func TestAlignHeaderTruncatesTitleBeforeStatus(t *testing.T) {
-	m := tuiModel{width: 40}
-
+func TestDiffHeaderTruncatesTitleBeforeStatus(t *testing.T) {
+	const title = "owner/repo#1 » a long title that keeps going"
 	require.Equal(
 		t,
 		"owner/repo#1 » a long title tha…  Status",
-		m.alignHeader("owner/repo#1 » a long title that keeps going", "Status"),
+		bloom.Render(40, 1, diffHeader(title, "Status")),
 	)
-	require.Equal(t, "short                             Status", m.alignHeader("short", "Status"))
-
-	// Too narrow to keep a readable title: the status is dropped.
-	m.width = 24
 	require.Equal(
 		t,
-		"owner/repo#1 » a long …",
-		m.alignHeader("owner/repo#1 » a long title that keeps going", "A very long status"),
+		"short                             Status",
+		bloom.Render(40, 1, diffHeader("short", "Status")),
 	)
+
+	require.Equal(
+		t,
+		"owner/repo#1 » a long t…",
+		bloom.Render(24, 1, diffHeader(title, "A very long status")),
+	)
+}
+
+func TestDiffHeaderPreservesLinksAndTerminalCellWidths(t *testing.T) {
+	const url = "https://example.com/change"
+	const title = "A long title with an emoji ⬆️ near the end"
+	const status = "⬆️ OK"
+	header := diffHeader(ansi.SetHyperlink(url)+title+ansi.SetHyperlink(""), status)
+	for _, method := range []ansi.Method{ansi.WcWidth, ansi.GraphemeWidth} {
+		root := bloom.New(bloom.WithWidthMethod(method))
+		width := diffHeaderMinTitle + len(helpGap) + method.StringWidth(status)
+		line := root.Render(width, 1, header)
+		require.Equal(
+			t,
+			method.Truncate(title, diffHeaderMinTitle, valueEllipsis)+helpGap+status,
+			ansi.Strip(line),
+		)
+		screen := canvas.Parse(line, method)
+		require.Equal(t, url, screen.CellAt(0, 0).Link.URL)
+		require.Empty(t, screen.CellAt(width-1, 0).Link.URL)
+		require.Equal(
+			t,
+			method.Truncate(title, width-1, valueEllipsis),
+			ansi.Strip(root.Render(width-1, 1, header)),
+		)
+	}
 }
 
 func TestCyclePreset(t *testing.T) {
