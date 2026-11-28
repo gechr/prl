@@ -354,3 +354,73 @@ func TestFailedDiffNavigationKeepsRefreshedPatch(t *testing.T) {
 	require.Equal(t, active, m.diffKey)
 	require.Equal(t, "+fresh"+nl, ansi.Strip(m.diff))
 }
+
+func TestFailedDetailNavigationResumesStaleRefresh(t *testing.T) {
+	m := listTUIModel(approvalTestPR(1), approvalTestPR(2))
+	first, second := m.rows[0].Item.PR, m.rows[1].Item.PR
+	active := makePRKey(first)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.eventStreams.listeners[active] = func() {}
+	detail := func(body string) detailFetchedMsg {
+		return detailFetchedMsg{
+			key: active, reviewVersion: m.reviewVersion(first),
+			fetchedAt: time.Now(), detail: PRDetail{Body: body},
+		}
+	}
+	m.openDetail(0, 0)
+	m, _ = updateModel(t, m, detail("Original"))
+	m.eventStreams.pending[active] = eventReviews
+	m, _ = updateModel(t, m, prEventsMsg{})
+	superseded := detail("Intermediate")
+	m.eventStreams.pending[active] = eventReviews
+	m, _ = updateModel(t, m, prEventsMsg{})
+	m, _ = pressKey(t, m, tuiKeybindNext)
+	m, _ = updateModel(t, m, superseded)
+	require.True(t, m.detailLoading)
+	require.False(t, m.detailInFlight[active])
+
+	m, _ = updateModel(t, m, detailFetchedMsg{
+		key: makePRKey(second), reviewVersion: m.reviewVersion(second), err: errApproveTest,
+	})
+	require.False(t, m.detailLoading)
+	require.Equal(t, active, m.detailKey)
+	require.Equal(t, "Original", m.detail.Body)
+	require.True(t, m.detailInFlight[active])
+	m, _ = updateModel(t, m, detail("Current"))
+	require.Equal(t, "Current", m.detail.Body)
+	require.False(t, m.detailInFlight[active])
+}
+
+func TestFailedDiffNavigationResumesStaleRefresh(t *testing.T) {
+	first, second := approvalTestPR(1), approvalTestPR(2)
+	active := makePRKey(first)
+	m := diffTestModel(first, second)
+	m.eventStreams = testEventStreams(http.StatusCreated)
+	t.Cleanup(m.eventStreams.close)
+	m.eventStreams.listeners[active] = func() {}
+	m.openDiff(active, 0)
+	m, _ = updateModel(t, m, diffFetchedMsg{key: active, diff: "+old"})
+	m.eventStreams.pending[active] = eventNewHead
+	m, _ = updateModel(t, m, prEventsMsg{})
+	superseded := diffFetchedMsg{key: active, headGen: m.diffHeadGen[active], diff: "+intermediate"}
+	m.eventStreams.pending[active] = eventNewHead
+	m, _ = updateModel(t, m, prEventsMsg{})
+	m, _ = pressKey(t, m, tuiKeybindNext)
+	m, _ = updateModel(t, m, superseded)
+	require.True(t, m.diffLoading)
+	require.False(t, m.diffInFlight[active])
+
+	m, _ = updateModel(t, m, diffFetchedMsg{key: makePRKey(second), err: errApproveTest})
+	require.False(t, m.diffLoading)
+	require.Equal(t, active, m.diffKey)
+	require.Equal(t, "+old"+nl, ansi.Strip(m.diff))
+	require.True(t, m.diffInFlight[active])
+	m, _ = updateModel(
+		t,
+		m,
+		diffFetchedMsg{key: active, headGen: m.diffHeadGen[active], diff: "+current"},
+	)
+	require.Equal(t, "+current"+nl, ansi.Strip(m.diff))
+	require.False(t, m.reviewOutdated())
+}

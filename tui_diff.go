@@ -85,7 +85,7 @@ func (m *tuiModel) showDiff(msg diffFetchedMsg, from fx.Direction) tea.Cmd {
 	idx := m.resolveIndex(msg.key, msg.index)
 	if idx < 0 {
 		m.flash.Msg = ""
-		return nil // PR no longer in list
+		return m.resumeOpenReview() // PR no longer in list
 	}
 	m.refreshTerminalSize()
 	var slide tea.Cmd
@@ -165,10 +165,7 @@ func (m tuiModel) handleDiffFetched(msg diffFetchedMsg) (tea.Model, tea.Cmd) {
 		if advanced, nextCmd := advanceDiffQueue(&m, 0); advanced {
 			return m, tea.Batch(flashCmd, nextCmd)
 		}
-		if m.view == tuiViewDetail {
-			return m, tea.Batch(flashCmd, m.scheduleDetailRefresh())
-		}
-		return m, flashCmd
+		return m, tea.Batch(flashCmd, m.resumeOpenReview())
 	}
 	return m, m.showDiff(msg, from)
 }

@@ -109,18 +109,19 @@ func (m *tuiModel) handleDetailFetched(msg detailFetchedMsg) tea.Cmd {
 		m.detailAwaitKey, m.detailAwaitFrom = "", 0
 	}
 	if msg.err != nil {
-		if awaited || active {
-			return tea.Batch(
-				flashResult(m, "Detail failed:", fmt.Sprint(msg.err), "", true),
-				m.scheduleDetailRefresh(),
-			)
+		if !awaited && !active {
+			return nil
 		}
-		return nil
+		flash := flashResult(m, "Detail failed:", fmt.Sprint(msg.err), "", true)
+		if awaited {
+			return tea.Batch(flash, m.resumeOpenReview())
+		}
+		return tea.Batch(flash, m.scheduleDetailRefresh())
 	}
 	if idx < 0 {
 		if awaited {
 			m.flash.Msg = ""
-			return m.scheduleDetailRefresh()
+			return m.resumeOpenReview()
 		}
 		return nil
 	}

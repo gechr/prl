@@ -309,6 +309,16 @@ func (m tuiModel) reviewOutdated() bool {
 	return false
 }
 
+// A failed navigation leaves the previous PR visible. Its refresh may have
+// been superseded while the destination was loading.
+func (m *tuiModel) resumeOpenReview() tea.Cmd {
+	refresh := m.refreshOpenReview()
+	if refresh != nil || m.detailInFlight[m.detailKey] {
+		return refresh
+	}
+	return m.scheduleDetailRefresh()
+}
+
 func (m *tuiModel) refreshOpenReview() tea.Cmd {
 	switch m.view {
 	case tuiViewDetail:
